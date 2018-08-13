@@ -1,0 +1,606 @@
+* download cygwin, ensure rsync, tmux, git, parallel (not a package, figure this out) are selected
+* merge world altering plugins to <file.esp || pcvgen.esp>
+* pcvgen -o <file.esp || pcvgen.esp>
+* start ck, load pcvgen.esp and all masters
+* generate pc for world
+* generate pc for interiors
+* save and exit
+* open up <file.esp || pcvgen.esp> in xEdit, run pcv script to create separate precombine merge plugins, save on exit.
+* pcvgen: hardlink clone of base directory to per-<master> merge instance, enable VC for each
+* pcvgen: merge (checkinplugin) each generated <master>_precombines_merge.esp into <master>
+  * alternatively do this serially first so that all masters have been updated before previs gen
+* pcvgen: CreationKit.exe -generateprevisdata:<master> clean all
+* pcvgen: mv <instance>/PreVis.esp to <master>_previs_merge.esp
+* either (one of):
+  * open everything in xedit and post-merge/finalize into pcvgen.esp
+  * -checkinplugin of each previs_merge.esp and extract all cells afterwards via xedit.
+
+---
+
+revised after testing:
+
+* ensure any tree mods have appropriate occlusion settings, generate scols, and drop loose files in place before any gen
+* ckgen manual world ints, load all desired plugins, ck1: precombine for world, ck2: precombine for ints
+* save as pcv.esp and exit
+* open up pcv.esp in xedit and run pcv script in precombine mode, save generated plugins
+* merge all plugins with pcpvmerge or ckgen merge + some options not written yet
+* ckgen previs clean main <all desired masters/plugins>
+* rsync ckgen Data/ dirs in master/plugin order into Data/
+* open up all previs_merge.esp plugins in master/plugin order (xedit + -P <file>) and run pcv script in previs mode.
+* archive Data/Meshes/PreCombined and Data/Vis into pcv-final.ba2
+* alter DLCList.txt and Plugins.txt
+
+---
+
+Probably controls auto master copying from Merging -> Data:
+
+sGeneralMasterMismatchWarning:GeneralWarnings
+sMasterMismatchWarning:GeneralWarnings
+
+Might be related to cell precombined overlap, but maybe not:
+
+bCheckDLCCombinedKeys:General
+bCheckForMultiFileForms:General
+bFixDLCCombinedKeys:General
+
+Might also be useful:
+
+bWarnOnUserVersionDifferences:General
+
+---
+
+What are these strings about?
+
+Double-check your coordinates.  You don't really want to generate that many cells.
+Generated visibility for requested cells
+You will be asked to select a plain-text file containing a list of (x,y) coordinates of cells to generate vis for.
+Select file with list of cells to generate.
+Generate for the following cells?
+Generate?
+
+UPDATE: Entirely about World LOD generation. The use of 'vis' is misfortunate.
+
+---
+
+Critical CK issue:
+
+Loading too many records at once will result in:
+
+.rdata:00000001438525D0	00000042	C	OUT OF HANDLE ARRAY ENTRIES.  Null handle created for pointer %p.
+
+The only real solution to this is to generate (or cut down) plugins that have *only* CELLs which contain REFRs pointing to STAT or SCOL base objects. The entire goal is to reduce the amount of handles each plugin requires so that multiple plugins can be loaded at once without hitting the limit.
+
+---
+
+Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
+
+Cross check all references in XPRI data out there to determine what to keep beyond static REFRs.
+
+---
+
+Orig+DLC order:
+
+Fallout4.esm
+DLCRobot.esm
+DLCworkshop01.esm
+DLCCoast.esm
+DLCworkshop02.esm
+DLCworkshop03.esm
+DLCNukaWorld.esm
+DLCUltraHighResolution.esm
+
+Note: It seems that CK will in some cases (particularly XPRI) create references with initial master load id offset from 08 forward as if every official master were loaded before it even if they weren't when generating the plugin from within CK. Update: actually this may not be true and I just forgot that I had initially loaded all 8 esms in my test. Update to update: Actually what seems to be going on here is that if a plugin passed to CK has a master that loads another master, it throws off the entire indexing of CK for the generated plugin. The only real workaround is to ensure the plugin used with CK (as a target to -generateprecombined or -generateprevisdata) has all masters as they would be in final form.
+
+---
+
+Generating visibility for cells without precombined references results in non-combined visibility being generated. This is why some cells show updated vis timestamps and XPRI references but no XCRI data. This type of thing would occur in vanilla files due to -generateprevisdata operating on a larger or different set of cells then what -generateprecombined operated on.
+
+---
+
+Message on CK having too many loose files (.text:0000000142499D29, .text:0000000142499E00):
+
+Number of registered paths has exceeded maximum of %I64u, %s will read uncached.
+
+Actual log output for it:
+
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_12E3F195_OC.NIF will read uncached.
+MASTERFILE:                             (BSStream Error) Not a NIF file in meshes\PreCombined\0000DFA4_12E3F195_OC.NIF.
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_135B94FB_OC.NIF will read uncached.
+MASTERFILE:                             (BSStream Error) Not a NIF file in meshes\PreCombined\0000DFA4_135B94FB_OC.NIF.
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_1861C6FF_OC.NIF will read uncached.
+
+---
+
+CDX issue: For XCRI/XPRI data which has been regenerated and merged into an esm which *has* a CDX file, one must issue -BuildCDX:<esm> in order for said newly generated precombined and previs cell records to even be used. Not doing this will result in the typical flashing statics preculling issues. Doing nothing at all but simply -BuildCDX on the same master resolves the preculling issues so one can speculate that the CDX file has old cell data vs what's actually in the esm.
+
+---
+
+Attempting to check in precombined or previs changes from CK whilst using a delocalized ESM will result in those changes never being merged and the precombined timestamp being deleted. If the ESM is localized they will be merged. This doesn't seem to affect -checkinplugin.
+
+---
+
+Check if -generateprecombined and -generateprevisdata react to cells with precombined references only (i.e. just clone only the cell records for cells the plugin does not alter in xedit). -generateprecombined probably reacts to statics associated with the cell, but validate if -generateprevisdata also does. Update: generateprevisdata works the same way as generateprecombined. The good news here though is that only the presence of a REFR matters, i.e. it can be a simple override rather than a new REFR entirely.
+
+---
+
+Sort out all the localization/delocalization stuff. xEdit requires vanilla esms to be localized in order to not trip over some stupid issues with interpreting $Integer like values in data.
+
+---
+
+ReportRequiredMasters is bugged in API description for xedit. Last 2 booleans are flipped. <-- Verify this, or if it's a different function that had the issue.
+
+---
+
+Calling xedit in script mode:
+
+fo4edit -script:<filename> -P:<plugin-file>
+or
+fo4edit -script (to open a prompt to select script)
+
+---
+
+previs clean main affects Fallout4.esm vs DLCs and other masters differently:
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $ egrep -ir -- 'filtered' *.esm
+DLCCoast.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCNukaWorld.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCRobot.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop01.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop02.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop03.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+pcv-world-merged.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $ grep -r ROOTCELL Fallout4.esm/
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $
+
+Update: it would appear that using anything but 'all' with 'clean' mode will result in that error and no psg will be generated.
+
+---
+
+Ensure script uses the precombined_merge or previs_merged plugin with the highest timestamp rather than winning override. When generating plugins with sharded/bucketed modes of CreationKit's command line options there are situations in which the created plugins appear to process data for the same cells (seems to mainly affect previs - perhaps due to 3x3 cell logic andoverlap). However, the VISI timestamps for the same cell from one plugin are older than the timestamps for the older plugin, almost as if it simply forwarded on unprocessed cells. In practice this might not create an issue but it seems like something that shouldn't be trusted.
+
+---
+
+With Regrowth and updated SCOLs for non-occluder:
+
+ 20572  MODELS:                         Ref TreeLeanDead06 static collection aggregation result in empty geometry.
+ 20573  DEFAULT:                                Warnings were encountered creating geometry for static collection 'TreeLeanDead06'. Check warnings file for more info.
+ 20574  MODELS:                         Ref TreeLeanDead01 static collection aggregation result in empty geometry.
+ 20575  DEFAULT:                                Warnings were encountered creating geometry for static collection 'TreeLeanDead01'. Check warnings file for more info.
+
+---
+
+Regrowth BGSM issues (meaning something is building for trees in an esm that is not dependent on DLCCoast.esm - in this case it's Fallout4.esm)
+
+ 21802  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21803  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21804  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21805  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21806  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21807  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21808  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21809  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+
+---
+
+Known problem cells:
+
+DEED
+DFFA
+D90C
+DF54
+DF75
+E614 (DLCworkshop03 overlaps with Fallout4, but pcv-world-merged previs generation doesn't take into account DLCworkshop03 [double-check this])
+03016E33
+
+---
+
+Ensure any patched CK exe's are done in temporary build dirs
+
+---
+
+Possible xEdit bug?
+
+Failed to copy:  \ [00] Fallout4.esm \ [55] GRUP Top "CELL" \ [2] GRUP Interior Cell Block 2 \ [0] GRUP Interior Cell Sub-Block 0 \ [8] COPY0281 [CELL:000939BA]
+        reason: [000939E1] < Error: Could not be resolved >
+
+That ref doesn't exist anywhere.
+
+---
+
+-generatestaticcollections:<esm> x64 by default for every plugin passed in? Note: MUST be an esm file.
+
+Need to determine how this affects other plugins being generated for, i.e. if plugin1 has master2 and master2 has SCOLs will plugin1 need the actual NIFs from master2 when generating precombined data? It would be great if precombined data doesn't need any generated SCOL NIFs but I doubt that's the case. The main concern with all of this is with archive files and embedded .esp plugin names which are hard to deal with when it comes to the temporary esp->esm game.
+
+This sucks but a foolproof way of handling the renamed plugins + SCOL problem is to repackage the archives with renamed dirs and if extra paranoid regenerated SCOLs.
+
+---
+
+Only promote overridden masters if they have stat or scol refrs
+Figure out what's up with certain masters not being used and banging off the Suffix already seen check
+
+---
+
+Double check that cut down plugins (only static REFRs) generate the same precombines that a non-cutdown plugin produces. For testing purposes, ensure that no additional masters are added.
+
+---
+
+Figure out what causes CK to scramble the order of emitted masters in plugins it generates... timestamp?
+
+---
+
+FIXED:
+
+Sort out the issue with sanitized esm filenames in esps (plenty__of__exploration.esm), etc.
+
+---
+
+FIXED:
+
+Figure out why CK breaks XCRI (or other) refs for plugins with >= 15 masters (seen with SOTS.esp.precombine_merge.all.01.all.esp) or when the generated plugin is slot 15 (16th) or above. It might actually be >= 13 masters, but haven't determined yet.
+
+SimSettlements.esm should have Unofficial Fallout 4 Patch.esp (.esm) but the precombine generated plugin does not. FOUND: master relocs aren't happening for .esm files because the check is for .esp files in ckgen.
+
+---
+
+ck_wrap: Copy per area plugins rather than just generically copying reference plugin?
+
+---
+
+ck_wrap: Don't copy reference plugins on error?
+
+---
+
+ck_wrap: Test busted masters in plugins (grep logs)
+
+Unable to find masterfile: WelcometoGoodneighbor.zzz
+
+---
+
+ck_wrap: Test missing plugin files (grep logs)
+
+4 MASTERFILE:                              Could not get file pointer for BOGUS_BTInteriors_Project.esm, aborting automated process.
+
+---
+
+ck_wrap: Test for maximum registered paths error (grep logs, note this doesn't actually seem critical):
+
+Number of registered paths has exceeded maximum
+
+Also, this is related to -BuildCDX and "Failed to find static geometry id" as the BuildCDX steps sees all the loose files and attempts to use them all to biuld the CDX file. In the case of Fallout4.esm it's particularly a problem.
+
+Experiment with loose PreCombines (such as the 124k files from Fallout4.esm) and the various ini options to see if any of them actually make a difference with the registered path maximum.
+
+---
+
+CDX (more accurately -BuildCDX) is 100% dependent on XCRI data in the plugin *and* the csg/psg file used for shared geometry:
+1. -BuildCDX on a plugin without appropriately updated XCRI data will produce:
+2. -BuildCDX on a plugin without a matching CSG or PSG file will produce:
+3. -BuildCDX on a plugin without matching precombined NIFS will produce:
+
+RENDERING:                              Failed to find static geometry id (0x83b0b913, 0x 583c712), generating dummy data.
+
+It also appears that a given CSG or PSG file only needs to be loaded before the point of -BuildCDX. This means a master of a plugin passed to -BuildCDX which loads it's own CSG/PSG data related to the plugin being built will still succeed. This implies that the game/CK loads this CSG/PSG data into an internal memory structure which is consulted by -BuildCDX along with cell XCRI data and physical precombined NIFs. On top of that, this all works with esp plugins, atleast with CK. e.g. this works:
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build/1 (modded_regrowth) $ plugin-master-reloc -v Data/3DNPC_FO4.esp.precombine_merge.all.01.esp
+Data/3DNPC_FO4.esp.precombine_merge.all.01.esp:
+[00] Fallout4.esm
+[01] 3DNPC_FO4.esp
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build/1 (modded_regrowth) $ ./CreationKit.exe -buildcdx:3DNPC_FO4.esp.precombine_merge.all.01.esp
+MemoryTraceWrite::MemoryTraceWrite
+Initialized small stack
+Set thread processor
+Set thread priority
+
+Handles during -BuildCDX:3DNPC_FO4.esp.precombine_merge.all.01.esp:
+
+ 4AA8: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\cdxtmp
+ 4B10: File  (RWD)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\materials
+ 4B14: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4.esp.precombine_merge.all.01.esp
+ 4B18: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\Fallout4.esm
+ 4B24: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4.esp
+ 4B28: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Main.ba2
+ 4B2C: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Textures.ba2
+ 4B30: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Geometry.psg
+ 4B34: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Geometry.csg
+
+Even using the intermediary CombinedObjects.esp doesn't matter, as long as it has a master which loads the requisite PSG (packed shared geometry) data (or CSG if compressed). Also, it doesn't matter if a CSG or PSG file is used, CK (and the game) will try to use both. CSG is merely a size optimization for PSG files after they've been generated (most likely zlib or lz4 compressed).
+
+Also, -BuildCDX might want to be done after everything has been generated (PC+PV) as the output differs based on the contents of the esp or esm.
+
+Update: it appears that any plugin flagged as an esm with modified precombines NEEDS a cdx, even without psg style precombines. Hiding the cdx and removing the esm flag also produces a working outcome - which means the cdx is of importance to master flagged plugins regardless of precombine style.
+
+---
+Worldspace exterior counts:
+
+block_total == 36, sub_block_total == 576, cell_total == 36864
+
+---
+
+Track this down in IDA:
+
+"Running filtered for partial options is not supported"
+
+Fairly certain this is when any specific area other than 'all' is used with clean mode - as CK refuses to emit a PSG file with args like 'clean main' or 'clean main 1 4'.
+
+---
+
+CK patch notes:
+
+NukemToday at 7:53 PM
+yeah i'm waiting for ida to load
+.text 140347D42
+relative addr 347D42
+
+---
+
+[00:00] Start: Applying script "Fallout4 - Cell Stats"
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlFeralGhoulGlowingOneLegendary01 [ACHR:27088216] (places LvlFeralGhoulGlowingOneLegendary [NPC_:00165576] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlSynthBoss02 [ACHR:270C7622] (places LvlSynthBoss "Synth Leader" [NPC_:00075342] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlFeralGhoulGlowingOneLegendary04 [ACHR:27088213] (places LvlFeralGhoulGlowingOneLegendary [NPC_:00165576] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
+
+STATS:
+
+CELL type_tab
+LAND 44355
+REFR 2472726
+NAVM 15790
+ACHR 16725
+PGRE 594
+PHZD 2792
+PMIS 2
+
+CELL type_base_tab
+STAT 1803659
+SCOL 66199
+ACTI 38198
+NPC_ 16725
+MSTT 91219
+FURN 31852
+LIGH 193384
+MISC 92981
+CONT 28318
+ASPC 1573
+SOUN 5676
+IDLM 16376
+DOOR 10145
+BNDS 11800
+TXST 48876
+NOTE 279
+ALCH 16125
+TERM 1274
+WEAP 1616
+AMMO 1093
+KEYM 139
+BOOK 754
+FLOR 9105
+TACT 312
+PROJ 596
+HAZD 2792
+ARMO 1761
+ARTO 1
+ADDN 3
+
+XPRI type_tab
+REFR 168529
+PHZD 1208
+PMIS 1
+
+XPRI type_base_tab
+STAT 54960
+SCOL 2773
+ACTI 4101
+MSTT 50346
+FURN 23155
+CONT 30441
+TERM 738
+FLOR 1719
+TACT 296
+PROJ 1
+HAZD 1208
+
+XCRI type_tab
+REFR 2689908
+
+XCRI type_base_tab
+STAT 2632022
+SCOL 57799
+ACTI 79
+
+---
+
+Test cut down plugins (that only contain STAT and SCOL refrs) with previs generation using multiple methods:
+
+1. Totally cut down, same as with the precombine form, STAT and SCOL cells only.
+2. STAT and SCOL in precombine generation but then merge back the generated precombine data into the original
+   plugin that contains all REFRs. Generate previs and see if the XPRI data differs.
+3. Generate precombines with some REFRs removed (ones that might involved physics) and see if the cell's
+   _physics file differs afterward.
+
+The point is to try and see if the precombine step and generated physics file makes any difference to XPRI
+data or if XPRI data is something soley generated by the previs step.
+
+---
+
+Test removing XPRI data from XPRI heavy cells to see how the game reacts to it. Missing physics? Vis?
+
+---
+
+Weird errors see when generating precombines with heavily cut-down plugins:
+
+Memory context is not stored on free blocks
+Bad link
+
+Try removing REFRs from cells only and see if that resolves the issue (rather than removing GRUPs as well).
+
+---
+
+Generate main,other (filtered) if ints fail or just generate main, ints, other by default?
+
+---
+
+plugin-master-reloc: should still do subs even if --esm-to-esp is used with an esm or vice versa
+plugin-master-reloc: should not uniq/merge if the basename of 2 mods in different directories is the same
+plugin-master-reloc: fix issue with Knockout Framework.esm producing CombinedObjects.esp files with Knockout_Framework.esm still embededed within it
+plugin-master-reloc: fix issue with SimSettlements.esm producing CombinedObjects.esp files with Unofficial Fallout 4 Patch.esm still embedded within it
+plugin-master-reloc: fix general issues with when to clone masters
+
+---
+
+Spurious navmesh generation by CK forwards on vanilla cell data that causes conflicts with generated data. This makes timestamps even more important
+to take into account during data merging.
+
+---
+
+BTI cluster mappings:
+
+cluster[36] cmap[79]: BTInteriors_Project.esp (2374334)
+cluster[36] cmap[79][0]: Fallout4.esm (1548467)
+cluster[36] cmap[79][3]: DLCCoast.esm (309239)
+cluster[36] cmap[79][6]: DLCNukaWorld.esm (269369)
+cluster[36] cmap[79][8]: Unofficial Fallout 4 Patch.esp (5955)
+cluster[36] cmap[79][43]: WelcometoGoodneighbor.esp (11064)
+cluster[36] cmap[79][44]: DiamondNewVendors.esp (7161)
+cluster[36] cmap[79][45]: 3DNPC_FO4.esp (84831)
+cluster[36] cmap[79][46]: moreXplore.esp (9231)
+cluster[36] cmap[79][47]: Convenient Bridges.esp (634)
+cluster[36] cmap[79][54]: AA FusionCityRising - HotC.esp (20214)
+cluster[36] cmap[79][55]: America Rising - A Tale of the Enclave.esp (44988)
+cluster[36] cmap[79][60]: BurningCampfiresThatHurt.esp (200)
+cluster[36] cmap[79][61]: Some Assembly Required.esp (343)
+cluster[36] cmap[79][62]: Some Assembly Required (Legendary Patch).esp (74)
+cluster[36] cmap[79][63]: WRVR.esp (819)
+cluster[36] cmap[79][64]: plenty 'o' exploration.esp (5225)
+cluster[36] cmap[79][65]: atlanticofficesf23.esp (2276)
+cluster[36] cmap[79][66]: RedWaveReloaded.esp (12465)
+cluster[36] cmap[79][67]: MaxwellsWorl.esp (60278)
+cluster[36] cmap[79][69]: AA 50 Ways To Die.esp (10386)
+cluster[36] cmap[79][70]: cat_wildlands.esp (28499)
+cluster[36] cmap[79][71]: InsideJobs.esp (6006)
+cluster[36] cmap[79][73]: USSQuincy.esp (4053)
+cluster[36] cmap[79][74]: LexingtonLabs.esp (3735)
+cluster[36] cmap[79][75]: stumbleuponinteriors.esp (6348)
+cluster[36] cmap[79][76]: DWUK_LexingtonInteriors.esp (47034)
+cluster[36] cmap[79][78]: Greeb.esp (2288)
+cluster[36] cmap[79][79]: BTInteriors_Project.esp (27897)
+cluster[36] cmap[79][87]: RecruitableSettlersFH.esp (799)
+cluster[36] cmap[79][159]: AK74M.esp (437)
+cluster[36] cmap[79][233]: EnhancedLightsandFX.esp (132606)
+
+cluster[0] cmap[79]: BTInteriors_Project.esp (2374334)
+cluster[0] cmap[79][0]: Fallout4.esm (1548467)
+cluster[0] cmap[79][3]: DLCCoast.esm (309239)
+cluster[0] cmap[79][6]: DLCNukaWorld.esm (269369)
+cluster[0] cmap[79][43]: WelcometoGoodneighbor.esp (11064)
+cluster[0] cmap[79][45]: 3DNPC_FO4.esp (84831)
+cluster[0] cmap[79][54]: AA FusionCityRising - HotC.esp (20214)
+cluster[0] cmap[79][55]: America Rising - A Tale of the Enclave.esp (44988)
+cluster[0] cmap[79][64]: plenty 'o' exploration.esp (5225)
+cluster[0] cmap[79][71]: InsideJobs.esp (6006)
+cluster[0] cmap[79][76]: DWUK_LexingtonInteriors.esp (47034)
+cluster[0] cmap[79][79]: BTInteriors_Project.esp (27897)
+
+
+no-persistent:
+cluster[36] cmap[79]: BTInteriors_Project.esp (2374334)
+cluster[36] cmap[79][0]: Fallout4.esm (1548467)
+cluster[36] cmap[79][3]: DLCCoast.esm (309239)
+cluster[36] cmap[79][6]: DLCNukaWorld.esm (269369)
+cluster[36] cmap[79][43]: WelcometoGoodneighbor.esp (11064)
+cluster[36] cmap[79][45]: 3DNPC_FO4.esp (84831)
+cluster[36] cmap[79][54]: AA FusionCityRising - HotC.esp (20214)
+cluster[36] cmap[79][55]: America Rising - A Tale of the Enclave.esp (44988)
+cluster[36] cmap[79][64]: plenty 'o' exploration.esp (5225)
+cluster[36] cmap[79][71]: InsideJobs.esp (6006)
+cluster[36] cmap[79][76]: DWUK_LexingtonInteriors.esp (47034)
+cluster[36] cmap[79][79]: BTInteriors_Project.esp (27897)
+
+persistent:
+cluster[36] cmap[79]: BTInteriors_Project.esp (2374334)
+cluster[36] cmap[79][0]: Fallout4.esm (1548467)
+cluster[36] cmap[79][3]: DLCCoast.esm (309239)
+cluster[36] cmap[79][6]: DLCNukaWorld.esm (269369)
+cluster[36] cmap[79][43]: WelcometoGoodneighbor.esp (11064)
+cluster[36] cmap[79][45]: 3DNPC_FO4.esp (84831)
+cluster[36] cmap[79][54]: AA FusionCityRising - HotC.esp (20214)
+cluster[36] cmap[79][55]: America Rising - A Tale of the Enclave.esp (44988)
+cluster[36] cmap[79][64]: plenty 'o' exploration.esp (5225)
+cluster[36] cmap[79][71]: InsideJobs.esp (6006)
+cluster[36] cmap[79][76]: DWUK_LexingtonInteriors.esp (47034)
+cluster[36] cmap[79][79]: BTInteriors_Project.esp (27897)
+
+
+cluster[43] cmap[159]: AK74M.esp (2716476)
+cluster[43] cmap[159][0]: Fallout4.esm (1548467)
+cluster[43] cmap[159][1]: DLCRobot.esm (49111)
+cluster[43] cmap[159][3]: DLCCoast.esm (309239)
+cluster[43] cmap[159][6]: DLCNukaWorld.esm (269369)
+cluster[43] cmap[159][8]: Unofficial Fallout 4 Patch.esp (5955)
+cluster[43] cmap[159][11]: SimSettlements.esm (35984)
+cluster[43] cmap[159][44]: DiamondNewVendors.esp (7161)
+cluster[43] cmap[159][45]: 3DNPC_FO4.esp (84831)
+cluster[43] cmap[159][48]: OutcastsAndRemnants.esp (88685)
+cluster[43] cmap[159][49]: crowdedcommonwealth.esp (1282)
+cluster[43] cmap[159][50]: SOTS.esp (58461)
+cluster[43] cmap[159][53]: AA FusionCityRising.esp (90359)
+cluster[43] cmap[159][55]: America Rising - A Tale of the Enclave.esp (44988)
+cluster[43] cmap[159][64]: plenty 'o' exploration.esp (5225)
+cluster[43] cmap[159][66]: RedWaveReloaded.esp (12465)
+cluster[43] cmap[159][67]: MaxwellsWorl.esp (60278)
+cluster[43] cmap[159][69]: AA 50 Ways To Die.esp (10386)
+cluster[43] cmap[159][73]: USSQuincy.esp (4053)
+cluster[43] cmap[159][79]: BTInteriors_Project.esp (27897)
+cluster[43] cmap[159][86]: RecruitableSettlers.esp (1843)
+cluster[43] cmap[159][159]: AK74M.esp (437)
+
+---
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.out  (modded_regrowth) $ find */EditorWarnings* -print0 | xargs -r0 egrep -i 'failed to collect ref' | awk -F'\t' '{print $8}' | sort | uniq -c | sort -k1,1nr
+  23349 enable parented
+  10358 switch node
+   6856 dynamic havok
+   5799 external emittance
+   5644 gamebryo anims
+   4347 no geometry
+   3417 has recipe
+   2738 attach ref
+   2676 linked to/from
+   1876 gamebryo property anims
+   1554 billboard node
+    552 loc ref type
+      2 particles
+
+---
+
+General difficulties:
+
+1. xEdit doesn't allow editing Fallout4.esm. This would be useful for the intermediate step between merging XCRI data and generating new previs data.
+2. CK has max handle limitations for forms/objects. This speaks for itself and means one cannot just open their entire load order in CK and generate precombines once. Really sucks and makes things a lot harder to setup for previs generation.
+3. CK has max handle limitations for loose files. This means 100k+ loose precombine files will result in CK crashing and not generating complete previs data. The only way around this is to temporarily rearchive the new precombined NIFs with the vanilla archives and shim that into place before previs generation.
+4. CK -generateprecombined and -generateprevisdata require atleast one REFR in each cell to be generating. Simply providing a plugin of overidden cell data won't do anything without actual statics to generate for.
+5. CK likes to remove all esps from the master list of a plugin and provide broken formids for anything those esps were master for. The only fix is to manually readd them in xEdit but one cannot use "add masters" as this will increment all the broken references. Instead the main header must be edited. This sucks.
+6. CK likes to trash the master id of XPRI formids if more than 2 masters are used.
+7. xEdit doesn't allow more than 254 plugins so even if the plugins in the list aren't actually going to be loaded there's still an issue with generating more plugins than the maximum load order can handle.
+8. xEdit has a bug where if during the process of copying an element if masters are somehow added around the same time then it can produce broken worldspace references that have the wrong load order formid. Still investigating.
+9. DLCs like DLCCoast and DLCNukaWorld don't like previs generation with a synthetic plugin that only overrides refs in cells that contain statics - the overrides must target all cells. I suspect this has something to do with world borders but it still seems like a bug. Might be an issue with overlapped refs vs ALL synthetic refs instead OR could be an issue with using DLCUltraHighResolution.esm as a master. Also seen with having regrowth in the middle of the master order. Very strange bug.
+
+---
+
+use cells only with precombinable statics and not just pc+pv?
+test with only stat's promoted (not rvis stuff)
+test with precombined stats/scols in priority to non-precombined
+test with temporary in priority to persistent refs first
+test with buseprecombinedobjects=1
+test with various ini's disabled
+test with removing CK prefs
+test frm close with xedit scripting to get around empty dialog box on script finish.
+
+test with plugin timestamps matching plugin or master load order
+change plugin-master-reloc to preserve timestamps even on modification
+

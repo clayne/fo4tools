@@ -1,0 +1,17 @@
+# TES4 (Fallout4)
+0			string	TES4	Bethesda TES4 plugin,
+#>4			long	x	size=%d
+>8			long	&0x1	esm
+>8			long	&0x80	localized
+# >12			long	x	formid
+# >16			long	x	version control info 1
+# >20			short	x	form version
+# >22			short	x	version control info 2
+>24			string	HEDR
+#>>28			short	x	HEDR size=%d
+#>>30			float	x	version=%0.2f
+>>34			long	x	nrec=%d
+#>>38			long	x	nextobjectid=%d
+>42			string	CNAM
+#>46			short	x	CNAM size=%d
+>>48			string	>0	author=%s

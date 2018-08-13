@@ -1,0 +1,22 @@
+#!/bin/bash
+
+while getopts "dv" opt; do
+        case $opt in
+	d) DELOCALIZE=1 ;;
+	v) VERBOSE=1 ;;
+	?) exit -1 ;;
+        esac
+done; shift $((OPTIND - 1))
+
+for i in "$@"; do
+	[[ "$i" =~ .esm || "$i" =~ .esp ]] || continue
+
+	if ((DELOCALIZE)); then
+		((VERBOSE)) && echo "Delocalizing $i" 1>&2
+		printf '\x01'
+	else
+		((VERBOSE)) && echo "Localizing $i" 1>&2
+		printf '\x81'
+
+	fi | dd of="$i" bs=1 seek=8 count=1 conv=notrunc 2>/dev/null
+done

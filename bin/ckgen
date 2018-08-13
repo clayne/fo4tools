@@ -1,0 +1,1667 @@
+#!/bin/bash
+
+set -e
+#set -o pipefail
+
+source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
+
+# Prereq check
+for i in tmux rsync parallel lockfile; do
+	if ! which $i &>/dev/null; then
+		echo "$i not found" 1>&2
+		exit -1
+	fi
+done
+
+function cpu_core_cnt() {
+	awk '/cpu cores/ && !seen[$NF]++ { print $NF }' /proc/cpuinfo
+}
+
+function cpu_thread_cnt() {
+	egrep -c '^processor[[:space:]]+' /proc/cpuinfo
+}
+
+# XXX: Handle plugin:area/<shards>,area/<shards> *and* plugin/shards
+function plugin_parse() {
+	local tmp _p _f _t _a _s
+
+	# Thankfully this "grammar" is unambiguous enough..
+	OIFS="$IFS"
+	IFS=":"
+	tmp=( ${1%%/[0-9]} )
+	_f=$(basename "${tmp[0]}"); _p="$_f"
+	for i in es{m,p,l}; do _p="${_p/.$i*/.$i}"; done
+
+	IFS="/:,"
+	tmp=( ${1/${tmp[0]}} )
+	IFS="$OIFS"
+
+	for i in ${tmp[*]}; do
+		# plugin:clean:ints,other/2 (clean ints,other 2)
+		# plugin:clean:ints (clean ints SHARDS)
+		# plugin:clean/2 (clean all 2)
+		# plugin:ints/4 (TYPE ints 4)
+		# plugin:clean (clean AREA SHARDS)
+		# plugin:ints (TYPE ints SHARDS)
+		# plugin/4 (TYPE AREA 4)
+		case "$i" in
+		filtered|clean) _t="$i" ;;
+		ALL@*|all@*|main@*|ints@*|other@*|ALL|all|main|ints|other) _a="${_a:+$_a,}$i" ;;
+		[0-9]*) _s="$i" ;;
+		*) echo "Unknown option: $i" 1>&2; exit -1 ;;
+		esac
+	done
+
+	# Bash really sucks for this type of thing
+	eval "$2=\"$_p\"; $3=\"$_f\"; $4=\"$_t\"; $5=\"$_a\"; $6=\"$_s\""
+}
+
+function ctl_log() {
+	echo -e "$2\t$3\t$4\t$5\t$6\t$7\t$8\t$9" >> "$1"
+}
+
+function ck_ini_rewrite() {
+	# Enable multiple instances (so multiple copies can be run in parallel).
+	# Disable version control (so inability to check out a cell isn't an issue).
+	# Disable stopping on "important" warnings (so combined data warnings don't stop previs generation).
+	# Keep plugins that are merged with -checkinplugin (otherwise records merged and removed from the plugin).
+	# Force a few other previs related settings explicitly (even though they're the same as default).
+	# Force sFile Path to point to the build directory (precautionary as CK will use the cwd by default).
+	# Set umbra threads to core count (default is 4).
+	#
+	# iMaxUmbraBakeThreads=8
+	# bExportSceneOnUmbraGenerate=0
+	# bExportTomeOnUmbraGenerate=0
+	# bGeneratePreCombinedGeometryPreVis=1
+	# bKeepPluginWhenMerging=1
+	# bHideImportantWarnings=1
+	# bUseVersionControl=0
+	#
+	# Other keys:
+	# uDefaultCombinedObjectLevelsXY:General
+	# uDefaultCombinedObjectLevelsZ:General
+	# bCombinedObjectsAvailableForPicking:Display
+	# bOnlyLoadPreVis3D:General
+	# bOnlyLoadCombinable3D:General
+	# fPreVisCameraBufferNear:General
+	# fPreVisCameraZShift:General
+	# bDoMultithreadedVisQuery:General
+	# bUsePreCulledObjects:Display
+	# bPreCulledObjectsEnabled:General
+	# bAllowResourceReloading:General
+	# bUsePreCreatedSCOL:General
+
+	local bdir="$1"; shift
+	local job="$1"; shift
+
+	set -e
+	set -o pipefail
+
+	local wpwd=$(cygpath -aw "$bdir/$job/")
+	awk -v threads=$(cpu_thread_cnt) -v wpwd="${wpwd//\\/\\\\}\\\\" '
+	{
+		if (match($0, "^\\[([^\\]]+)\\]", a)) {
+			section=a[1];
+			slist[++slidx]=section;
+		} else if ($0 !~ /^$/ && match($0, "^([^=;]+) ?= ?([^\r\n]+)[\r\n]?$", a)) {
+			shash[section][a[1]]=a[2];
+		}
+	}END{
+#		shash["Memory"]["bEnableMemoryTracking"]=1;
+#		shash["DistantLOD"]["bUpdateDistantRefDataOnLoad"]=1;
+#		shash["General"]["bChangingLotsOfBaseObjects"]=1;
+#		shash["General"]["bAllowClearOldestBufferedExterior"]=1;
+#		shash["General"]["bMinimizeCachedExteriors"]=1;
+#		shash["General"]["bPreemptivelyUnloadCells"]=1;
+#		shash["General"]["bOnlyQueueCellsWhenRefsLoaded"]=1;
+#		shash["General"]["bOutputCombinedGeomDataWhenTinting"]=1;
+#		shash["General"]["bForcePreCombinedObject32bitExport"]=0;
+		shash["General"]["bCheckDLCCombinedKeys"]=0;
+		shash["General"]["bFixDLCCombinedKeys"]=0;
+#		shash["General"]["bOnlyLoadCombinable3D"]=1;
+#		shash["General"]["bOnlyLoadPreVis3D"]=1;
+#		shash["General"]["bUseCombinedObjects"]=1;
+#		shash["General"]["bUsePreCulledObjects"]=1;
+#		shash["General"]["bCleanUpInvalidFormsOnLoad"]=0;
+#		shash["General"]["bFixAIPackagesOnLoad"]=0;
+#		shash["General"]["bSkipValidateForms"]=1;
+#		shash["General"]["bSkipValidateInfos"]=1;
+#		shash["General"]["bSkipProgramFlows"]=1;
+#		shash["General"]["bSkipInitializationFlows"]=1;
+		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
+		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
+		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
+		shash["General"]["iMaxUmbraBakeThreads"]=threads;
+		shash["General"]["bThrowProcessCompleteExceptions"]=0;
+		shash["General"]["iNumHWThreads"]=threads;
+		shash["General"]["iMaxJobThreads"]=threads;
+		shash["General"]["bKeepPluginWhenMerging"]=1;
+		shash["General"]["bHideImportantWarnings"]=1;
+		shash["General"]["bAllowMultipleEditors"]=1;
+		shash["General"]["bAllowMultipleMasterLoads"]=1;
+		shash["General"]["bLoadTheUserPlugin"]=0;
+		shash["General"]["bUseVersionControl"]=0;
+		shash["General"]["bBackgroundLoading"]=1;
+		shash["Pathfinding"]["bFixNavmeshInfosOnLoad"]=0;
+#		shash["BackgroundLoad"]["bBackgroundCellLoads"]=1;
+#		shash["BackgroundLoad"]["bUseBackgroundFileLoader"]=1;
+		shash["Archive"]["bInvalidateOlderFiles"]=1;
+		shash["Archive"]["sResourceDataDirsFinal"]="";
+#		shash["Audio"]["bEnableAudio"]=0;
+		shash["General"]["sFile Path"]=wpwd;
+
+		for (i = 1; i <= slidx; i++) {
+			section=slist[i];
+			printf("%s[%s]\r\n", i > 1 ? "\r\n" : "", section);
+
+			if (!length(shash[section]))
+				continue;
+			asorti(shash[section], ss_src);
+
+			for (j = 1; j <= length(ss_src); j++) {
+				hk = ss_src[j];
+				printf("%s=%s\r\n", hk, shash[section][hk]);
+			}
+		}
+	}'
+}
+
+function perm_debug() {
+	ls -lai "$@" 1>&2 2>/dev/null || true
+	if which handle &>/dev/null; then
+		for i in "$@"; do
+			(cd /tmp && handle "$(basename "$i")" -nobanner) 1>&2 || true
+		done
+	fi
+}
+
+function ck_clone() {
+	set -x
+
+	local sdir="$1"; shift
+	local bdir="$1"; shift
+	local odir="$1"; shift
+	local cdir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local area_ck="$1"; shift
+	local cur="$1"; shift
+	local max="$1"; shift
+	local job="$1"; shift
+	local manual="$1"; shift
+	local ctl_log="$1"; shift
+
+	local plugin_base="${plugin/%.es[pm]}"
+	local file_base="${plugin/%.es[pm]}"
+
+	set -e
+	set -o pipefail
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "CLONING"
+
+	# Exclude anything not needed for automated processes like PC/PV generation
+	if ((!MANUAL)); then
+		EXCLUDE_AUTOMATED_AUX=1
+	fi
+
+	# Exclude files precombine generation may be involved with generating
+	case "$mode" in
+	precombine)
+		EXCLUDE_PC_AUX=1
+		;;
+	esac
+
+	# Hardlink base directory contents to per-build directories
+	rsync -aSH \
+		--delete \
+		--delete-excluded \
+		--exclude "${odir}*" \
+		--exclude "${bdir}*" \
+		--exclude "${cdir}*" \
+		--exclude [sS]SCOL* \
+		--exclude [pP]reCombined* \
+		--exclude [vV]is* \
+		--exclude [iI]nterface \
+		--exclude [sS]trings \
+		--exclude [sS]cripts \
+		--exclude [tT]extures \
+		--exclude [sS]ound \
+		--exclude [mM]usic \
+		--exclude [vV]ideo \
+		--exclude MCM \
+		--exclude F4SE \
+		--exclude Backup \
+		--exclude Edit\ Scripts \
+		--exclude CheckinBackup \
+		--exclude VersionBackup \
+		--exclude log.txt \
+		--exclude EditorWarnings.txt \
+		--exclude dumpneededfiles.out \
+		--exclude output.tome* \
+		--exclude input.scene* \
+		--exclude CombinedObjects.esp \
+		--exclude PreVis.esp \
+		--exclude 'CreationKit*.ini' \
+		--exclude 'enbseries' \
+		--exclude 'auto_backup_executable' \
+		--exclude 'FO4Edit*' \
+		--exclude 'f4se*.dll' \
+		--exclude 'x3d*.dll' \
+		--exclude 'd3d*.dll' \
+		--exclude 'la_d3d*.dll' \
+		--exclude 'IpHlpAPI.dll' \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Sounds*.ba2'} \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Textures*.ba2'} \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Voices*.ba2'} \
+		${EXCLUDE_PC_AUX:+--exclude '*.cdx'} \
+		${EXCLUDE_PC_AUX:+--exclude '*.csg'} \
+		${EXCLUDE_PC_AUX:+--exclude '*.psg'} \
+		--link-dest="$sdir" "$sdir"/ "$bdir/$job"/
+#		--exclude "$SELF*" \
+#		--exclude '*.es[pml]' \
+
+#	# Hardcopy plugins
+#	rsync -maS --include '*.es[pml]' --include '*/' --exclude '*' "$sdir/Data"/ "$bdir/$job/Data"/
+
+	# Hardcopy CK ini files
+	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$sdir"/ "$bdir/$job"/
+
+	# Explicitly remove CK prefs ini so it'll be regenerated from a clean slate to avoid strange behavior.
+	rm "$bdir/$job/CreationKitPrefs.ini"
+#	cp /dev/null "$bdir/$job/CreationKitPrefs.ini"
+
+	# Alter build-dir versions of CK ini files
+	for j in "$bdir/$job/CreationKit.ini" "$bdir/$job/CreationKitPrefs.ini" "$bdir/$job/CreationKitCustom.ini"; do
+		[[ -f "$j" ]] && ck_ini_rewrite "$bdir" "$job" < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
+	done
+
+	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
+	if [[ -d "$cdir/Data" ]]; then
+		rsync -aSH --link-dest="$PWD/$cdir/Data" "$cdir/Data"/ "$bdir/$job/Data"/
+	fi
+
+	# Move any esms into place as they should be considered the most up to date.
+	# Note: CK will stow know VC is enabled due to network shared dirs in the ini files.
+	if [[ -d "$bdir/$job/Data/Merging" ]]; then
+		find "$bdir/$job/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -tr0 mv -t "$bdir/$job/Data"
+		rm -rf "$bdir/$job/Data/Merging"
+	fi
+
+if false; then
+	# Clone plugin specific archive so that later archive rewrites don't run into
+	# concurrent access issues (e.g. Permission denied).
+	find "$bdir/$job/Data" -maxdepth 1 -mindepth 1 -type f -name "$plugin_base - *.ba2" | while read tmp; do
+		while ! cp --remove-destination -fp "$tmp" "$tmp.$$"; do
+			perm_debug "$tmp" "$tmp.$$"
+			sleep $((1 + (RANDOM % 4)))
+		done
+		while ! mv "$tmp.$$" "$tmp"; do
+			perm_debug "$tmp" "$tmp.$$"
+			sleep $((1 + (RANDOM % 4)))
+		done
+	done
+fi
+
+	# XXX: Update comment to be master specific.
+	# Original plugins, can be useful in cases where masters should be
+	# pulled in but not all of their extended masters (i.e. ckgen style).
+	# The actual use case is rather specific in where a large amount of
+	# masters are involved and handle limits are being hit in CK, which
+	# prevents generation of any data.
+	if [[ -d "$bdir/$job/ckgen.data" ]]; then
+		# Multiple finds are used to workaround cp complaining about files it just
+		# overwrote. rsync is not an option because it sorts the input list.
+
+		# Copy of plugins from ckgen.data/*
+		(find \
+			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			-maxdepth 1 -mindepth 1 -type f -printf '%h\n' 2>/dev/null || true) \
+			| awk '!seen[$0]++' \
+			| while read tmp
+		do
+			while ! find "$tmp" -maxdepth 1 -mindepth 1 -type f -print0 \
+				| xargs -tr0 cp --remove-destination -flpt "$bdir/$job/Data"
+			do
+				sleep $((1 + (RANDOM % 4)))
+			done
+		done || return 1
+
+		# Copy of plugins specifically setup as masters from ckgen.data/master/*
+		(find \
+			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
+			"$bdir/$job/ckgen.data/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			-maxdepth 1 -mindepth 1 -type f '!' -name "${plugin/.es[pml]*/.es[pml]}*" -printf '%h\n' 2>/dev/null || true) \
+			| awk '!seen[$0]++' \
+			| while read tmp
+		do
+			while ! find "$tmp" -maxdepth 1 -mindepth 1 -type f '!' -name "${plugin/.es[pml]*/.es[pml]}*" -print0 \
+				| xargs -tr0 cp --remove-destination -flpt "$bdir/$job/Data"
+			do
+				sleep $((1 + (RANDOM % 4)))
+			done
+		done || return 1
+	fi
+
+	# Propogate info file with information about cloned environment
+	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$plugin\t$file\t$mode\t$type\t$area\t$area_ck\t$cur\t$max\t$job\t$manual\t$$" > $bdir/$job/ck_wrap.info
+
+	return 0
+}
+
+function ck_archive_unpack() {
+	date 1>&2 || true
+	ls -lai "$1" 1>&2 2>/dev/null
+	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -e="$(cygpath -aw "$2")" -q
+	find "$2" -ls 1>&2
+	date 1>&2 || true
+}
+
+function ck_archive_pack() {
+	# Archive2 refuses to create empty archives
+	find "$1" -type f '!' -empty 2>/dev/null | egrep '' &>/dev/null || echo 'empty' > "$1/empty.txt"
+
+	date 1>&2 || true
+	ls -lai "$2" 1>&2 2>/dev/null || true
+	find "$1" -ls 1>&2
+	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -c="$(cygpath -aw "$2.$$")" -compression="${3:-Default}" -q
+	while ! mv "$2.$$" "$2"; do
+		perm_debug "$2.$$" "$2"
+		sleep $((1 + (RANDOM % 4)))
+	done
+	date 1>&2 || true
+}
+
+function ck_archive_rewrite() {
+	set -x
+
+	local bdir="$1"; shift
+	local job="$1"; shift
+	local method="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	local file_base="${file/%.es[pml]}"
+	local file_esm="${file/%.esp/.esm}"
+	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
+	local file_ck="${file_sanitized:-${file_esm:-$file}}"
+	local file_ck_base="${file_ck/%.es[pml]}"
+
+	local archive_type="Main"
+	local archive_main="$bdir/$job/Data/$plugin_base - $archive_type.ba2"
+	local archive_main_ck="$bdir/$job/Data/$plugin_ck_base - $archive_type.ba2"
+
+	set -e
+	set -o pipefail
+
+	if [[ ! -f "$archive_main" ]]; then
+		return 0
+	elif [[ "$file" == "$file_ck" ]]; then
+		return 0
+	fi
+
+	case "$method" in
+	sanitize)
+		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
+
+		if [[ "$archive_main" != "$archive_main_ck" ]]; then
+			while ! cp -flp --remove-destination "$archive_main" "$archive_main_ck"; do
+				perm_debug "$archive_main" "$archive_main_ck"
+				sleep $((1 + (RANDOM % 4)))
+			done
+		fi
+
+		# For every master a given plugin has (and itself), check the plugin's main
+		# archive for embedded directory names that need to be sanitized. If it's
+		# a directory matching a master, ensure esp is changed to esm, but if it's
+		# a directory matching the plugin itself, ensure full sanitization as CK is
+		# loading it by that name.
+		plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file" | while read __file; do
+			local __file_base="${__file/%.es[pml]}"
+			local __file_esm="${__file/%.esp/.esm}"
+			local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
+			local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
+			local __file_ck_base="${__file_ck/%.es[pml]}"
+			local __file_sub="$__file_esm"
+			local __file_sub_base="$__file_base"
+
+			# If the target is the file itself, then the ck-sanitized name
+			# should be used - otherwise the esm-extension name should be used
+			# as esp masters are simply flipped to esm extensions.
+			if [[ "$__file" == "$__file_ck" ]]; then
+				# Sanitized name same as original, skip.
+				continue
+			elif [[ "$__file" == "$file" ]]; then
+				__file_sub="$__file_ck"
+				__file_sub_base="$__file_ck_base"
+			fi
+
+			if [[ ! -d "$archive_data_tmp" ]]; then
+				# Speed-hack to avoid archive extraction unless it's absolutely necessary.
+				egrep -qi "$__file|$__file_base.*strings" "$archive_main" || continue
+
+				while ! cp -flp --remove-destination "$archive_main" "$archive_main.save"; do
+					perm_debug "$archive_main" "$archive_main.save"
+					sleep $((1 + (RANDOM % 4)))
+				done
+
+				mkdir -p "$archive_data_tmp"
+				ck_archive_unpack "$archive_main_ck" "$archive_data_tmp"
+			fi
+
+			# Account for file-specific dirs
+			if [[ "$__file" != "$__file_sub" ]]; then
+				find "$archive_data_tmp" -type d -name "$__file" -print0 \
+					| xargs -tr0 rename "$__file" "$__file_sub"
+			fi
+
+			# Account for mixed case base string files
+			if [[ "$__file_base" != "$__file_sub_base" ]]; then
+				for ___file_base in "${__file_base}" "${__file_base^^}" "${__file_base,,}"; do
+					find "$archive_data_tmp" -type f -name "${___file_base}*" -iname '*strings' -print0 \
+						| xargs -tr0 rename "$___file_base" "$__file_sub_base"
+				done
+			fi
+		done
+
+		if [[ -d "$archive_data_tmp" ]]; then
+			ck_archive_pack "$archive_data_tmp" "$archive_main_ck" 'Default'
+			rm -rf "$archive_data_tmp"
+		fi
+
+		;;
+	restore)
+		ls -lai "$archive_main.save" "$archive_main" "$archive_main_ck" 1>&2 2>/dev/null || true
+		if [[ "$archive_main" != "$archive_main_ck" ]]; then
+			rm -f "$archive_main_ck"
+		fi
+		if [[ -f "$archive_main.save" ]]; then
+			while ! rm -f "$archive_main"; do
+				perm_debug "$archive_main"
+				sleep $((1 + (RANDOM % 4)))
+			done
+			while ! mv "$archive_main.save" "$archive_main"; do
+				perm_debug "$archive_main.save" "$archive_main"
+				sleep $((1 + (RANDOM % 4)))
+			done
+		fi
+		;;
+	esac
+
+	return 0
+}
+
+function ck_needed_filter() {
+	local from="$1"; shift
+	local to="$1"; shift
+
+	sed -e "s#${from}#${to}#g" | tr -d '[\r\0\031]' | tr '\\' '/'
+}
+
+function ck_plugin_master_rewrite() {
+	set -x
+
+	local bdir="$1"; shift
+	local job="$1"; shift
+	local method="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local file_src="${1:-$file}"; shift || true
+
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	local file_base="${file/%.es[pml]}"
+	local file_esm="${file/%.esp/.esm}"
+	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
+	local file_ck="${file_sanitized:-${file_esm:-$file}}"
+	local file_ck_base="${file_ck/%.es[pml]}"
+
+	local max_tries=256
+
+	set -e
+	set -o pipefail
+
+	case "$method" in
+	esp-to-esm)
+		while ! plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm --sub "$file_base:$file_ck_base" "$bdir/$job/Data/$file_src"; do
+			perm_debug "$bdir/$job/Data/$file_src"
+			sleep $((1 + (RANDOM % 4)))
+		done
+
+#		plugin-master-reloc -vr "$bdir/$job/Data/$file_ck"
+
+		;;
+	esm-to-esp)
+		while ! plugin-master-reloc -vfr --esm-to-esp --sub "$file_ck_base:$file_base" "$bdir/$job/Data/$file_src"; do
+			perm_debug "$bdir/$job/Data/$file_src"
+			sleep $((1 + (RANDOM % 4)))
+		done
+#		plugin-master-reloc -vr "$bdir/$job/Data/$file"
+
+		;;
+	esac
+
+	return 0
+}
+
+function ck_output_dir_rename() {
+	set -x
+
+	local bdir="$1"; shift
+	local job="$1"; shift
+	local dir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	local file_base="${file/%.es[pml]}"
+	local file_esm="${file/%.esp/.esm}"
+	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
+	local file_ck="${file_sanitized:-${file_esm:-$file}}"
+	local file_ck_base="${file_ck/%.es[pml]}"
+
+	set -e
+	set -o pipefail
+
+	# Ensure all plugins using esp masters (including their masters) are temporarily
+	# altered to use esm masters instead.
+	plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file" | while read __file; do
+		local __file_base="${__file/%.es[pml]}"
+		local __file_esm="${__file/%.esp/.esm}"
+		local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
+		local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
+		local __file_ck_base="${__file_ck/%.es[pml]}"
+		local __file_sub="$__file_esm"
+
+		# If file name or masters have been sanitized or flipped to an esm,
+		# change any directory references back to the original file name.
+		if [[ "$__file" == "$__file_ck" ]]; then
+			continue
+		elif [[ "$__file" == "$file" ]]; then
+			__file_sub="$__file_ck"
+		fi
+
+		find "$bdir/$job/$dir" -type d -name "$__file_sub" -print0 \
+			| xargs -tr0 rename "$__file_sub" "$__file"
+	done
+
+	return 0
+}
+
+function ck_exec_wrap() {
+	set -x
+
+	local bdir="$1"; shift
+	local cdir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local area_ck="$1"; shift
+	local cur="$1"; shift
+	local max="$1"; shift
+	local job="$1"; shift
+	local manual=$1; shift;
+	local ctl_log="$1"; shift
+	local target
+	local -a args
+
+	# Equalized width of $cur
+	local wcur=$(printf "%02d" $cur)
+
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	local file_base="${file/%.es[pml]}"
+	local file_esm="${file/%.esp/.esm}"
+	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
+	local file_ck="${file_sanitized:-${file_esm:-$file}}"
+	local file_ck_base="${file_ck/%.es[pml]}"
+
+	set -e
+	set -o pipefail
+
+	# Sanitize archive filename and embedded filenames within archive
+	ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
+
+	# Sanitize masters to be compatible with ck args (no spaces) and archives
+	ck_plugin_master_rewrite "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
+
+	case "$mode" in
+	scol)
+		target='generatestaticcollections'
+		args=( -$target:"$file_ck" x64 )
+
+		[[ -d "$bdir/$job/Data/Meshes/SCOL" ]] && rm -rf "$bdir/$job/Data/Meshes/SCOL"
+
+		;;
+	precombine)
+		target='generateprecombined'
+		args=( -$target:"$file_ck" $type $area_ck $cur $max )
+
+		[[ -d "$bdir/$job/Data/Meshes/PreCombined" ]] && rm -rf "$bdir/$job/Data/Meshes/PreCombined"
+
+		for ext in csg psg; do
+			[[ -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext" ]] && rm -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext"
+		done
+
+		;;
+	previs)
+		target='generateprevisdata'
+		args=( -$target:"$file_ck" $type $area_ck $cur $max )
+
+		[[ -d "$bdir/$job/Data/Vis" ]] && rm -rf "$bdir/$job/Data/Vis"
+		[[ -f "$bdir/$job/Data/$file_base - Geometry.csg" ]] && rm -f "$bdir/$job/Data/$file_base - Geometry.csg"
+
+		for ext in csg psg; do
+			if [[ "$file_base" != "$file_ck_base" && -f "$bdir/$job/Data/$file_base - Geometry.$ext" ]]; then
+				while ! cp --remove-destination -flp "$bdir/$job/Data/$file_base - Geometry.$ext" "$bdir/$job/Data/$file_ck_base - Geometry.$ext"; do
+					perm_debug "$bdir/$job/Data/$file_ck_base - Geometry.$ext"
+					sleep $((1 + (RANDOM % 4)))
+				done
+			fi
+		done
+
+		;;
+	csg)
+		target='compresspsg'
+		args=( -$target:"$file_ck" )
+
+		[[ -f "$bdir/$job/Data/$file_ck_base - Geometry.csg" ]] && rm -f "$bdir/$job/Data/$file_ck_base - Geometry.csg"
+
+		;;
+	cdx)
+		target='buildcdx'
+		args=( -$target:"$file_ck" )
+
+		[[ -f "$bdir/$job/Data/$file_ck_base.cdx" ]] && rm -f "$bdir/$job/Data/$file_ck_base.cdx"
+
+		;;
+	needed)
+		target='dumpneededfiles'
+		args=( -$target:"$file_ck" "dumpneededfiles.out" )
+
+		[[ -f "$bdir/$job/Data/dumpneededfiles.out" ]] && rm -f "$bdir/$job/Data/dumpneededfiles.out"
+
+		;;
+	esac
+
+	# If in manual mode, respect the $mode functionality, but start CK interactively.
+	((manual)) && args=()
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "LOADING"
+
+	if ( \
+		cd "$bdir/$job" \
+			&& eval "$CKEXEC ${args[*]} &>$CKEXEC_OUT" \
+			&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
+	);
+	then
+		cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+
+		echo "SUCCESS ($target)" >> "$bdir/$job/EditorWarnings.txt"
+		mkdir -p "$bdir/$plugin"
+		cp --remove-destination -fp "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$file.$mode.$type.$area.$wcur.$target.txt"
+	else
+		if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+			echo "FAILURE ($target handles)" >> "$bdir/$job/EditorWarnings.txt"
+		elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
+			echo "FAILURE ($target file)" >> "$bdir/$job/EditorWarnings.txt"
+		else
+			echo "FAILURE ($target)" >> "$bdir/$job/EditorWarnings.txt"
+		fi
+
+		cp --remove-destination -fp "$bdir/$job/EditorWarnings.txt" "$bdir/$file.$mode.$type.$area.$wcur.$target.error"
+		return 1
+	fi
+
+	# If the plugin was copied to an esm, switch esm masters back to esp masters
+	ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file"
+
+	# Restore original archive and remove temporaries
+	ck_archive_rewrite "$bdir" "$job" "restore" "$plugin" "$file"
+
+	case "$mode" in
+	scol)
+		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
+			ck_output_dir_rename "$bdir" "$job" "Data/Meshes/SCOL" "$plugin" "$file"
+		fi
+
+		;;
+
+	precombine)
+		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
+			# If the plugin was copied to an esm, switch esm masters back to esp masters
+			ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "CombinedObjects.esp"
+
+			# If run in clean mode a shared geometry psg file will be produced that
+			# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
+			# A CDX file should also be produced with -BuildCDX although it's not
+			# strictly necessary that the PSG file be compressed first.
+			if [[ -f "$bdir/$job/Data/$file_ck_base - Geometry.psg" ]]; then
+				rename "$file_ck_base" "$plugin_base" "$bdir/$job/Data/$file_ck_base - Geometry.psg"
+			fi
+		fi
+
+		if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+			ck_output_dir_rename "$bdir" "$job" "Data/Meshes/PreCombined" "$plugin" "$file"
+		fi
+
+		;;
+
+	previs)
+		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
+			ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "PreVis.esp"
+		fi
+
+		if [[ -d "$bdir/$job/Data/Vis" ]]; then
+			ck_output_dir_rename "$bdir" "$job" "Data/Vis" "$plugin" "$file"
+		fi
+
+		;;
+
+	csg)
+		if [[ -f "$bdir/$job/Data/$file_ck_base - Geometry.csg" ]]; then
+			rename "$file_ck_base" "$plugin_base" "$bdir/$job/Data/$file_ck_base - Geometry.csg"
+		fi
+
+		;;
+
+	cdx)
+		if [[ -f "$bdir/$job/Data/$file_ck_base.cdx" ]]; then
+			rename "$file_ck_base" "$plugin_base" "$bdir/$job/Data/$file_ck_base.cdx"
+		fi
+
+		;;
+
+	needed)
+		if [[ -f "$bdir/$job/Data/dumpneededfiles.out" ]]; then
+			ck_needed_filter "$file_ck" "$plugin" \
+				< "$bdir/$job/dumpneededfiles.out" \
+				> "$bdir/$job/dumpneededfiles.out.tmp" \
+				&& mv "$bdir/$job/dumpneededfiles.out.tmp" "$bdir/$job/dumpneededfiles.out"
+
+			# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
+			# XXX: Masters?
+			if [[ "$file_ck" != "$plugin" ]]; then
+				sed -i -e "s#$file_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out"
+			fi
+		fi
+
+		;;
+	esac
+
+	return 0
+}
+
+function ck_archive_wrap() {
+	set -x
+
+	local sdir="$1"; shift
+	local bdir="$1"; shift
+	local cdir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local mode="$1"; shift
+
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	local file_base="${file/%.es[pml]}"
+	local file_esm="${file/%.esp/.esm}"
+	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
+	local file_ck="${file_sanitized:-${file_esm:-$file}}"
+	local file_ck_base="${file_ck/%.es[pml]}"
+
+	local archive_type="Main"
+
+	set -e
+	set -o pipefail
+
+	case "$mode" in
+	scol)
+		if [[ -f "$sdir/Data/$plugin_base - Meshes.ba2" ]]; then
+			archive_type="Meshes"
+		fi
+		;;
+	precombine|previs)
+		if [[ -f "$sdir/Data/$plugin_base - MeshesExtra.ba2" ]]; then
+			archive_type="MeshesExtra"
+		fi
+		;;
+	esac
+
+	local archive_main_plugin="$bdir/$plugin/Data/$plugin_base - $archive_type.ba2"
+	local archive_main_cached="$cdir/Data/$plugin_base - $archive_type.ba2"
+	local archive_main_orig="$sdir/Data/$plugin_base - $archive_type.ba2"
+	local cleaned_marker="$cdir/tmp/$plugin.$mode.$type.cleaned"
+	local cache_lock="$cdir/tmp/$plugin.lock"
+
+	# Multiple jobs may be generating data which is stored in the
+	# same backing archive. As such, it should be lock-controlled
+	# to prevent race conditions on update.
+	if ! lockfile -l 3600 -r 3600 -1 "$cache_lock"; then
+		echo "Failed to acquire lock: $cache_lock ..." 1>&2
+		return 1
+	fi
+
+	# Note: There are limitations in CK around the maximum number
+	# of cached file handles involved with loose files. Since
+	# Data/Meshes/PreCombined usually contains over 100k files
+	# for a full generation an archive needs to be used for any
+	# further generation depending on those files (e.g. previs).
+
+	case "$mode" in
+	scol)		local ddir="Meshes/SCOL" ;;
+	precombine)	local ddir="Meshes/PreCombined" ;;
+	previs)		local ddir="Vis" ;;
+	*)		return 1 ;;
+	esac
+
+	# Bail if the directory to archive doesn't exist.
+	if [[ ! -d "$bdir/$plugin/Data/$ddir" ]]; then
+		rm -f "$cache_lock"
+		return 0
+	fi
+
+	local archive_src
+	local archive_data_tmp="$bdir/$plugin/.archive_tmp/Data"
+
+	if [[ -f "$archive_main_cached" ]]; then
+		archive_src="$archive_main_cached"
+	elif [[ -f "$archive_main_orig" ]]; then
+		archive_src="$archive_main_orig"
+	fi
+
+	rm -rf "$archive_data_tmp"
+	mkdir -p "$archive_data_tmp"
+
+	# It's common that an archive being updated may not exist yet.
+	if [[ -f "$archive_src" ]]; then
+		ck_archive_unpack "$archive_src" "$archive_data_tmp"
+	fi
+
+	# Remove archived data for the same type being updated
+	# to prevent cruft - but only do it once in case of
+	# concurrent runs (shards, etc).
+#	if [[ ! -f "$cleaned_marker" || "$cleaned_marker" -nt "$archive_src" ]]; then
+	if [[ ! -f "$cleaned_marker" ]]; then
+		rm -rf "$archive_data_tmp/$ddir"
+		touch "$cleaned_marker"
+	fi
+
+	mkdir -p "$archive_data_tmp/$ddir"
+	rsync -aSH \
+		--link-dest="$PWD/$bdir/$plugin/Data/$ddir" \
+		"$bdir/$plugin/Data/$ddir"/ "$archive_data_tmp/$ddir"/
+
+	ck_archive_pack "$archive_data_tmp" "$archive_main_cached"
+
+	while ! cp --remove-destination -flp "$archive_main_cached" "$archive_main_plugin"; do
+		sleep $((1 + (RANDOM % 4)))
+	done
+
+	ls -lai "$archive_main_cached" "$archive_main_plugin" 1>&2 2>/dev/null || true
+
+	rm -rf "$archive_data_tmp"
+	rm -f "$cache_lock"
+
+	return 0
+}
+
+function ck_wrap() {
+	set -x
+
+	local sdir="$1"; shift
+	local bdir="$1"; shift
+	local odir="$1"; shift
+	local cdir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local area_ck="$1"; shift
+	local cur="$1"; shift
+	local max="$1"; shift
+	local job="$1"; shift
+	local manual="$1"; shift
+	local ctl_log="$1"; shift
+
+	# Equalized width of $cur
+	local wcur=$(printf "%02d" $cur)
+	local plugin_base="${plugin/%.es[pml]}"
+	local file_base="${file/%.es[pml]}"
+
+	set -e
+	set -o pipefail
+	set -o errtrace
+
+	rm -f "$bdir/$job/EditorWarnings.txt"
+	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; ls -d '$bdir/$file.$mode.$type.$area.$wcur'.*.error &>/dev/null || cp --remove-destination -fp '$bdir/$job/EditorWarnings.txt' '$bdir/$file.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
+
+	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+	# For each given mode, nuke any old data left in per-job build
+	# directory, regenerate it with CK, and then move the results
+	# to the output directory.
+	case "$mode" in
+	scol)
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
+			mkdir -p "$bdir/$plugin/Data/Meshes"
+			if [[ "$plugin" != "$file" ]]; then
+				mv "$bdir/$job/Data/Meshes/SCOL" "$bdir/$plugin/Data/Meshes/SCOL.$file.$type.$area.$wcur"
+			else
+				mv "$bdir/$job/Data/Meshes/SCOL" "$bdir/$plugin/Data/Meshes/SCOL.$type.$area.$wcur"
+			fi
+		fi
+
+		;;
+
+	precombine)
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
+			# If run in clean mode a shared geometry psg file will be produced that
+			# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
+			# A CDX file should also be produced with -BuildCDX although it's not
+			# strictly necessary that the PSG file be compressed first.
+			if [[ -f "$bdir/$job/Data/$plugin_base - Geometry.psg" ]]; then
+				mkdir -p "$bdir/$plugin/Data"
+				mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base - Geometry.psg"
+			fi
+
+			mkdir -p "$bdir/$plugin/Data"
+			mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/Data/$file.$mode.$type.$area.$wcur.esp"
+		fi
+
+		if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+			mkdir -p "$bdir/$plugin/Data/Meshes"
+			if [[ "$plugin" != "$file" ]]; then
+				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/Data/Meshes/PreCombined.$file.$type.$area.$wcur"
+			else
+				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/Data/Meshes/PreCombined.$type.$area.$wcur"
+			fi
+		fi
+
+		;;
+
+	previs)
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		# XXX: Look for any newly added or modified files instead of PreVis.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
+			mkdir -p "$bdir/$plugin/Data"
+			mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/Data/$file.$mode.$type.$area.$wcur.esp"
+		fi
+
+		if [[ -d "$bdir/$job/Data/Vis" ]]; then
+			mkdir -p "$bdir/$plugin/Data"
+			if [[ "$plugin" != "$file" ]]; then
+				mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Data/Vis.$file.$type.$area.$wcur"
+			else
+				mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Data/Vis.$type.$area.$wcur"
+			fi
+		fi
+
+		;;
+
+	csg)
+		# Using CombinedObjects.esp is perfectly fine as long as the requisite
+		# XCRI data (which it contains), PSG or CSG file, and precombined NIFs
+		# are accessible to the -BuildCDX codepath. The PSG data will be loaded
+		# by one of the masters of CombinedObjects.esp and that's all the engine
+		# needs (it doesn't need to explicitly match the file base). This ability
+		# is highly convenient as it avoids having to copy CombinedObjects.esp to
+		# a temporary file with the same file base.
+
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
+		# they should be moved after both -CompressPSG and -BuildCDX are finished.
+		mkdir -p "$bdir/$plugin/Data"
+		mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base - Geometry.csg"
+
+		;;
+
+	cdx)
+		# Generate "cell resource index" (SCellResourceIndexFileList) for a given
+		# plugin which is known to use shared precombine data combined with XCRI
+		# and XPRI records to generate an index database used by the game itself.
+		# Additionally, if a plugin makes use of both shared-geom and non-shared
+		# geom precombines the cdx file must be updated to reflect that.
+
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		mkdir -p "$bdir/$plugin/Data"
+		mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base.cdx"
+
+		;;
+
+	needed)
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
+
+		mkdir -p "$bdir/$plugin"
+		mv "$bdir/$job/dumpneededfiles.out" "$bdir/$plugin/$file.$mode.$type.$area.$wcur.dumpneededfiles.out"
+
+		;;
+	esac
+
+	# Copy plugin used for generation for reference purposes
+	if [[ -n "$plugin" && -f "$bdir/$job/Data/$plugin" ]]; then
+		mkdir -p "$bdir/$plugin"
+		while ! cp --remove-destination -flp "$bdir/$job/Data/$plugin" "$bdir/$plugin/$file.$mode.$type.$area.orig"; do
+			sleep $((1 + (RANDOM % 4)))
+		done
+	fi
+
+	echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+
+	return 0
+}
+
+function ck_proc() {
+	set -x
+
+	local sdir="$1"; shift
+	local bdir="$1"; shift
+	local odir="$1"; shift
+	local cdir="$1"; shift
+	local plugin="$1"; shift
+	local file="$1"; shift
+	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local area_ck="$1"; shift
+	local cur="$1"; shift
+	local max="$1"; shift
+	local job="$1"; shift
+	local manual="$1"; shift
+	local ctl_log="$1"; shift
+
+	local proc_lock="$bdir/tmp/$plugin.lock"
+	local plugin_base="${plugin/%.es[pml]}"
+
+	set -e
+	set -o pipefail
+
+	if ! lockfile -l 3600 -r 0 -1 "$proc_lock"; then
+		return 0
+#		echo "Failed to acquire lock: $proc_lock ..." 1>&2
+#		return 1
+	elif [[ -f "$bdir/tmp/$plugin.processed" ]]; then
+		rm -f "$proc_lock"
+		return 0
+	fi
+
+	# Combine and archive individual directories
+	if [[ -d "$bdir/$plugin" ]]; then
+		for i in \
+			"$bdir/$plugin/Data/Meshes/SCOL" \
+			"$bdir/$plugin/Data/Meshes/PreCombined" \
+			"$bdir/$plugin/Data/Vis"
+		do
+			if ls -d "$i".* &>/dev/null; then
+				ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "COMBINING"
+				ls -dtr "$i".* 2>/dev/null | while read tmp; do
+					# Roll up multiple directories into single combined directories
+					rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$i"/
+				done
+
+				ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "ARCHIVING"
+				case "$(basename "$i")" in
+				SCOL)
+					echo "$plugin: Archiving static collections..." 1>&2
+					ck_archive_wrap "$sdir" "$bdir" "$cdir" "$plugin" "$file" "scol" 1>&2
+					;;
+				PreCombined)
+					echo "$plugin: Archiving precombined..." 1>&2
+					ck_archive_wrap "$sdir" "$bdir" "$cdir" "$plugin" "$file" "precombine" 1>&2
+					;;
+				Vis)
+					echo "$plugin: Archiving previs..." 1>&2
+					ck_archive_wrap "$sdir" "$bdir" "$cdir" "$plugin" "$file" "previs" 1>&2
+					;;
+				esac
+			fi
+
+			rm -rf "$i"
+		done
+
+		# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs).
+		for ext in csg psg; do
+			if [[ -f "$bdir/$plugin/Data/$plugin_base - Geometry.$ext" ]]; then
+				while ! cp --remove-destination -flp -t "$cdir/Data" "$bdir/$plugin/Data/$plugin_base - Geometry.$ext"; do
+					sleep $((1 + (RANDOM % 4)))
+				done
+			fi
+		done
+	fi
+
+	# Sync everything to output directory
+	if [[ -d "$bdir/$plugin" ]]; then
+		ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "MOVING"
+
+		if ls -d "$bdir/$plugin/Data/Meshes/SCOL".* 2>/dev/null; then
+			echo "$plugin: Moving static collections..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data/Meshes/PreCombined".* 2>/dev/null; then
+			echo "$plugin: Moving precombined..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data/Vis".* 2>/dev/null; then
+			echo "$plugin: Moving previs..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data"/*.[pc]sg 2>/dev/null; then
+			echo "$plugin: Moving shared geometry..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data"/*.cdx 2>/dev/null; then
+			echo "$plugin: Moving cell resource index..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data"/*.ba2 2>/dev/null; then
+			echo "$plugin: Moving archive..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data"/*.esp 2>/dev/null; then
+			echo "$plugin: Moving generated plugins..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin"/*.orig 2>/dev/null; then
+			echo "$plugin: Moving reference plugins..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin"/*.dumpneededfiles*out 2>/dev/null; then
+			echo "$plugin: Moving needed files output..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin"/EditorWarnings*.txt 2>/dev/null; then
+			echo "$plugin: Moving editor warnings output..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/jobs" 2>/dev/null; then
+			echo "$plugin: Moving job output..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin".*.error 2>/dev/null; then
+			echo "$plugin: Moving error output..." 1>&2
+		fi
+	fi | perl -pe "s#\Q$bdir/$plugin\E#$plugin#g" \
+		| rsync --remove-source-files --protect-args -raS --relative --files-from=- --link-dest="$PWD/$bdir" "$bdir" "$odir" || true
+
+	find "$bdir/$plugin" -type d -empty -print0 | xargs -tr0 rmdir -p --ignore-fail-on-non-empty
+
+	touch "$bdir/tmp/$plugin.processed"
+
+	rm -f "$proc_lock"
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "SUCCESS"
+
+	return 0
+}
+
+function ck_log_wrap() {
+	local build="$1"; shift
+	local wrap_mode="$1"; shift
+	local jobs="$1"; shift
+
+	set -e
+	set -o pipefail
+
+	# Precompute filenames rather than rely on shell globbing as they're usually
+	# non-existent when tail starts (and tail -F handles that issue on it's own).
+	local -a logs=( \
+		"$build/tmp/ctl.log" \
+		$(printf "$build/%s/EditorWarnings.txt " $(seq -s ' ' 1 $jobs)) \
+		$(printf "$build/%s/$CKEXEC_OUT " $(seq -s ' ' 1 $jobs)) \
+	)
+
+	echo $$ > "$build/tmp/ck_log_wrap.$wrap_mode.pid"
+
+	touch "$build/tmp/cell".{main,other,ints}.log
+
+	tail -vn0 -s 0.1 -F "${logs[@]}" 2>/dev/null \
+		| LC_ALL=C awk \
+			-v wrap_mode="$wrap_mode" \
+			-v build_dir="$build" \
+			-v ctl_log="$build/tmp/ctl.log" \
+			-v main_log="$build/tmp/cell.main.log" \
+			-v other_log="$build/tmp/cell.other.log" \
+			-v ints_log="$build/tmp/cell.ints.log" \
+			-v info_file="ck_wrap.info" '
+	BEGIN{
+		IGNORECASE=1
+	}
+	{
+		if (!length) {
+			next;
+		} else if ($0 ~ /^==> /) {
+			if (match($0, "^==> .+/([0-9]+)/.+ <==$", a)) {
+				id_cur=a[1];
+				f = sprintf("%s/%d/%s", build_dir, id_cur, info_file);
+				while (getline < f > 0) {
+					split($0, info, "\t");
+				}
+				close(f);
+				plugin=info[5];
+				file=info[6];
+				mode=info[7];
+				type=info[8];
+				area=info[9];
+				area_ck=info[10];
+				ctl=0
+			} else if ($0 ~ ctl_log) {
+				ctl=1
+			}
+			next;
+		} else if (wrap_mode == "cell") {
+			if (ctl) {
+				split($0, info, "\t");
+				id_cur=info[1];
+				plugin=info[2];
+				file=info[3];
+				mode=info[4];
+				type=info[5];
+				area=info[6];
+				area_ck=info[7];
+				$0=info[8];
+				usepcnt=0;
+			} else {
+				if ($0 !~ /generat.*for.*cell|Number of registered paths|^(SUCCESS|FAILURE)/)
+					next;
+#				if ($0 ~ /^SUCCESS \(.+\)/)
+#					next;
+				if ($0 ~ /ROOTCELL/)
+					next;
+				if ($0 ~ /^(SUCCESS|FAILURE)/)
+					usepcnt=0;
+				else
+					usepcnt=1;
+
+				if ($0 ~ /Generating.* for.*cell/) {
+					if ($0 ~ / interior cell /) {
+						print > ints_log;
+						fflush(ints_log);
+					} else if ($0 ~ / Commonwealth /) {
+						print > main_log;
+						fflush(main_log);
+					} else {
+						print > other_log;
+						fflush(other_log);
+					}
+				}
+			}
+		} else if (wrap_mode == "all") {
+			if (ctl)
+				next;
+			if ($0 ~ /gen.*for.*cell/ && $0 !~ /ROOTCELL/)
+				next;
+			if ($0 ~ /(Warnings|Errors) were encountered|See warnings file/)
+				next;
+			if ($0 ~ /D3D error|Reference .* attached to wrong cell for its location: Persistent cell|Unable to find reference group/)
+				next;
+			if ($0 ~ /Multibound for ref.*outside.*extents/)
+				next;
+			usepcnt=1;
+		} else {
+			next;
+		}
+
+#		fname=(plugin != file) ? sprintf("%s(%s)", plugin, gensub(plugin, "", 1, file)) : plugin;
+
+		if (usepcnt)
+			printf("%8d %32.32s %12s %8s %8s [%02d] %8d %s\n", ++cnt, file, mode, type, area, id_cur, ++cnttab[plugin], $0);
+		else
+			printf("%8d %32.32s %12s %8s %8s [%02d] %8s %s\n", ++cnt, file, mode, type, area, id_cur, "", $0);
+	}'
+
+	return 0
+}
+
+function ck_status() {
+	set -e
+
+	local build_dir="$1"; shift
+	local -a status=( $(awk -v jobs_in="$build_dir/tmp/jobs.in" -v jobs_log="$build_dir/tmp/jobs.gen.log" -v meminfo=/proc/meminfo '
+BEGIN{
+	total=0
+	success=0
+	fail=0
+	while (getline < jobs_in > 0) {
+		total++
+	}
+	while (getline < jobs_log > 0) {
+		if ($1 == "Seq") continue
+		else if ($7) fail++
+		else success++
+	}
+	while (getline < meminfo > 0) {
+		if ($1 == "MemTotal:") memtotal=$2
+		else if ($1 == "MemFree:") memfree=$2
+		else if ($1 == "SwapTotal:") swaptotal=$2
+		else if ($1 == "SwapFree:") swapfree=$2
+	}
+}END{
+	print total,success,fail,memtotal,memfree,swaptotal,swapfree
+}
+' "$build_dir/tmp/jobs.log") )
+	local -a cell=( "$(wc -l < "$build_dir/tmp/cell.main.log")" "$(wc -l < "$build_dir/tmp/cell.other.log")" "$(wc -l < "$build_dir/tmp/cell.ints.log")" )
+	local -a disk=( $(df --output=used,avail "$build_dir") )
+	local load=$(uptime)
+
+	printf 'total/success/fail: %s/%s/%s (%d%%) | main/other/ints: %d/%d/%d (%d) | load average: %s | mem free: %d/%d GB (%s%%) | disk free: %d/%d GB (%s%%)\n' \
+		"${status[0]}" "${status[1]}" "${status[2]}" $(((status[1]+status[2])*100/status[0])) \
+		"${cell[0]}" "${cell[1]}" "${cell[2]}" $((cell[0]+cell[1]+cell[2])) \
+		"${load/*load average: }" \
+		$((( (status[3]+status[5])-(status[4]+status[6]) )/1024**2)) $(((status[3]+status[5])/1024**2)) $(((status[4]+status[6])*100/(status[3]+status[5]))) \
+		$((disk[2]/1024**2)) $(((disk[2]+disk[3])/1024**2)) $((disk[3]*100/(disk[2]+disk[3])))
+
+	return 0
+}
+
+function ck_gen() {
+	local bdir="$1"; shift
+	local args="$1"; shift
+	local ctl_err="$1"; shift
+	local ctl_log="$1"; shift
+	local jobs="$1"; shift
+	local manual="$1"; shift
+	local proc_only="$1"; shift
+
+	set -e
+	set -o pipefail
+
+	if ((manual)); then
+		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
+		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
+	else
+		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --lb -tr -j $jobs --colsep '\t'"
+		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --lb -tr -j $jobs --colsep '\t'"
+	fi
+
+	if ((!proc_only)); then
+		eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $manual '$ctl_log'" < "$args" || ret=$?
+		if ((ret == 255)); then
+			touch "$ctl_err"
+			return 1
+		elif ! read; then
+			echo "read_ret = $?" 1>&2
+		fi
+	fi
+
+	# XXX: Could be done in a better way
+	eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $manual '$ctl_log'" < "$args" || ret=$?
+	if ((ret == 255)); then
+		touch "$ctl_err"
+		return 1
+	elif ! read; then
+		echo "read_ret = $?" 1>&2
+	fi
+
+	return 0
+}
+
+TMUX=1
+SHARDS=1
+SHARDS_START=1
+CORES=$(cpu_core_cnt)
+THREADS=$(cpu_thread_cnt)
+JOBS=$THREADS
+SELF=$(basename $0)
+CACHE=$SELF.cache
+BUILD=$SELF.build
+OUT=$SELF.out
+TYPE="filtered"
+AREA="all"
+PRESERVE_CACHE=1
+PRESERVE_BUILD=0
+PRESERVE_OUT=0
+PROC_ONLY=0
+MANUAL=0
+DEBUG=0
+CKEXEC_OUT="ckexec.out"
+
+if ((DEBUG)); then
+	CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
+else
+	CKEXEC="./CreationKit.exe"
+fi
+
+case "$1" in
+--wrap) shift; ck_wrap "$@"; exit $? ;;
+--gen) shift; ck_gen "$@"; exit $? ;;
+--proc) shift; ck_proc "$@"; exit $? ;;
+--log-wrap) shift; ck_log_wrap "$@"; exit $? ;;
+--status) shift; ck_status "$@"; exit $? ;;
+esac
+
+# XXX: Use -c for cache option?
+while getopts "j:s:S:t:PpmMg" opt; do
+        case $opt in
+	j) JOBS="$OPTARG" ;;
+	s) SHARDS="$OPTARG" ;;
+	S) SHARDS_START="$OPTARG" ;;
+	t) TMUX="$OPTARG" ;;
+	p) PRESERVE_OUT=1 ;;
+	P) PRESERVE_OUT=1; PRESERVE_BUILD=1; PROC_ONLY=1 ;;
+	m) MERGE=1 ;;
+	M) MANUAL=1 ;;
+	g) DEBUG=1 ;;
+	?) exit -1 ;;
+        esac
+done; shift $((OPTIND - 1))
+
+PROFILE="$1"; shift
+if [[ -z "$PROFILE" ]]; then
+	echo "No profile specified" 1>&2
+	exit -1
+elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+	echo "$PROGDIR/Fallout 4.$PROFILE does not exist" 1>&2
+	exit -1
+fi
+
+SRC="$PROGDIR/Fallout 4.$PROFILE"
+cd "$SRC"
+
+if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
+	echo "Removing cache..." 1>&2
+	rm -rf "$CACHE" && mkdir -p "$CACHE" "$CACHE/Data" "$CACHE/tmp" || exit -1
+fi
+
+if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
+	echo "Removing previous build data..." 1>&2
+	find "$BUILD" -mindepth 1 -maxdepth 1 \! -regex '.*/[0-9]+$' -print0 \
+		| xargs -tr0 rm -rf \
+		&& mkdir -p "$BUILD" || exit -1
+
+	# Cleanup any temporary files from prior runs
+	rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
+fi
+
+if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
+	echo "Removing previous output data..." 1>&2
+	rm -rf "$OUT" && mkdir -p "$OUT" || exit -1
+fi
+
+# XXX: checkinplugin?
+# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+MODE="$1"; shift
+case "$MODE" in
+needed|scol|csg|cdx)
+	SHARDS=1
+	SHARDS_FORCE=1
+	;;
+precombine|previs)
+	if ((!MANUAL)); then
+		TYPE="$1"; shift
+		AREA="$1"; shift
+	elif [[ "$1" == "clean" || "$1" == "filtered" ]]; then
+		case "$2" in
+		ALL*|all*|main*|other*|ints*) shift; shift ;;
+		esac
+	fi
+
+	if [[ "$TYPE" != "clean" && "$TYPE" != "filtered" ]]; then
+		echo "Invalid type: $TYPE" 1>&2
+		exit -1
+	fi
+	;;
+*)
+	echo "Invalid mode: $MODE" 1>&2
+	exit -1
+	;;
+esac
+
+AREA=( ${AREA//,/ } )
+for area in ${AREA[*]}; do
+	case "$area" in
+	ALL) AREA=( main ints other ) ;;
+	ALL@*) AREA=( main@${area/*@} ints@${area/*@} other@${area/*@} ) ;;
+	all|all@*|main|main@*|ints|ints@*|other|other@*) ;;
+	*)
+		echo "Invalid area: $area" 1>&2
+		exit -1
+		;;
+	esac
+done
+
+# Generate output file of jobs to be run by parallel
+for plugin in "$@"; do
+	if [[ -d "$plugin" ]]; then
+		find "$plugin" -type f -name '*.es[pml]'
+	else
+		echo "$plugin"
+	fi
+done | while read plugin; do
+	plugin_parse "$plugin" plugin f t a s
+
+	# Allow additional type/area keywords to override global value past the point of it's parse.
+	case "$plugin" in
+	filtered|clean) TYPE="$plugin"; continue ;;
+	ALL|ALL,*|ALL@*|all|all,*|all@*|ints|ints,*|ints@*|main|main,*|main@*|other|other,*|other@*) AREA=( "${plugin//,/ }" ); continue ;;
+	*)
+		if [[ ! "$plugin" =~ \.es[mpl]$ ]]; then
+			echo "Invalid plugin: $plugin" 1>&2
+			exit -1
+		fi
+		;;
+	esac
+
+	[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
+	[[ -n $t ]] || t=$TYPE
+	[[ -n $s ]] && s=$((SHARDS_FORCE ? SHARDS : s)) || s=$SHARDS
+
+	for area in ${atmp[*]}; do
+		area_ck="${area/*@}"; area="${area/@*}";
+#		if [[ "$area" != "all" && "$MODE" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
+		if [[ "$MODE" == "precombine" && "$t" == "clean" && $s -ne 1 ]]; then
+			echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+			exit -1
+#			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
+#				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
+#				s=1
+		fi
+
+		# Use tabs for arg separation and escape-quote $plugin so that when parallel
+		# interprets this input line to call ck_wrap it doesn't consume quotes.
+		for _s in $(seq -s ' ' $SHARDS_START $s); do
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$SRC" "$BUILD" "$OUT" "$CACHE" "$plugin" "$f" "$MODE" "$t" "$area" "$area_ck" "$_s" "$s"
+		done
+
+	done
+done | perl -e '
+	# Sort output jobs by largest plugins first so that longer running jobs overlap
+	# more with shorter running jobs - making better use of parallelization.
+
+	use warnings FATAL => qw(all);
+	use strict;
+
+	use File::Basename qw(basename);
+	use List::Util qw(shuffle);
+
+	my %plugins;
+	while (<>) {
+		chomp;
+		my @b = split("\t", $_);
+		push @{$plugins{$b[4]}}, $_;
+	}
+
+	# Sort by count of CELL records within a plugin
+	my $ckgen_dir = (-d "ckgen.data" ? "ckgen.data" : "");
+	open(my $fd, "-|", "find Data/*.es[mpl] $ckgen_dir -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
+	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
+	close($fd);
+
+	my %seen;
+	foreach (grep !$seen{$_}++, map $_->[0], sort { $b->[1] <=> $a->[1] } @a) {
+		print "$_\n" foreach (shuffle @{$plugins{$_}});
+	}
+' > "$BUILD/tmp/jobs.in"
+
+if [[ ! -s "$BUILD/tmp/jobs.in" ]]; then
+	exit 0
+fi
+
+touch "$BUILD/tmp/jobs.log"
+rm -f "$BUILD/tmp/gen.err"
+
+# Note: final 'read' commands are to prevent tmux from closing each sub-window
+if ((TMUX)); then
+	# tmux doesn't emit the exit status of child commands as part of it's own exit status
+	tmux new \
+		"ckgen --log-wrap '$BUILD' cell $JOBS" ';' \
+		split -p 40 \
+		"ckgen --log-wrap '$BUILD' all $JOBS" ';' \
+		split -p 50 \
+		"ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $MANUAL $PROC_ONLY 2>&1 || true; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
+		set-option status-left "#(ckgen --status '$PWD/$BUILD')" ';' \
+		set-option status-interval 1 ';' \
+		set-option status-right '' ';' \
+		set-option status-left-length 180 ';' \
+		set-option status-style fg=black,reverse ';' \
+		set-window-option window-status-current-format '' \
+		&& [[ ! -f "$BUILD/tmp/gen.err" ]] \
+		|| exit -1
+#		set-option status off ';' \
+#		set-option alternate-screen off ';' \
+#		set -g terminal-overrides 'xterm*:smcup@:rmcup@' \
+else
+	ckgen --gen "$BUILD" "$BUILD/tmp/jobs.in" "$BUILD/tmp/gen.err" "$BUILD/tmp/ctl.log" $JOBS $MANUAL
+fi
