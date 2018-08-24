@@ -1,0 +1,9 @@
+# source /etc/bash_completion.d/fo4tools
+# export PS1='\[\033]0;\u@\h:\W\007\]\u@\h:\w$(__fo4tools_ps1) \\$ '
+__fo4tools_ps1() {
+	[[ "$PWD" =~ Fallout\ ?4 ]] || return
+
+	fo4prof=$(readlink.exe -en "$PWD" | awk '{ if (match($0, "Fallout ?4\\.([^/]+)", a)) print a[1] }')
+
+	[[ -n "$fo4prof" ]] && printf -- ' (%s)' "$fo4prof"
+}

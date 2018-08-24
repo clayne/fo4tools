@@ -1,0 +1,163 @@
+#!/bin/bash
+
+set -e
+
+source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
+
+flip() {
+	while getopts "" opt; do
+		case $opt in
+		?) exit -1 ;;
+		esac
+	done; shift $((OPTIND - 1))
+
+	if [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+		echo "$PROGDIR/Fallout 4.$PROFILE does not exist!" 1>&2
+		exit -1
+	elif [[ ! -d "$USERDIR/Fallout4.$PROFILE" ]]; then
+		echo "$USERDIR/Fallout4.$PROFILE does not exist!" 1>&2
+		exit -1
+	elif [[ ! -d "$DATADIR/Fallout4.$PROFILE" ]]; then
+		echo "$DATADIR/Fallout4.$PROFILE does not exist!" 1>&2
+		exit -1
+	fi
+
+	set -x
+
+	# Force Windows (rather than Cygwin) compatible symlinks
+	CYGWIN=winsymlinks:nativestrict ln -sfT "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
+	CYGWIN=winsymlinks:nativestrict ln -sfT "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
+	CYGWIN=winsymlinks:nativestrict ln -sfT "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
+}
+
+list() {
+	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
+
+	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2 -d . | while read tmp; do
+		[[ $tmp == "shared" || $tmp == "template" || $tmp == "extract" ]] && continue
+		[[ $tmp == $ACTIVE ]] && echo "$tmp*" || echo "$tmp"
+	done
+}
+
+clean() {
+	while getopts "" opt; do
+		case $opt in
+		?) exit -1 ;;
+		esac
+	done; shift $((OPTIND - 1))
+
+	rm -rf "$PROGDIR/Fallout 4.$PROFILE" "$USERDIR/Fallout4.$PROFILE" "$DATADIR/Fallout4.$PROFILE"
+	net share "Merging.$PROFILE" /delete
+}
+
+clone() {
+	while getopts "s:" opt; do
+		case $opt in
+		s) PROFILE_SRC="$OPTARG" ;;
+		?) exit -1 ;;
+		esac
+	done; shift $((OPTIND - 1))
+
+	if [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+		echo "$PROGDIR/Fallout 4.$PROFILE already exists!" 1>&2
+		exit -1
+	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]]; then
+		echo "$USERDIR/Fallout4.$PROFILE already exists!" 1>&2
+		exit -1
+	elif [[ -d "$DATADIR/Fallout4.$PROFILE" ]]; then
+		echo "$DATADIR/Fallout4.$PROFILE already exists!" 1>&2
+		exit -1
+	fi
+
+	set -x
+
+	PROGDIR_SHARED_BASE="$PROGDIR_SHARED"
+	USERDIR_SHARED_BASE="$USERDIR_SHARED"
+	DATADIR_SHARED_BASE="$DATADIR_SHARED"
+
+	if [[ -n "$PROFILE_SRC" ]]; then
+		PROGDIR_SHARED="$PROGDIR/Fallout 4.$PROFILE_SRC"
+		USERDIR_SHARED="$USERDIR/Fallout4.$PROFILE_SRC"
+		DATADIR_SHARED="$DATADIR/Fallout4.$PROFILE_SRC"
+		PROGDIR_TEMPLATE="$PROGDIR/Fallout 4.$PROFILE_SRC"
+		USERDIR_TEMPLATE="$USERDIR/Fallout4.$PROFILE_SRC"
+		DATADIR_TEMPLATE="$DATADIR/Fallout4.$PROFILE_SRC"
+	fi
+
+	# Clone shared directory using hard links only so as to effectively share
+	# the files between profiles but consume no additional disk space.
+	[[ -d "$PROGDIR_SHARED" ]] && rsync -avSPH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
+
+	# XXX: This shouldn't be needed twice but without it Fallout4.exe isn't being synced
+	[[ -d "$PROGDIR_SHARED" ]] && rsync -avSPH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
+
+	[[ -d "$USERDIR_SHARED" ]] && rsync -avSPH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
+	[[ -d "$DATADIR_SHARED" ]] && rsync -avSPH --link-dest="$DATADIR_SHARED_BASE" "$DATADIR_SHARED"/ "$DATADIR/Fallout4.$PROFILE"/
+
+	# For the template directories, hard copy (and overwrite) into profile directory.
+	# Any modifications to these files will be per-profile and explicitly not shared.
+	[[ -d "$PROGDIR_TEMPLATE" ]] && rsync -avSPH "$PROGDIR_TEMPLATE"/ "$PROGDIR/Fallout 4.$PROFILE"/
+	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -avSPH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
+	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -avSPH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
+
+	# SNetwork Path=\\HOSTNAME\Merging.PROFILE\
+	# SNetworkMasterPath=\\HOSTNAME\Merging.PROFILE\
+	# SNewVersionBackupPath=\\HOSTNAME\Merging.PROFILE\VersionBackup\
+
+	# Convert paths in templated CreationKit.ini to be per-profile specific.
+	HOSTNAME_UC=$(hostname | tr '[a-z]' '[A-Z]')
+	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
+	SNETPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
+
+	# The insane backslash stuff is due to both shell escaping + sed escaping
+	for i in CreationKit.ini CreationKitPrefs.ini; do
+		[[ -f "$PROGDIR/Fallout 4.$PROFILE/$i" ]] || continue
+		cat "$PROGDIR/Fallout 4.$PROFILE/$i" \
+			| sed \
+				-e "s#^sFile Path=.*\\\\#sFile Path=$SFILEPATH\\\\#g" \
+				-e "s#^SNetwork Path=.*\\\\#SNetwork Path=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
+				-e "s#^SNetworkMasterPath=.*\\\\#SNetworkMasterPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
+				-e "s#^SNewVersionBackupPath=.*\\\\#SNewVersionBackupPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\VersionBackup\\\\#g" \
+				> "$PROGDIR/Fallout 4.$PROFILE/$i.tmp" \
+			&& mv "$PROGDIR/Fallout 4.$PROFILE/$i.tmp" "$PROGDIR/Fallout 4.$PROFILE/$i"
+	done
+
+	cat <<-EOF >> "$PROGDIR/Fallout 4.$PROFILE/CreationKitPrefs.ini"
+	[WhoCanMerge]
+	$USER=1
+	EOF
+
+	mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup" 
+	cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
+	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
+
+	net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
+}
+
+while getopts "" opt; do
+        case $opt in
+	?) exit -1 ;;
+        esac
+done; shift $((OPTIND - 1))
+
+MODE="$1"; shift || true
+PROFILE="$1"; shift || true
+
+if [[ "$MODE" == "list" ]]; then
+	list "$@"
+elif [[ -z "$PROFILE" ]]; then
+	echo "No profile specified" 1>&2
+	exit -1
+elif [[ -z "$MODE" ]]; then
+	echo "No mode specified" 1>&2
+	exit -1
+elif [[ "$MODE" == "flip" ]]; then
+	flip "$@"
+elif [[ "$MODE" == "clone" ]]; then
+	clone "$@"
+elif [[ "$MODE" == "clean" ]]; then
+	clean "$@"
+else
+	echo "Invalid mode: $MODE" 1>&2
+	exit -1
+fi

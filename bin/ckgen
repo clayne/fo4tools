@@ -1,0 +1,212 @@
+#!/bin/bash
+
+set -e
+
+source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
+
+# Prereq check
+for i in tmux rsync parallel; do
+	if ! which $i &>/dev/null; then
+		echo "$i not found" 1>&2
+		exit -1
+	fi
+done
+
+TMUX=1
+JOBS=1
+START=1
+SHARDS=32
+SELF=$(basename $0)
+BUILD=$SELF.build
+OUT=$SELF.out
+
+while getopts "a:j:m:s:S:t:p" opt; do
+        case $opt in
+	a) ARCHIVE="$OPTARG" ;;
+	j) JOBS="$OPTARG" ;;
+	m) MERGE="$OPTARG" ;;
+	s) SHARDS="$OPTARG" ;;
+	S) START="$OPTARG" ;;
+	t) TMUX="$OPTARG" ;;
+	p) PRESERVE=1 ;;
+	?) exit -1 ;;
+        esac
+done; shift $((OPTIND - 1))
+
+PROFILE="$1"; shift
+MODE="$1"; shift
+ESM="$(basename $1)"; shift
+TYPE="$1"; shift
+AREA="$1"; shift
+
+MODE=( ${MODE//,/ } )
+AREA=( ${AREA//,/ } )
+
+if [[ -z "$PROFILE" ]]; then
+	echo "No profile specified" 1>&2
+	exit -1
+elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+	echo "$PROGDIR/Fallout 4.$PROFILE does not exist" 1>&2
+	exit -1
+elif [[ "$ESM" =~ [[:space:]] ]]; then
+	echo "Plugins cannot have spaces in them (CK limitation)" 1>&2
+	exit -1
+elif [[ "$TYPE" != "clean" && "$TYPE" != "filtered" ]]; then
+	echo "Invalid type: $TYPE" 1>&2
+	exit -1
+fi
+
+for mode in ${MODE[*]}; do
+	[[ "$mode" == "precombined" || "$mode" == "previs" ]] && continue
+
+	echo "Invalid mode: $mode" 1>&2
+	exit -1;
+done
+
+# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+if [[ "$MODE" == "precombined" && "$TYPE" == "clean" ]]; then
+	echo "Warning: generating data of type 'clean' cannot be run in parallel due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+	SHARDS=1
+fi
+
+for area in ${AREA[*]}; do
+	if [[ "$area" == "all" ]]; then
+		echo "Warning: area of type 'all' does not parallelize (CK limitation)" 1>&2
+		SHARDS=1
+		AREA=( 'all' )
+		continue
+	elif [[ "$area" == "main" || "$area" == "ints" || "$area" == "other" ]]; then
+		continue
+	fi
+
+	echo "Invalid area: $area" 1>&2
+	exit -1;
+done
+
+cd "$PROGDIR/Fallout 4.$PROFILE"
+
+OUT="$OUT/$ESM"
+BUILD="$BUILD/$ESM"
+
+if ((!PRESERVE)); then
+	echo "Removing previous output data..." 1>&2
+	rm -rf "$OUT" && mkdir -p "$OUT"
+
+	echo "Removing previous build data..." 1>&2
+	rm -rf "$BUILD" && mkdir -p "$BUILD"
+
+	echo "Cloning build directories (hardlinks)..." 1>&2
+	for i in $(parallel --seqreplace _ "echo \$(((_ % $JOBS) + 1))" ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS) | sort -u); do
+	(
+		# Hardlink base directory contents to per-build directories
+		rsync -avSPH \
+			--exclude "$BUILD" \
+			--exclude EditorWarnings.txt \
+			--exclude output.tome \
+			--exclude input.scene \
+			--exclude CombinedObjects.esp \
+			--exclude PreVis.esp \
+			--exclude PreCombined \
+			--exclude Vis \
+			--link-dest="$PWD" "$PWD"/ "$BUILD/$i"/ \
+			|| exit -1
+
+		# Temporarily disable version control for builds
+		for j in "$BUILD/$i/CreationKit.ini" "$BUILD/$i/CreationKitCustom.ini"; do
+			if [[ -f "$j" ]] && grep -q 'bUseVersionControl=1' "$j"; then
+				if [[ -d "$BUILD/$i/Data/Merging" ]]; then
+					find "$BUILD/$i/Data/Merging" -type f -name '*.esm' -print0 | xargs -r0 mv -t "$BUILD/$i/Data"
+					rm -rf "$BUILD/$i/Data/Merging"
+				fi
+				sed -ie 's#bUseVersionControl=1#bUseVersionControl=0#g' "$j"
+			fi
+		done
+	) &
+	done; wait
+elif [[ ! -d "$OUT" ]]; then
+	echo "Missing output dir: $OUT" 1>&2
+	exit -1
+elif [[ ! -d "$BUILD" ]]; then
+	echo "Missing build dir: $BUILD" 1>&2
+	exit -1
+fi
+
+ck_wrap() {
+	bdir="$1"; shift
+	mode="$1"; shift
+	esm="$1"; shift
+	type="$1"; shift
+	area="$1"; shift
+	cur="$1"; shift
+	max="$1"; shift
+	job="$1"; shift
+	wcur=$(printf "%02d" $cur)
+
+	# For each given mode, nuke any old data left in per-job build
+	# directory, regenerate it with CK, and then move the results
+	# to the output directory.
+	if [[ "$mode" == "precombined" ]]; then
+		rm -rf "$bdir/$job/Data/Meshes/PreCombined" \
+			&& (cd "$bdir/$job" && ./CreationKit.exe -generateprecombined:"$esm" $type $area $cur $max) \
+			&& mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/PreCombined.$area.$wcur" \
+			&& mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/CombinedObjects.$area.$wcur.esp" \
+			|| touch $bdir/precombined.$wcur.error
+	elif [[ "$mode" == "previs" ]]; then
+		rm -rf "$bdir/$job/Data/Vis" \
+			&& (cd "$bdir/$job" && ./CreationKit.exe -generateprevisdata:"$esm" $type $area $cur $max) \
+			&& mv "$bdir/$job/Data/Vis" "$bdir/Vis.$area.$wcur" \
+			&& mv "$bdir/$job/Data/PreVis.esp" "$bdir/PreVis.$area.$wcur.esp" \
+			|| touch $bdir/previs.$wcur.error
+	fi
+
+	mv "$bdir/$job/EditorWarnings.txt" "$bdir/EditorWarnings.$mode.$area.$wcur.txt"
+}
+export -f ck_wrap
+
+# Precompute filenames rather than rely on shell globbing as they're usually
+# non-existent when tail starts (and tail -F handles that issue on it's own).
+LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
+
+for mode in "${MODE[@]}"; do
+	# Note: final 'read' commands are to prevent tmux from closing each sub-window
+	if ((TMUX)); then
+		tmux new \
+			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -i gen.*for.*cell | grep --line-buffered -v "ROOTCELL" | cat -n" ';' \
+			split -p 40 \
+			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
+			split -p 50 \
+			"parallel --eta --shuf --lb -vr -j $JOBS ck_wrap $BUILD $mode $ESM $TYPE {1} {2} $SHARDS {%} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS); read"
+	else
+		parallel --eta --shuf --lb -vr -j $JOBS ck_wrap $BUILD $mode $ESM $TYPE {1} {2} $SHARDS {%} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS) || exit -1
+	fi
+
+	# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
+	if [[ "$mode" == "precombined" ]]; then
+		echo "Moving precombined..." 1>&2
+		mkdir -p "$OUT/Data/Meshes/PreCombined"
+		rsync --remove-source-files -avSP "$BUILD"/PreCombined.*/ "$OUT/Data/Meshes/PreCombined"/
+	elif [[ "$mode" == "previs" ]]; then
+		echo "Moving previs..." 1>&2
+		mkdir -p "$OUT/Data/Vis"
+		rsync --remove-source-files -avSP "$BUILD"/Vis.*/ "$OUT/Data/Vis"/
+	fi
+
+	mkdir -p "$OUT/plugins"
+	find "$BUILD" -type f -name 'CombinedObjects.*.esp' -o -name 'PreVis.*.esp' -print0 | xargs -r0 mv -nt "$OUT/plugins"
+
+	if [[ -n "$MERGE" ]]; then
+		echo "Merging plugins..." 1>&2
+		# XXX: Plugins might have to be in Data first
+		# Could not parse command line properly.  Should be -CheckInPlugin:<PluginFilename> <ESMFilename>
+		find "$OUT/plugins" -type f -name '*.esp' -print0 \
+			| xargs -I{} -r0 -n1 ./CreationKit.exe -checkinplugin:{} $MERGE
+	fi
+done
+
+if [[ -n "$ARCHIVE" ]]; then
+	echo "Archiving data..." 1>&2
+
+	# Output data will contain precombined and/or previs data only at this point
+	Tools/Archive2/Archive2.exe "$OUT/Data" -c="$OUT/$ARCHIVE"
+fi
