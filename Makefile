@@ -1,3 +1,4 @@
 all:
-	cp -p bin/* /usr/local/bin
-	cp -p etc/* /usr/local/etc
+install:
+	cp -Rp bin/* /usr/local/bin
+	cp -Rp etc/* /usr/local/etc
