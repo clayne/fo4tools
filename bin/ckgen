@@ -14,20 +14,24 @@ done
 
 TMUX=1
 START=1
-SHARDS=8
+SHARDS_PC=1
+SHARDS_PV=1
+SHARDS_MAX=1
 CORES=$(awk '/cpu cores/ && !seen[$NF]++ { print $NF }' /proc/cpuinfo)
+THREADS=$(egrep -c '^processor[[:space:]]+' /proc/cpuinfo)
 JOBS=$CORES
 SELF=$(basename $0)
 BUILD=$SELF.build
 OUT=$SELF.out
 FALLOUT4_PC_ARCHIVE="Fallout4 - ckgen_pc.ba2"
 
-while getopts "j:s:S:t:Ppam" opt; do
+while getopts "j:s:S:t:A:Ppam" opt; do
         case $opt in
 	j) JOBS="$OPTARG" ;;
-	s) SHARDS="$OPTARG" ;;
+	s) SHARDS_PC="$OPTARG"; SHARDS_PV="$OPTARG" ;;
 	S) START="$OPTARG" ;;
 	t) TMUX="$OPTARG" ;;
+	A) FALLOUT4_PC_ARCHIVE="$OPTARG" ;;
 	p) PRESERVE=1 ;;
 	P) PRESERVE_OUT=1 ;;
 	a) ARCHIVE=1 ;;
@@ -57,35 +61,43 @@ AREA=( ${AREA//,/ } )
 ESM=( "$@" )
 
 for esm in "${ESM[@]}"; do
-	if [[ "$esm" =~ [[:space:]] ]]; then
+	t=( ${esm//\// } ); e=${t[0]}; s=${t[1]}
+	if [[ "$e" =~ [[:space:]] ]]; then
 		echo "Plugins cannot have spaces in them (CK limitation)" 1>&2
 		exit -1
-	elif [[ "$esm" == "Fallout4.esm" ]]; then
+	elif [[ "$e" == "Fallout4.esm" ]]; then
 		FALLOUT4_ESM=1
 	fi
+
+	((s > SHARDS_MAX)) && SHARDS_MAX=$s
 done
 
 for mode in ${MODE[*]}; do
-	if [[ "$mode" != "precombined" && "$mode" != "previs" ]]; then
-		echo "Invalid mode: $mode" 1>&2
-		exit -1;
-	fi
-
 	# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
 	# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
-	if [[ "$mode" == "precombined" && "$type" == "clean" ]]; then
-		echo "Warning: generating data of type 'clean' cannot be run in parallel due to inability to merge shared geometry data (PSG/CSG)" 1>&2
-		SHARDS=1
+	if [[ "$mode" == "precombined" ]]; then
+		if [[ "$type" == "clean" ]]; then
+			echo "Warning: generating data of type 'clean' cannot be run in parallel due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+			SHARDS_PC=1
+			SHARDS_FORCE=1
+		fi
+		for area in ${AREA[*]}; do
+			if [[ "$area" == "all" ]]; then
+				echo "Warning: area of type 'all' does not parallelize with precombines (CK limitation)" 1>&2
+				AREA=( 'all' )
+				SHARDS_PC=1
+				SHARDS_FORCE=1
+				break
+			fi
+		done
+	elif [[ "$mode" != "previs" ]]; then
+		echo "Invalid mode: $mode" 1>&2
+		exit -1;
 	fi
 done
 
 for area in ${AREA[*]}; do
-	if [[ "$area" == "all" ]]; then
-		echo "Warning: area of type 'all' does not parallelize (CK limitation)" 1>&2
-		SHARDS=1
-		AREA=( 'all' )
-		continue
-	elif [[ "$area" == "main" || "$area" == "ints" || "$area" == "other" ]]; then
+	if [[ "$area" == "all" || "$area" == "main" || "$area" == "ints" || "$area" == "other" ]]; then
 		continue
 	fi
 
@@ -93,7 +105,8 @@ for area in ${AREA[*]}; do
 	exit -1;
 done
 
-cd "$PROGDIR/Fallout 4.$PROFILE"
+SRC="$PROGDIR/Fallout 4.$PROFILE"
+cd "$SRC"
 
 if ((!PRESERVE_OUT)); then
 	echo "Removing previous output data..." 1>&2
@@ -111,83 +124,86 @@ if ((!PRESERVE)); then
 	done
 
 	echo "Cloning build directories (hardlinks)..." 1>&2
-	for i in $(parallel --seqreplace _ "echo \$(((_ % $JOBS) + 1))" ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS) | sort -u); do
+	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
 	(
+		set -e
 
 		# Hardlink base directory contents to per-build directories
 		rsync -aSPH \
+			--exclude "$OUT" \
 			--exclude "$BUILD" \
+			--exclude log.txt \
 			--exclude EditorWarnings.txt \
 			--exclude output.tome \
 			--exclude input.scene \
+			--exclude input.scene.json \
 			--exclude CombinedObjects.esp \
 			--exclude PreVis.esp \
+			--exclude PreCombined \
 			--exclude Vis \
-			--link-dest="$PWD" "$PWD"/ "$BUILD/$i"/ \
+			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/ \
 			|| exit -1
 
-#			--exclude PreCombined \
-
 		# Hardcopy CK ini files
-		rsync -aSPH "$PWD"/CreationKit*.ini "$BUILD/$i"/ || exit -1
+		rsync -aSPH "$SRC"/CreationKit*.ini "$BUILD/$i"/ || exit -1
 
 		for j in "$BUILD/$i/CreationKit.ini" "$BUILD/$i/CreationKitCustom.ini"; do
-			if [[ -f "$j" ]] && grep -q 'bUseVersionControl=1' "$j"; then
-				# Nuke version control directory to prevent CK from prompting that VC is disabled
-				if [[ -d "$BUILD/$i/Data/Merging" ]]; then
-					find "$BUILD/$i/Data/Merging" -type f -name '*.esm' -print0 | xargs -r0 mv -t "$BUILD/$i/Data"
-					rm -rf "$BUILD/$i/Data/Merging"
-				fi
+			[[ -f "$j" ]] || continue
 
-				# Enable multiple instances (so multiple copies can be run in parallel)
-				# Disable version control (so inability to check out a cell isn't an issue)
-				# Disable stopping on "important" warnings (so combined data warnings don't stop previs generation)
-				# Keep plugins that are merged with -checkinplugin (otherwise records merged and removed from the plugin)
-				# Set umbra threads to core count (default is 4)
-				# Force a few other previs related settings explicitly (even though they're the same as default)
-				#
-				# iMaxUmbraBakeThreads=16
-				# bExportSceneOnUmbraGenerate=0
-				# bExportTomeOnUmbraGenerate=0
-				# bGeneratePreCombinedGeometryPreVis=1
-				# bKeepPluginWhenMerging=1
-				# bHideImportantWarnings=1
-				# bUseVersionControl=0
-				#
-				awk -v cores=$CORES -v fo4pca="$FALLOUT4_PC_ARCHIVE" '
-                                { 
-                                        if (match($0, "^\\[([^\\]]+)\\]", a)) {
-                                                section=a[1];
-                                                slist[++slidx]=section;
-                                        } else if ($0 !~ /^$/ && match($0, "^([^=;]+) ?= ?(.+)$", a)) {
-                                                shash[section][a[1]]=a[2];
-                                        }
-                                }END{
-                                        shash["General"]["iMaxUmbraBakeThreads"]=cores;
-                                        shash["General"]["bExportSceneOnUmbraGenerate"]=0;
-                                        shash["General"]["bExportTomeOnUmbraGenerate"]=0;
-                                        shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
-                                        shash["General"]["bKeepPluginWhenMerging"]=1;
-                                        shash["General"]["bHideImportantWarnings"]=1;
-                                        shash["General"]["bUseVersionControl"]=0;
-                                        shash["Archive"]["bInvalidateOlderFiles"]=1;
-                                        shash["Archive"]["sResourceDataDirsFinal"]="";
-					if (fo4pca)
-						shash["Archive"]["SResourceArchiveList"]=sprintf("Fallout4 - Voices.ba2, Fallout4 - Interface.ba2, Fallout4 - Meshes.ba2, Fallout4 - MeshesExtra.ba2, Fallout4 - Misc.ba2, Fallout4 - Shaders.ba2, Fallout4 - Sounds.ba2, Fallout4 - Materials.ba2, %s", fo4pca);
-
-                                        for (i = 1; i <= slidx; i++) {
-                                                section=slist[i];
-                                                printf("%s[%s]\r\n", i > 1 ? "\r\n" : "", section) >> "/dev/stderr";
-
-                                                asorti(shash[section], ss_src);
-
-                                                for (j = 1; j <= length(ss_src); j++) {
-                                                        hk = ss_src[j];
-                                                        printf("%s=%s\r\n", hk, shash[section][hk]) >> "/dev/stderr";
-                                                }
-                                        }
-                                }' "$j" > "$j.tmp" && mv "$j.tmp" "$j"
+			# Nuke version control directory to prevent CK from prompting that VC is disabled
+			if [[ -d "$BUILD/$i/Data/Merging" ]]; then
+				find "$BUILD/$i/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -r0 mv -t "$BUILD/$i/Data"
+				rm -rf "$BUILD/$i/Data/Merging"
 			fi
+
+			# Enable multiple instances (so multiple copies can be run in parallel)
+			# Disable version control (so inability to check out a cell isn't an issue)
+			# Disable stopping on "important" warnings (so combined data warnings don't stop previs generation)
+			# Keep plugins that are merged with -checkinplugin (otherwise records merged and removed from the plugin)
+			# Set umbra threads to core count (default is 4)
+			# Force a few other previs related settings explicitly (even though they're the same as default)
+			#
+			# iMaxUmbraBakeThreads=16
+			# bExportSceneOnUmbraGenerate=0
+			# bExportTomeOnUmbraGenerate=0
+			# bGeneratePreCombinedGeometryPreVis=1
+			# bKeepPluginWhenMerging=1
+			# bHideImportantWarnings=1
+			# bUseVersionControl=0
+			#
+			awk -v threads=$THREADS -v fo4pca="$FALLOUT4_PC_ARCHIVE" '
+			{ 
+				if (match($0, "^\\[([^\\]]+)\\]", a)) {
+					section=a[1];
+					slist[++slidx]=section;
+				} else if ($0 !~ /^$/ && match($0, "^([^=;]+) ?= ?([^\r\n]+)[\r\n]?$", a)) {
+					shash[section][a[1]]=a[2];
+				}
+			}END{
+				shash["General"]["iMaxUmbraBakeThreads"]=threads;
+				shash["General"]["bExportSceneOnUmbraGenerate"]=0;
+				shash["General"]["bExportTomeOnUmbraGenerate"]=0;
+				shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
+				shash["General"]["bKeepPluginWhenMerging"]=1;
+				shash["General"]["bHideImportantWarnings"]=1;
+				shash["General"]["bUseVersionControl"]=0;
+				shash["Archive"]["bInvalidateOlderFiles"]=1;
+				shash["Archive"]["sResourceDataDirsFinal"]="";
+				if (fo4pca)
+					shash["Archive"]["SResourceArchiveList"]=sprintf("%s, %s", shash["Archive"]["SResourceArchiveList"], fo4pca)
+
+				for (i = 1; i <= slidx; i++) {
+					section=slist[i];
+					printf("%s[%s]\r\n", i > 1 ? "\r\n" : "", section);
+
+					asorti(shash[section], ss_src);
+
+					for (j = 1; j <= length(ss_src); j++) {
+						hk = ss_src[j];
+						printf("%s=%s\r\n", hk, shash[section][hk]);
+					}
+				}
+			}' "$j" > "$j.tmp" && mv "$j.tmp" "$j"
 		done
 	) &
 	done; wait
@@ -210,18 +226,19 @@ ck_wrap() {
 	job="$1"; shift
 	wcur=$(printf "%02d" $cur)
 
+	mkdir -p "$bdir/$esm" || { touch "$bdir/precombined.$wcur.error"; exit -1; }
+
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
 	if [[ "$mode" == "precombined" ]]; then
 		rm -rf "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/PreCombined.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe -generateprecombined:"$esm" $type $area $cur $max) \
-			&& mkdir -p "$bdir/$esm" \
 			&& (
 				[[ -d "$bdir/$job/Data/Meshes/PreCombined" ]] && mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$esm/PreCombined.$area.$wcur"
 				[[ -f "$bdir/$job/Data/CombinedObjects.esp" ]] && mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/CombinedObjects.$area.$wcur.esp"
 			) \
-			|| touch $bdir/precombined.$wcur.error
+			|| touch "$bdir/precombined.$esm.$area.$wcur.error"
 	elif [[ "$mode" == "previs" ]]; then
 		# Special hack for Fallout4.esm due to limitations in CK
 		# around the maximum number of cached file handles involved
@@ -237,12 +254,11 @@ ck_wrap() {
 
 		rm -rf "$bdir/$job/Data/Vis" "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/Vis.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe -generateprevisdata:"$esm" $type $area $cur $max) \
-			&& mkdir -p "$bdir/$esm" \
 			&& (
 				[[ -d "$bdir/$job/Data/Vis" ]] && mv "$bdir/$job/Data/Vis" "$bdir/$esm/Vis.$area.$wcur"
 				[[ -f "$bdir/$job/Data/PreVis.esp" ]] && mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/PreVis.$area.$wcur.esp"
 			) \
-			|| touch $bdir/previs.$wcur.error
+			|| touch "$bdir/previs.$esm.$area.$wcur.error"
 
 		# If precombines have been moved aside, restore the loose
 		# files in case another job uses this build slot.
@@ -260,6 +276,29 @@ export -f ck_wrap
 LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
 
 for mode in "${MODE[@]}"; do
+	# For previs generation specifically, symlink (windows style) the precombined
+	# meshes from the master directory due to the sheer amount of files that may
+	# be present in Data/Meshes/PreCombined. Whilst it's usually fine to hardlink
+	# this many files, there's no modification of this directory during previs
+	# generation so it's safe as a speed-hack.
+	if [[ "$mode" == "previs" ]]; then
+		find "$BUILD" -type d -name '[0-9]*' -prune -print0 \
+			| CYGWIN=winsymlinks:nativestrict xargs -I{} -r0 ln -sfT "$PWD/Data/Meshes/PreCombined" "$PWD/{}/Data/Meshes/PreCombined"
+		SHARDS=$SHARDS_PV
+	elif [[ "$mode" == "precombined" ]]; then
+		SHARDS=$SHARDS_PC
+	fi
+
+	CMDS=$(
+	for esm in ${ESM[*]}; do
+		t=( ${esm//\// } ); e=${t[0]}; s=${t[1]}
+		if ((!s || SHARDS_FORCE)); then
+			s=$SHARDS
+		fi
+
+		parallel -r -j1 echo ck_wrap $BUILD $mode $TYPE {1} {2} {3} $s ::: $e ::: ${AREA[*]} ::: $(seq -s ' ' $START $s)
+	done)
+
 	# Note: final 'read' commands are to prevent tmux from closing each sub-window
 	if ((TMUX)); then
 		tmux new \
@@ -267,45 +306,50 @@ for mode in "${MODE[@]}"; do
 			split -p 40 \
 			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
 			split -p 50 \
-			"parallel --eta --shuf --lb -vr -j $JOBS ck_wrap $BUILD $mode $TYPE {1} {2} {3} $SHARDS {%} ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS); read"
+			"echo '$CMDS' | tee /tmp/parallel.in | parallel --eta --shuf --lb -vr -j $JOBS {} {%}; read"
 	else
-		parallel --eta --shuf --lb -vr -j $JOBS ck_wrap $BUILD $mode $TYPE {1} {2} {3} $SHARDS {%} ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS) || exit -1
+		echo "$CMDS" | parallel --eta --shuf --lb -vr -j $JOBS {} {%} || exit -1
 	fi
 
 	for esm in ${ESM[*]}; do
+		t=( ${esm//\// } ); e=${t[0]}; s=${t[1]}
+
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
 		if [[ "$mode" == "precombined" ]]; then
-			echo "Moving precombined for $esm..." 1>&2
-			for i in "$BUILD/$esm/PreCombined".*; do
-				mkdir -p "$OUT/$esm/Data/Meshes/PreCombined"
-				rsync --remove-source-files -aSP "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+			h=0; for i in $(ls -d "$BUILD/$e/PreCombined".* 2>/dev/null); do
+				((h++)) || echo "Moving precombined for $e..." 1>&2
+				mkdir -p "$OUT/$e/Data/Meshes/PreCombined"
+				rsync --remove-source-files -aS "$i"/ "$OUT/$e/Data/Meshes/PreCombined"/ || true
 			done
 		elif [[ "$mode" == "previs" ]]; then
-			echo "Moving previs for $esm..." 1>&2
-			for i in "$BUILD/$esm/Vis".*; do
-				mkdir -p "$OUT/$esm/Data/Vis"
-				rsync --remove-source-files -aSP "$i"/ "$OUT/$esm/Data/Vis"/ || true
+			h=0; for i in $(ls -d "$BUILD/$e/Vis".* 2>/dev/null); do
+				((h++)) || echo "Moving previs for $e..." 1>&2
+				mkdir -p "$OUT/$e/Data/Vis"
+				rsync --remove-source-files -aS "$i"/ "$OUT/$e/Data/Vis"/ || true
 			done
 		fi
 
-		mkdir -p "$OUT/$esm/plugins"
-		find "$BUILD/$esm" -type f -name 'CombinedObjects.*.esp' -o -name 'PreVis.*.esp' -print0 | xargs -r0 mv -nt "$OUT/$esm/plugins"
-		find "$BUILD/$esm" -type d -print0 | xargs -r0 rmdir --ignore-fail-on-non-empty
+		if [[ -d "$BUILD/$e" ]]; then
+			echo "Moving plugins for $e..." 1>&2
+			mkdir -p "$OUT/$e/plugins"
+			find "$BUILD/$e" -type f -name 'CombinedObjects.*.esp' -o -name 'PreVis.*.esp' -print0 | xargs -r0 mv -nt "$OUT/$e/plugins"
+			find "$BUILD/$e" -type d -empty -print0 | xargs -r0 rmdir --ignore-fail-on-non-empty
+		fi
 
 		if ((MERGE)); then
-			echo "Merging plugins for $esm..." 1>&2
+			echo "Merging plugins for $e..." 1>&2
 
 			# XXX: Plugins might have to be in Data first
 			# Could not parse command line properly.  Should be -CheckInPlugin:<PluginFilename> <ESMFilename>
-			find "$OUT/$esm/plugins" -type f -name '*.esp' -print0 \
-				| xargs -I{} -r0 -n1 ./CreationKit.exe -checkinplugin:{} $esm
+			find "$OUT/$e/plugins" -type f -name '*.esp' -print0 \
+				| xargs -I{} -r0 -n1 ./CreationKit.exe -checkinplugin:{} $e
 		fi
 
 		if ((ARCHIVE)); then
-			echo "Archiving data for $esm..." 1>&2
+			echo "Archiving data for $e..." 1>&2
 
 			# Output data will contain precombined and/or previs data only at this point
-			Tools/Archive2/Archive2.exe "$OUT/$esm/Data" -c="$OUT/$esm/${esm/.esm} - ckgen.ba2"
+			Tools/Archive2/Archive2.exe "$OUT/$e/Data" -c="$OUT/$e/${esm/.esm} - ckgen.ba2"
 		fi
 
 	done
