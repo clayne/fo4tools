@@ -28,15 +28,6 @@ function esm_parse() {
 	echo "'$e'" "'$a'" "'$s'"
 }
 
-function pc_archive_check() {
-	local i
-
-	for i in 'Fallout4.esm' 'pcv-world-merged.esm'; do
-		[[ "$1" == "$i" ]] && return 0
-	done
-	return 1
-}
-
 TMUX=1
 START=1
 SHARDS=1
@@ -45,20 +36,24 @@ CORES=$(awk '/cpu cores/ && !seen[$NF]++ { print $NF }' /proc/cpuinfo)
 THREADS=$(egrep -c '^processor[[:space:]]+' /proc/cpuinfo)
 JOBS=$CORES
 SELF=$(basename $0)
+CACHE=$SELF.cache
 BUILD=$SELF.build
 OUT=$SELF.out
-PC_ARCHIVE="ckgen - precombined.ba2"
 TYPE="clean"
 AREA="main"
+PRESERVE_CACHE=1
+PRESERVE_BUILD=0
+PRESERVE_OUT=0
 
+# XXX: Use -c for cache option?
 while getopts "j:s:S:t:A:PpamM" opt; do
         case $opt in
 	j) JOBS="$OPTARG" ;;
 	s) SHARDS="$OPTARG" ;;
 	S) START="$OPTARG" ;;
 	t) TMUX="$OPTARG" ;;
-	A) PC_ARCHIVE="$OPTARG" ;;
-	p) PRESERVE=1 ;;
+	A) ARCHIVE="$OPTARG" ;;
+	p) PRESERVE_BUILD=1 ;;
 	P) PRESERVE_OUT=1 ;;
 	a) ARCHIVE=1 ;;
 	m) MERGE=1 ;;
@@ -68,8 +63,6 @@ while getopts "j:s:S:t:A:PpamM" opt; do
 done; shift $((OPTIND - 1))
 
 PROFILE="$1"; shift
-MODE="$1"; shift
-
 if [[ -z "$PROFILE" ]]; then
 	echo "No profile specified" 1>&2
 	exit -1
@@ -78,6 +71,7 @@ elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 	exit -1
 fi
 
+MODE="$1"; shift
 MODE=( ${MODE//,/ } )
 
 # XXX: cdx, merge plugins?
@@ -123,9 +117,6 @@ for esm in "${ESM[@]}"; do
 	if [[ "$esm" =~ [[:space:]] ]]; then
 		echo "Plugins cannot have spaces in them (CK limitation): '$esm'" 1>&2
 		exit -1
-	elif pc_archive_check $esm; then
-:
-#		PC_ARCHIVE_REQUIRED=1
 	fi
 
 	((!SHARDS_MAX || s > SHARDS_MAX)) && SHARDS_MAX=$((SHARDS_FORCE ? SHARDS : s))
@@ -134,60 +125,76 @@ done
 SRC="$PROGDIR/Fallout 4.$PROFILE"
 cd "$SRC"
 
-if ((!PRESERVE_OUT)); then
-	echo "Removing previous output data..." 1>&2
-	rm -rf "$OUT" && mkdir -p "$OUT" || exit -1
-fi
-if ((!PRESERVE)); then
-	echo "Removing previous build data..." 1>&2
-	rm -rf "$BUILD" && mkdir -p "$BUILD" || exit -1
+if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
+	echo "Removing cache..." 1>&2
+	rm -rf "$CACHE" && mkdir -p "$CACHE" "$CACHE/tmp" || exit -1
 
 	for mode in ${MODE[*]}; do
 		case "$mode" in
 		previs)
+			# XXX: Update comment to be accurate
+			# Special hack for Fallout4.esm due to limitations in CK
+			# around the maximum number of cached file handles involved
+			# with loose files. Since Data/Meshes/PreCombined usually
+			# contains over 100k files for a full generation an archive
+			# needs to be used for precombines (via CreationKit.ini).
+			# However, since loose files override archives, the actual
+			# directory needs to be moved aside so CreationKit doesn't
+			# parse the loose files.
 			for esm in ${ESM[*]}; do
-continue
+				# XXX: cleanup
 				(
 				for i in Main MeshesExtra; do
 					b="${esm/.es[mp]} - $i.ba2"
 					if [[ -f "Data/$b" ]]; then
-						PC_BA2="$b"
+						BASE_BA2="$b"
 						break
 					fi
-				done
-				[[ -n "$PC_BA2" ]] || continue
+				done; [[ -n "$BASE_BA2" ]] || continue
+
+				DATA_BA2="$SRC/Data/$BASE_BA2"
+				CKGEN_BA2="$CACHE/Data/$BASE_BA2"
+
+# XXX: This needs to work better with PRESERVE_CACHE
+#				# Check mtime of vanilla archives / loose files
+#				if [[ -f "$CKGEN_BA2" ]] && ! find "Data/Meshes/PreCombined" "$DATA_BA2" -newer "$CKGEN_BA2" | grep -q ''; then
+#					echo "$esm: Using cached '$BASE_BA2'" 1>&2
+#					continue
+#				fi
 
 				# Get the latest needed.out file if available
-				PC_NEEDED=$(ls -t {.,Data}/$esm.{needed.out,precombine*merge*needed.out} 2>/dev/null | head -1 || true)
+				PC_NEEDED=$(ls -t {.,Data}/$esm.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
 				[[ -n "$PC_NEEDED" ]] || continue
 
-				echo "$esm: Repackaging temporary '$PC_BA2' with updated precombines..." 1>&2
-				mkdir -p "$BUILD/tmp/$esm"
-				Tools/Archive2/Archive2.exe "Data/$PC_BA2" -e="$BUILD/tmp/$esm/Data" -q
+				echo "$esm: Repackaging temporary '$BASE_BA2' with updated precombines..." 1>&2
+				mkdir -p "$CACHE/tmp/$esm"
+				Tools/Archive2/Archive2.exe "$DATA_BA2" -e="$CACHE/tmp/$esm/Data" -q
 
+				# XXX: Cleanup into 1 awk?
 				(
-					awk -v sd='Data' '/(PreCombined|Vis)\//{ printf("%s/%s\n", sd, $NF) }' "$PC_NEEDED"
-					find "$BUILD/tmp/$esm" -type f
-				) | awk '{ s=gensub("^.*Data/", "", 1); if (!stab[s]++) print $0 }' > "$BUILD/tmp/$esm.archive.list"
+					awk -v sd='Data' '/(PreCombined|Vis)\//{ printf("%s/%s\0", sd, $NF) }' "$PC_NEEDED" | xargs -r0 find 2>/dev/null || true
+					find "$CACHE/tmp/$esm" -type f
+				) | tee "$CACHE/tmp/$esm.archive.list.pre" | awk '{ s=gensub("^.*Data/", "", 1); if (!stab[s]++) print $0 }' > "$CACHE/tmp/$esm.archive.list"
 
-				LIST_CNT=$(wc -l < "$BUILD/tmp/$esm.archive.list")
-				LIST_WIN=$(cygpath -aw "$BUILD/tmp/$esm.archive.list")
+				LIST_CNT=$(wc -l < "$CACHE/tmp/$esm.archive.list")
+				LIST_WIN=$(cygpath -aw "$CACHE/tmp/$esm.archive.list")
 
-				Tools/Archive2/Archive2.exe -s="$LIST_WIN" -c="$BUILD/Data/${PC_BA2/.ba2/.ckgen.ba2}" 2>&1 \
-					| tee /tmp/archive.$esm.$LIST_CNT.out \
+				Tools/Archive2/Archive2.exe -s="$LIST_WIN" -c="$CKGEN_BA2" 2>&1 \
+					| tee "$CACHE/tmp/archive.$esm.$LIST_CNT.out" \
 					| awk -v cnt="$LIST_CNT" '/^(Adding|Skipped non-existing)/{ ++i; printf("\r%s / %s (%0.2f%%)", i, cnt, i * 100 / cnt) }END{ printf("\n") }'
-				rm -rf "$BUILD/tmp/$esm"
+				rm -rf "$CACHE/tmp/$esm"
+
+				# XXX: Store generated archives in src Data or ckgen.cache?
 				) &
 			done; wait
-
-			if ((PC_ARCHIVE_REQUIRED)) && [[ ! -f "Data/$PC_ARCHIVE" ]]; then
-				echo "Building precombined archive..." 1>&2
-				PCCOUNT=$(ls Data/Meshes/PreCombined | wc -l)
-				Tools/Archive2/Archive2.exe Data/Meshes/PreCombined -c="Data/$PC_ARCHIVE" 2>&1 | awk -v pccount=$PCCOUNT '/Adding/{ print pccount--, $0 }'
-			fi
 			;;
 		esac
 	done
+fi
+
+if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
+	echo "Removing previous build data..." 1>&2
+	rm -rf "$BUILD" && mkdir -p "$BUILD" "$BUILD/tmp" || exit -1
 
 	echo "Cloning build directories (hardlinks)..." 1>&2
 	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
@@ -199,6 +206,7 @@ continue
 		rsync -aSH \
 			--exclude "$OUT*" \
 			--exclude "$BUILD*" \
+			--exclude "$CACHE*" \
 			--exclude log.txt \
 			--exclude EditorWarnings.txt \
 			--exclude output.tome \
@@ -215,26 +223,25 @@ continue
 			|| exit -1
 #			--exclude "$SELF*" \
 
-#		# Hardlink temporary archives (if any)
-#		rsync -aSH --link-dest="$SRC/$BUILD/Data" "$SRC/$BUILD/Data"/ "$BUILD/$i/Data"/ || exit -1
-
 		# Hardcopy CK ini files
 		rsync -aSH "$SRC"/CreationKit*.ini "$BUILD/$i"/ || exit -1
 
-		# Replace build-dir copy of vanilla archive with custom version (this won't affect the originals)
-		find "$BUILD/$i/Data" -maxdepth 1 -type f -name '*.ckgen.ba2' | while read tmp; do
-			mv "$tmp" "${tmp/.ckgen.ba2/.ba2}"
-		done
+		# Hardlink temporary archives (if any) into build-dir (this won't affect the originals)
+		if [[ -d "$CACHE/Data" ]]; then
+			rsync -aSH --link-dest="$SRC/$CACHE/Data" "$SRC/$CACHE/Data"/ "$BUILD/$i/Data"/ || exit -1
+		fi
+
+		# XXX: Update comment (it's the presence of share dirs in the ini that make CK aware of VC)
+		# Nuke version control directory to prevent CK from prompting that VC is disabled and
+		# move any esms into place as they should be considered the most up to date.
+		if [[ -d "$BUILD/$i/Data/Merging" ]]; then
+			find "$BUILD/$i/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -r0 mv -t "$BUILD/$i/Data"
+			rm -rf "$BUILD/$i/Data/Merging"
+		fi
 
 		# Alter build-dir versions of CK ini files
 		for j in "$BUILD/$i/CreationKit.ini" "$BUILD/$i/CreationKitPrefs.ini" "$BUILD/$i/CreationKitCustom.ini"; do
 			[[ -f "$j" ]] || continue
-
-			# Nuke version control directory to prevent CK from prompting that VC is disabled
-			if [[ -d "$BUILD/$i/Data/Merging" ]]; then
-				find "$BUILD/$i/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -r0 mv -t "$BUILD/$i/Data"
-				rm -rf "$BUILD/$i/Data/Merging"
-			fi
 
 			# Enable multiple instances (so multiple copies can be run in parallel).
 			# Disable version control (so inability to check out a cell isn't an issue).
@@ -254,7 +261,7 @@ continue
 			#
 
 			WPWD=$(cygpath -aw "$BUILD/$i/")
-			awk -v threads=$THREADS -v pca="$PC_ARCHIVE" -v wpwd="${WPWD//\\/\\\\}\\\\" '
+			awk -v threads=$THREADS -v wpwd="${WPWD//\\/\\\\}\\\\" '
 			{ 
 				if (match($0, "^\\[([^\\]]+)\\]", a)) {
 					section=a[1];
@@ -274,8 +281,6 @@ continue
 				shash["General"]["sFile Path"]=wpwd;
 				shash["Archive"]["bInvalidateOlderFiles"]=1;
 				shash["Archive"]["sResourceDataDirsFinal"]="";
-				if (0 && pca)
-					shash["Archive"]["SResourceArchiveList"]=sprintf("%s, %s", shash["Archive"]["SResourceArchiveList"], pca)
 
 				for (i = 1; i <= slidx; i++) {
 					section=slist[i];
@@ -294,12 +299,12 @@ continue
 		done
 	) &
 	done; wait
-elif [[ ! -d "$OUT" ]]; then
-	echo "Missing output dir: $OUT" 1>&2
-	exit -1
-elif [[ ! -d "$BUILD" ]]; then
-	echo "Missing build dir: $BUILD" 1>&2
-	exit -1
+	# XXX: check child status?
+fi
+
+if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
+	echo "Removing previous output data..." 1>&2
+	rm -rf "$OUT" && mkdir -p "$OUT" || exit -1
 fi
 
 ck_wrap() {
@@ -311,103 +316,89 @@ ck_wrap() {
 	area="$1"; shift
 	cur="$1"; shift
 	max="$1"; shift
-	pca="$1"; shift
 	# 2nd parallel
 	job="$1"; shift
 	manual="$1"; shift
+
+	# Equalized width of $cur
 	wcur=$(printf "%02d" $cur)
 
+	set -x
 	set -e
 	set -o pipefail
 
 	mkdir -p "$bdir/$esm" || exit -1
+	echo -e "$bdir\t$mode\t$type\t$esm\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
 	case "$mode" in
 	precombined)
-		((manual)) || CKARGS=( -generateprecombined:"$esm" $type $area $cur $max )
+		if ((!manual)); then
+			CKARGS=( -generateprecombined:"$esm" $type $area $cur $max )
+		fi
 		rm -rf	"$bdir/$job/Data/Meshes/PreCombined" \
 			"$bdir/$job/Data/CombinedObjects.esp" \
-			"$bdir/$job/CombinedObjects.esp.needed.out" \
+			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/PreCombined.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
 					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$esm/PreCombined.$area.$wcur"
 				fi
 				if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
-					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"CombinedObjects.esp" "CombinedObjects.esp.needed.out") \
-						&& tr -d '[\r\0\031]' \
-							< "$bdir/$job/CombinedObjects.esp.needed.out" | tr '\\' '/' \
-							> "$bdir/$esm/$esm.precombine_merge.$area.$wcur.needed.out"
+					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
+						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
+						&& cat "$bdir/$job/dumpneededfiles.out" \
+							| tr -d '[\r\0\031]' | tr '\\' '/' \
+							> "$bdir/$esm/$esm.precombine_merge.$area.$wcur.needed.out" \
+						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
 					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$esm.precombine_merge.$area.$wcur.esp"
 				fi
 			) \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.precombined.$area.$wcur.error"
+			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
 		;;
 	previs)
-		# Special hack for Fallout4.esm due to limitations in CK
-		# around the maximum number of cached file handles involved
-		# with loose files. Since Data/Meshes/PreCombined usually
-		# contains over 100k files for a full generation an archive
-		# needs to be used for precombines (via CreationKit.ini).
-		# However, since loose files override archives, the actual
-		# directory needs to be moved aside so CreationKit doesn't
-		# parse the loose files.
-		if ((pca)) && [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-			if [[ -d "$bdir/$job/Data/Meshes/.PreCombined" ]]; then
-				echo "$bdir/$job/Data/Meshes/.PreCombined: already exists!" 1>&2
-				exit -1
-			fi
-			mv -T "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$job/Data/Meshes/.PreCombined"
+		if ((!manual)); then
+			CKARGS=( -generateprevisdata:"$esm" $type $area $cur $max )
 		fi
-
-		((manual)) || CKARGS=( -generateprevisdata:"$esm" $type $area $cur $max )
 		rm -rf	"$bdir/$job/Data/Vis" \
 			"$bdir/$job/Data/PreVis.esp" \
-			"$bdir/$job/PreVis.esp.needed.out" \
+			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/Vis.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Vis" ]]; then
 					 mv "$bdir/$job/Data/Vis" "$bdir/$esm/Vis.$area.$wcur"
 				fi
 				if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"PreVis.esp" "PreVis.esp.needed.out") \
-						&& tr -d '[\r\0\031]' \
-							< "$bdir/$job/PreVis.esp.needed.out" | tr '\\' '/' \
-							> "$bdir/$esm/$esm.previs_merge.$area.$wcur.needed.out"
+					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out") \
+						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
+						&& cat "$bdir/$job/dumpneededfiles.out" \
+							| tr -d '[\r\0\031]' | tr '\\' '/' \
+							> "$bdir/$esm/$esm.previs_merge.$area.$wcur.needed.out" \
+						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
 					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$esm.previs_merge.$area.$wcur.esp"
 				fi
 			) \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.previs.$area.$wcur.error"
-
-		# If precombines have been moved aside, restore the loose
-		# files in case another job uses this build slot.
-		if ((pca)) && [[ -d "$bdir/$job/Data/Meshes/.PreCombined" ]]; then
-			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-				echo "$bdir/$job/Data/Meshes/PreCombined: already exists!" 1>&2
-				exit -1
-			fi
-			mv -T "$bdir/$job/Data/Meshes/.PreCombined" "$bdir/$job/Data/Meshes/PreCombined"
-		fi
+			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
 		;;
 	needed)
-		((manual)) || CKARGS=( -dumpneededfiles:"$esm" "dumpneededfiles.out" )
+		if ((!manual)); then
+			CKARGS=( -dumpneededfiles:"$esm" "dumpneededfiles.out" )
+		fi
 		rm -rf	"$bdir/$job/dumpneededfiles.out" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
-			&& (
-				if [[ -f "$bdir/$job/dumpneededfiles.out" ]]; then
-					tr -d '[\0\031]' < "$bdir/$job/dumpneededfiles.out" > "$bdir/$esm/$esm.needed.out"
-				fi
-			) \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.dumpneeded.error"
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
+			&& cat "$bdir/$job/dumpneededfiles.out" \
+				| tr -d '[\r\0\031]' | tr '\\' '/' \
+				> "$bdir/$esm/$esm.needed.out" \
+			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
 		;;
 	esac
-
-	mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt"
 }
 export -f ck_wrap
 
@@ -416,24 +407,12 @@ export -f ck_wrap
 LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
 
 for mode in "${MODE[@]}"; do
-	# For previs generation specifically, symlink (windows style) the precombined
-	# meshes from the master directory due to the sheer amount of files that may
-	# be present in Data/Meshes/PreCombined. Whilst it's usually fine to hardlink
-	# this many files, there's no modification of this directory during previs
-	# generation so it's safe as a speed-hack.
-	if false && [[ "$mode" == "previs" ]]; then
-		find "$BUILD" -type d -name '[0-9]*' -prune -print0 \
-			| CYGWIN=winsymlinks:nativestrict xargs -I{} -r0 ln -sfT "$PWD/Data/Meshes/PreCombined" "$PWD/{}/Data/Meshes/PreCombined"
-	fi
-
 	CMDS=$(
 		for esm in ${ESM[*]}; do
 			eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
 
 			[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
 			[[ -n $s ]] || s=$SHARDS
-
-			pc_archive_check $esm && pca=1 || pca=0
 
 			for area in ${atmp[*]}; do
 				if [[ "$area" != "all" && "$mode" == "precombined" && "$type" == "clean" ]]; then
@@ -446,15 +425,15 @@ for mode in "${MODE[@]}"; do
 					s=$SHARDS_MAX
 				fi
 
-				parallel -r -j1 echo "ck_wrap $BUILD $mode $TYPE $esm {1} {2} $s $pca" ::: $area ::: $(seq -s ' ' $START $s)
+				parallel -r -j1 echo "ck_wrap $BUILD $mode $TYPE $esm {1} {2} $s" ::: $area ::: $(seq -s ' ' $START $s)
 			done
 		done
 	)
 
 	if ((MANUAL)); then
-		PFLAGS="--delay 4 --lb -vr -j $JOBS"
+		PFLAGS="--res $BUILD/tmp --delay 4 --lb -vr -j $JOBS"
 	else
-		PFLAGS="--eta --shuf --lb -vr -j $JOBS"
+		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -vr -j $JOBS"
 	fi
 
 	# Note: final 'read' commands are to prevent tmux from closing each sub-window
@@ -464,7 +443,7 @@ for mode in "${MODE[@]}"; do
 			split -p 40 \
 			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
 			split -p 50 \
-			"echo '$CMDS' | tee /tmp/parallel.in | parallel $PFLAGS --lb -vr -j $JOBS '{} {%} $MANUAL'; read" ';' \
+			"echo '$CMDS' | tee '$BUILD/tmp/parallel.in' | parallel $PFLAGS --lb -vr -j $JOBS '{} {%} $MANUAL'; read" ';' \
 			set-option status off
 	else
 		echo "$CMDS" | parallel $PFLAGS "{} {%} $MANUAL" || exit -1
@@ -477,22 +456,27 @@ for mode in "${MODE[@]}"; do
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
 		if ls -d "$BUILD/$esm/PreCombined".* &>/dev/null; then
 			echo "$esm: Moving precombined..." 1>&2
+
 			mkdir -p "$OUT/$esm/Data/Meshes/PreCombined"
 			for i in $(ls -d "$BUILD/$esm/PreCombined".*); do
-				rsync --remove-source-files -aS "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+				rsync -aS --remove-source-files --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+				rmdir --ignore-fail-on-non-empty "$i" || true
 			done
 		fi
 
 		if ls -d "$BUILD/$esm/Vis".* &>/dev/null; then
 			echo "$esm: Moving previs..." 1>&2
+
 			mkdir -p "$OUT/$esm/Data/Vis"
 			for i in $(ls -d "$BUILD/$esm/Vis".*); do
-				rsync --remove-source-files -aS "$i"/ "$OUT/$esm/Data/Vis"/ || true
+				rsync -aS --remove-source-files --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Vis"/ || true
+				rmdir --ignore-fail-on-non-empty "$i" || true
 			done
 		fi
 
 		if ls -d "$BUILD/$esm/"*.esp &>/dev/null; then
 			echo "$esm: Moving plugins..." 1>&2
+
 			mkdir -p "$OUT/$esm"
 			mv -nt "$OUT/$esm" "$BUILD/$esm/"*.esp || true
 		fi
@@ -500,6 +484,7 @@ for mode in "${MODE[@]}"; do
 
 		if ls -d "$BUILD/$esm/"*.needed*out &>/dev/null; then
 			echo "$esm: Moving needed files output..." 1>&2
+
 			mkdir -p "$OUT/$esm"
 			mv -nt "$OUT/$esm" "$BUILD/$esm/"*.needed*out || true
 		fi
@@ -515,6 +500,8 @@ for mode in "${MODE[@]}"; do
 		fi
 
 		# XXX: hardlink archive into Data?
+		# XXX: Make sure filenames are compatible with vanilla and/or reexamine if this should
+		# XXX: just create a single archive from all ESMs
 		if false && ((ARCHIVE)); then
 			echo "$esm: Archiving data..." 1>&2
 

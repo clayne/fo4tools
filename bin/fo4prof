@@ -4,12 +4,40 @@ set -e
 
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
 
+list() {
+	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
+
+	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2 -d . | while read tmp; do
+		[[ $tmp == "shared" || $tmp == "template" || $tmp == "extract" ]] && continue
+		[[ $tmp == $ACTIVE ]] && echo "$tmp*" || echo "$tmp"
+	done
+}
+
+delete() {
+	while getopts "" opt; do
+		case $opt in
+		?) exit -1 ;;
+		esac
+	done; shift $((OPTIND - 1))
+
+	for p in "$@"; do
+		rm -rf "$PROGDIR/Fallout 4.$p" "$USERDIR/Fallout4.$p" "$DATADIR/Fallout4.$p"
+		net share "Merging.$p" /delete
+	done
+}
+
 flip() {
 	while getopts "" opt; do
 		case $opt in
 		?) exit -1 ;;
 		esac
 	done; shift $((OPTIND - 1))
+
+	PROFILE="$1"; shift || true
+	if [[ -z "$PROFILE" ]]; then
+		echo "No profile specified" 1>&2
+		exit -1
+	fi
 
 	if [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 		echo "$PROGDIR/Fallout 4.$PROFILE does not exist!" 1>&2
@@ -22,41 +50,26 @@ flip() {
 		exit -1
 	fi
 
-	set -x
-
 	# Force Windows (rather than Cygwin) compatible symlinks
 	CYGWIN=winsymlinks:nativestrict ln -sfT "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
 	CYGWIN=winsymlinks:nativestrict ln -sfT "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
 	CYGWIN=winsymlinks:nativestrict ln -sfT "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
 }
 
-list() {
-	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
-
-	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2 -d . | while read tmp; do
-		[[ $tmp == "shared" || $tmp == "template" || $tmp == "extract" ]] && continue
-		[[ $tmp == $ACTIVE ]] && echo "$tmp*" || echo "$tmp"
-	done
-}
-
-clean() {
-	while getopts "" opt; do
-		case $opt in
-		?) exit -1 ;;
-		esac
-	done; shift $((OPTIND - 1))
-
-	rm -rf "$PROGDIR/Fallout 4.$PROFILE" "$USERDIR/Fallout4.$PROFILE" "$DATADIR/Fallout4.$PROFILE"
-	net share "Merging.$PROFILE" /delete
-}
-
-clone() {
+# XXX: Handle multiple args
+new() {
 	while getopts "s:" opt; do
 		case $opt in
 		s) PROFILE_SRC="$OPTARG" ;;
 		?) exit -1 ;;
 		esac
 	done; shift $((OPTIND - 1))
+
+	PROFILE="$1"; shift || true
+	if [[ -z "$PROFILE" ]]; then
+		echo "No profile specified" 1>&2
+		exit -1
+	fi
 
 	if [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 		echo "$PROGDIR/Fallout 4.$PROFILE already exists!" 1>&2
@@ -68,8 +81,6 @@ clone() {
 		echo "$DATADIR/Fallout4.$PROFILE already exists!" 1>&2
 		exit -1
 	fi
-
-	set -x
 
 	PROGDIR_SHARED_BASE="$PROGDIR_SHARED"
 	USERDIR_SHARED_BASE="$USERDIR_SHARED"
@@ -112,6 +123,7 @@ clone() {
 	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
 	SNETPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
 
+	# XXX: Clean this up to use a more proper ini editing tool/function
 	# The insane backslash stuff is due to both shell escaping + sed escaping
 	for i in CreationKit.ini CreationKitPrefs.ini; do
 		[[ -f "$PROGDIR/Fallout 4.$PROFILE/$i" ]] || continue
@@ -144,22 +156,18 @@ while getopts "" opt; do
 done; shift $((OPTIND - 1))
 
 MODE="$1"; shift || true
-PROFILE="$1"; shift || true
 
-if [[ "$MODE" == "list" ]]; then
-	list "$@"
-elif [[ -z "$PROFILE" ]]; then
-	echo "No profile specified" 1>&2
-	exit -1
-elif [[ -z "$MODE" ]]; then
+if [[ -z "$MODE" ]]; then
 	echo "No mode specified" 1>&2
 	exit -1
+elif [[ "$MODE" == "list" ]]; then
+	list "$@"
 elif [[ "$MODE" == "flip" ]]; then
 	flip "$@"
-elif [[ "$MODE" == "clone" ]]; then
-	clone "$@"
-elif [[ "$MODE" == "clean" ]]; then
-	clean "$@"
+elif [[ "$MODE" == "new" || "$MODE" == "clone" ]]; then
+	new "$@"
+elif [[ "$MODE" == "delete" || "$MODE" == "clean" ]]; then
+	delete "$@"
 else
 	echo "Invalid mode: $MODE" 1>&2
 	exit -1
