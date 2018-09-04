@@ -142,6 +142,8 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 			# directory needs to be moved aside so CreationKit doesn't
 			# parse the loose files.
 			for esm in ${ESM[*]}; do
+				eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
+
 				# XXX: cleanup
 				(
 				for i in Main MeshesExtra; do
@@ -152,7 +154,7 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 					fi
 				done; [[ -n "$BASE_BA2" ]] || continue
 
-				DATA_BA2="$SRC/Data/$BASE_BA2"
+				DATA_BA2="Data/$BASE_BA2"
 				CKGEN_BA2="$CACHE/Data/$BASE_BA2"
 
 # XXX: This needs to work better with PRESERVE_CACHE
@@ -163,7 +165,7 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 #				fi
 
 				# Get the latest needed.out file if available
-				PC_NEEDED=$(ls -t {.,Data}/$esm.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
+				PC_NEEDED=$(ls -t {Data,.}/$esm.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
 				[[ -n "$PC_NEEDED" ]] || continue
 
 				echo "$esm: Repackaging temporary '$BASE_BA2' with updated precombines..." 1>&2
@@ -274,9 +276,10 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 				shash["General"]["bExportSceneOnUmbraGenerate"]=0;
 				shash["General"]["bExportTomeOnUmbraGenerate"]=0;
 				shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
-				shash["General"]["bMinimizeCachedExteriors"]=1;
 				shash["General"]["bKeepPluginWhenMerging"]=1;
 				shash["General"]["bHideImportantWarnings"]=1;
+				shash["General"]["bAllowMultipleEditors"]=1
+				shash["General"]["bAllowMultipleMasterLoads"]=1
 				shash["General"]["bUseVersionControl"]=0;
 				shash["General"]["sFile Path"]=wpwd;
 				shash["Archive"]["bInvalidateOlderFiles"]=1;

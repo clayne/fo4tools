@@ -22,7 +22,7 @@ delete() {
 
 	for p in "$@"; do
 		rm -rf "$PROGDIR/Fallout 4.$p" "$USERDIR/Fallout4.$p" "$DATADIR/Fallout4.$p"
-		net share "Merging.$p" /delete
+		((VERSION_CONTROL)) && net share "Merging.$p" /delete
 	done
 }
 
@@ -114,10 +114,6 @@ new() {
 	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -avSPH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
 	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -avSPH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
 
-	# SNetwork Path=\\HOSTNAME\Merging.PROFILE\
-	# SNetworkMasterPath=\\HOSTNAME\Merging.PROFILE\
-	# SNewVersionBackupPath=\\HOSTNAME\Merging.PROFILE\VersionBackup\
-
 	# Convert paths in templated CreationKit.ini to be per-profile specific.
 	HOSTNAME_UC=$(hostname | tr '[a-z]' '[A-Z]')
 	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
@@ -127,26 +123,35 @@ new() {
 	# The insane backslash stuff is due to both shell escaping + sed escaping
 	for i in CreationKit.ini CreationKitPrefs.ini; do
 		[[ -f "$PROGDIR/Fallout 4.$PROFILE/$i" ]] || continue
-		cat "$PROGDIR/Fallout 4.$PROFILE/$i" \
-			| sed \
-				-e "s#^sFile Path=.*\\\\#sFile Path=$SFILEPATH\\\\#g" \
+		sed -i \ 
+			-e "s#^sFile Path=.*\\\\#sFile Path=$SFILEPATH\\\\#g" \
+			"$PROGDIR/Fallout 4.$PROFILE/$i"
+
+		if ((VERSION_CONTROL)); then
+			# SNetwork Path=\\HOSTNAME\Merging.PROFILE\
+			# SNetworkMasterPath=\\HOSTNAME\Merging.PROFILE\
+			# SNewVersionBackupPath=\\HOSTNAME\Merging.PROFILE\VersionBackup\
+			sed -i \
 				-e "s#^SNetwork Path=.*\\\\#SNetwork Path=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
 				-e "s#^SNetworkMasterPath=.*\\\\#SNetworkMasterPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
 				-e "s#^SNewVersionBackupPath=.*\\\\#SNewVersionBackupPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\VersionBackup\\\\#g" \
-				> "$PROGDIR/Fallout 4.$PROFILE/$i.tmp" \
-			&& mv "$PROGDIR/Fallout 4.$PROFILE/$i.tmp" "$PROGDIR/Fallout 4.$PROFILE/$i"
+				"$PROGDIR/Fallout 4.$PROFILE/$i"
+		fi
 	done
 
-	cat <<-EOF >> "$PROGDIR/Fallout 4.$PROFILE/CreationKitPrefs.ini"
-	[WhoCanMerge]
-	$USER=1
-	EOF
+	if ((VERSION_CONTROL)); then
+		cat <<-EOF >> "$PROGDIR/Fallout 4.$PROFILE/CreationKitPrefs.ini"
+		[WhoCanMerge]
+		$USER=1
+		EOF
 
-	mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup" 
-	cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
-	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
+		mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup" 
+		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
 
-	net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
+		cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
+	fi
+
+#	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
 }
 
 while getopts "" opt; do
