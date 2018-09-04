@@ -115,7 +115,6 @@ new() {
 	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -avSPH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
 
 	# Convert paths in templated CreationKit.ini to be per-profile specific.
-	HOSTNAME_UC=$(hostname | tr '[a-z]' '[A-Z]')
 	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
 	SNETPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
 
@@ -132,9 +131,9 @@ new() {
 			# SNetworkMasterPath=\\HOSTNAME\Merging.PROFILE\
 			# SNewVersionBackupPath=\\HOSTNAME\Merging.PROFILE\VersionBackup\
 			sed -i \
-				-e "s#^SNetwork Path=.*\\\\#SNetwork Path=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
-				-e "s#^SNetworkMasterPath=.*\\\\#SNetworkMasterPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\#g" \
-				-e "s#^SNewVersionBackupPath=.*\\\\#SNewVersionBackupPath=\\\\\\\\$HOSTNAME_UC\\\\Merging.$PROFILE\\\\VersionBackup\\\\#g" \
+				-e "s#^SNetwork Path=.*\\\\#SNetwork Path=\\\\\\\\localhost\\\\Merging.$PROFILE\\\\#g" \
+				-e "s#^SNetworkMasterPath=.*\\\\#SNetworkMasterPath=\\\\\\\\localhost\\\\Merging.$PROFILE\\\\#g" \
+				-e "s#^SNewVersionBackupPath=.*\\\\#SNewVersionBackupPath=\\\\\\\\localhost\\\\Merging.$PROFILE\\\\VersionBackup\\\\#g" \
 				"$PROGDIR/Fallout 4.$PROFILE/$i"
 		fi
 	done
