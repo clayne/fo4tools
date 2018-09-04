@@ -1,0 +1,111 @@
+* download cygwin, ensure rsync, tmux, git, parallel (not a package, figure this out) are selected
+* merge world altering plugins to <file.esp || pcvgen.esp>
+* pcvgen -o <file.esp || pcvgen.esp>
+* start ck, load pcvgen.esp and all masters
+* generate pc for world
+* generate pc for interiors
+* save and exit
+* open up <file.esp || pcvgen.esp> in xEdit, run pcv script to create separate precombine merge plugins, save on exit.
+* pcvgen: hardlink clone of base directory to per-<master> merge instance, enable VC for each
+* pcvgen: merge (checkinplugin) each generated <master>_precombines_merge.esp into <master>
+  * alternatively do this serially first so that all masters have been updated before previs gen
+* pcvgen: CreationKit.exe -generateprevisdata:<master> clean all
+* pcvgen: mv <instance>/PreVis.esp to <master>_previs_merge.esp
+* either (one of):
+  * open everything in xedit and post-merge/finalize into pcvgen.esp
+  * -checkinplugin of each previs_merge.esp and extract all cells afterwards via xedit.
+
+---
+
+revised after testing:
+
+* ensure any tree mods have appropriate occlusion settings, generate scols, and drop loose files in place before any gen
+* ckgen manual world ints, load all desired plugins, ck1: precombine for world, ck2: precombine for ints
+* save as pcv.esp and exit
+* open up pcv.esp in xedit and run pcv script in precombine mode, save generated plugins
+* merge all plugins with pcpvmerge or ckgen merge + some options not written yet
+* ckgen previs clean main <all desired masters/plugins>
+* rsync ckgen Data/ dirs in master/plugin order into Data/
+* open up all previs_merge.esp plugins in master/plugin order (xedit + -P <file>) and run pcv script in previs mode.
+* archive Data/Meshes/PreCombined and Data/Vis into pcv-final.ba2
+* alter DLCList.txt and Plugins.txt
+
+---
+
+* Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
+
+---
+
+Orig+DLC order:
+
+Fallout4.esm
+DLCRobot.esm
+DLCworkshop01.esm
+DLCCoast.esm
+DLCworkshop02.esm
+DLCworkshop03.esm
+DLCNukaWorld.esm
+DLCUltraHighResolution.esm
+
+Note: It seems that CK will in some cases (particularly XPRI) create references with initial master load id offset from 08 forward as if every official master were loaded before it even if they weren't when generating the plugin from within CK. Update: actually this may not be true and I just forgot that I had initially loaded all 8 esms in my test.
+---
+
+Generating visibility for cells without precombined references results in non-combined visibility being generated. This is why some cells show updated vis timestamps and XPRI references but no XCRI data. This type of thing would occur in vanilla files due to -generateprevisdata operating on a larger or different set of cells then what -generateprecombined operated on.
+
+---
+
+Message on CK having too many loose files (.text:0000000142499D29, .text:0000000142499E00):
+
+Number of registered paths has exceeded maximum of %I64u, %s will read uncached.
+
+Actual log output for it:
+
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_12E3F195_OC.NIF will read uncached.
+MASTERFILE:                             (BSStream Error) Not a NIF file in meshes\PreCombined\0000DFA4_12E3F195_OC.NIF.
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_135B94FB_OC.NIF will read uncached.
+MASTERFILE:                             (BSStream Error) Not a NIF file in meshes\PreCombined\0000DFA4_135B94FB_OC.NIF.
+SYSTEM:                         Number of registered paths has exceeded maximum of 32768, C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.clean3_dlc_all\ckgen.build\6\data\Meshes\PreCombined\0000DFA4_1861C6FF_OC.NIF will read uncached.
+
+---
+
+CDX issue: For XCRI/XPRI data which has been regenerated and merged into an esm which *has* a CDX file, one must issue -BuildCDX:<esm> in order for said newly generated precombined and previs cell records to even be used. Not doing this will result in the typical flashing statics preculling issues. Doing nothing at all but simply -BuildCDX on the same master resolves the preculling issues so one can speculate that the CDX file has old cell data vs what's actually in the esm.
+
+---
+
+Attempting to check in precombined or previs changes from CK whilst using a delocalized ESM will result in those changes never being merged and the precombined timestamp being deleted. If the ESM is localized they will be merged. This doesn't seem to affect -checkinplugin.
+
+---
+
+Check if -generateprecombined and -generateprevisdata react to cells with precombined references only (i.e. just clone only the cell records for cells the plugin does not alter in xedit). -generateprecombined probably reacts to statics associated with the cell, but validate if -generateprevisdata also does.
+
+---
+
+Sort out all the localization/delocalization stuff. xEdit requires vanilla esms to be localized in order to not trip over some stupid issues with interpreting $Integer like values in data.
+
+---
+
+ReportRequiredMasters is bugged in API description for xedit. Last 2 booleans are flipped.
+
+---
+
+Calling xedit in script mode:
+
+fo4edit -script:<filename> -P:<plugin-file>
+or
+fo4edit -script (to open a prompt to select script)
+
+---
+
+Ensure script uses the precombined_merge or previs_merged plugin with the highest timestamp rather than winning override. When generating plugins with sharded/bucketed modes of CreationKit's command line options there are situations in which the created plugins appear to process data for the same cells (seems to mainly affect previs - perhaps due to 3x3 cell logic andoverlap). However, the VISI timestamps for the same cell from one plugin are older than the timestamps for the older plugin, almost as if it simply forwarded on unprocessed cells. In practice this might not create an issue but it seems like something that shouldn't be trusted.
+
+---
+
+Known problem cells:
+
+DEED
+DFFA
+D90C
+DF54
+DF75
+E614 (DLCworkshop03 overlaps with Fallout4, but pcv-world-merged previs generation doesn't take into account DLCworkshop03 [double-check this])
+03016E33
