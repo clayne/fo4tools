@@ -1,0 +1,16 @@
+#!/bin/bash
+
+ESM=(
+	Fallout4.esm
+	DLCRobot.esm
+	DLCworkshop01.esm
+	DLCCoast.esm
+	DLCworkshop02.esm
+	DLCworkshop03.esm
+	DLCNukaWorld.esm
+	DLCUltraHighResolution.esm
+)
+
+for i in "${ESM[@]}"; do
+	esmlocalize -v "$@" Data/$i Data/Merging/$i
+done

@@ -152,7 +152,11 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 						BASE_BA2="$b"
 						break
 					fi
-				done; [[ -n "$BASE_BA2" ]] || continue
+				done
+
+				# XXX: What if it was never precombined before? This will fail but an
+				# XXX: archive should be created.
+				[[ -n "$BASE_BA2" ]] || continue
 
 				DATA_BA2="Data/$BASE_BA2"
 				CKGEN_BA2="$CACHE/Data/$BASE_BA2"
@@ -216,10 +220,11 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude input.scene.json \
 			--exclude CombinedObjects.esp \
 			--exclude PreVis.esp \
-			--exclude PreCombined \
-			--exclude Vis \
+			--exclude PreCombined* \
+			--exclude Vis* \
 			--exclude Scripts \
 			--exclude Backup \
+			--exclude CheckinBackup \
 			--exclude VersionBackup \
 			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/ \
 			|| exit -1
@@ -330,7 +335,6 @@ ck_wrap() {
 	set -e
 	set -o pipefail
 
-	mkdir -p "$bdir/$esm" || exit -1
 	echo -e "$bdir\t$mode\t$type\t$esm\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
 	# For each given mode, nuke any old data left in per-job build
@@ -346,6 +350,7 @@ ck_wrap() {
 			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/PreCombined.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
@@ -372,6 +377,7 @@ ck_wrap() {
 			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/Vis.$area.$wcur" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Vis" ]]; then
@@ -395,6 +401,7 @@ ck_wrap() {
 		fi
 		rm -rf	"$bdir/$job/dumpneededfiles.out" \
 			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& cat "$bdir/$job/dumpneededfiles.out" \
 				| tr -d '[\r\0\031]' | tr '\\' '/' \
@@ -460,9 +467,10 @@ for mode in "${MODE[@]}"; do
 		if ls -d "$BUILD/$esm/PreCombined".* &>/dev/null; then
 			echo "$esm: Moving precombined..." 1>&2
 
+			# XXX: do not use --remove-source-files so overlapping files are still present for reference
 			mkdir -p "$OUT/$esm/Data/Meshes/PreCombined"
 			for i in $(ls -d "$BUILD/$esm/PreCombined".*); do
-				rsync -aS --remove-source-files --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+				rsync -aS --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
 				rmdir --ignore-fail-on-non-empty "$i" || true
 			done
 		fi
@@ -472,7 +480,7 @@ for mode in "${MODE[@]}"; do
 
 			mkdir -p "$OUT/$esm/Data/Vis"
 			for i in $(ls -d "$BUILD/$esm/Vis".*); do
-				rsync -aS --remove-source-files --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Vis"/ || true
+				rsync -aS --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Vis"/ || true
 				rmdir --ignore-fail-on-non-empty "$i" || true
 			done
 		fi
@@ -480,16 +488,16 @@ for mode in "${MODE[@]}"; do
 		if ls -d "$BUILD/$esm/"*.esp &>/dev/null; then
 			echo "$esm: Moving plugins..." 1>&2
 
-			mkdir -p "$OUT/$esm"
-			mv -nt "$OUT/$esm" "$BUILD/$esm/"*.esp || true
+			mkdir -p "$OUT/$esm/Data"
+			mv -nt "$OUT/$esm/Data" "$BUILD/$esm/"*.esp || true
 		fi
 			
 
 		if ls -d "$BUILD/$esm/"*.needed*out &>/dev/null; then
 			echo "$esm: Moving needed files output..." 1>&2
 
-			mkdir -p "$OUT/$esm"
-			mv -nt "$OUT/$esm" "$BUILD/$esm/"*.needed*out || true
+			mkdir -p "$OUT/$esm/Data"
+			mv -nt "$OUT/$esm/Data" "$BUILD/$esm/"*.needed*out || true
 		fi
 
 		# XXX: hardlink plugins into Data?

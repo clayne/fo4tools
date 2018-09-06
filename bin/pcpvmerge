@@ -5,6 +5,9 @@
 
 set -e
 
+DUMPNEEDED=0
+MERGE=0
+
 while getopts "dm" opt; do
 	case $opt in
 	d) DUMPNEEDED=1 ;;
@@ -60,9 +63,6 @@ for mode in ${MODE[*]}; do
 			done
 		'
 
-		for esm in ${ESM[*]}; do
-			rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data/Meshes/PreCombined" "$CKGEN_OUT/$esm/Data/Meshes/PreCombined"/ "Data/Meshes/PreCombined"/
-		done
 	elif [[ "$mode" == "previs" ]]; then
 		echo "Merging previs..."
 
@@ -80,9 +80,9 @@ for mode in ${MODE[*]}; do
 				fi
 			done
 		'
-
-		for esm in ${ESM[*]}; do
-			rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data/Vis" "$CKGEN_OUT/$esm/Data/Vis"/ "Data/Vis"/
-		done
 	fi
+
+	for esm in ${ESM[*]}; do
+		rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data" "$CKGEN_OUT/$esm/Data"/ "Data"/
+	done
 done

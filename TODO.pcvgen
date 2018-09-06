@@ -96,7 +96,44 @@ fo4edit -script (to open a prompt to select script)
 
 ---
 
+previs clean main affects Fallout4.esm vs DLCs and other masters differently:
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $ egrep -ir -- 'filtered' *.esm
+DLCCoast.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCNukaWorld.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCRobot.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop01.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop02.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+DLCworkshop03.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+pcv-world-merged.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $ grep -r ROOTCELL Fallout4.esm/
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $
+
+---
+
 Ensure script uses the precombined_merge or previs_merged plugin with the highest timestamp rather than winning override. When generating plugins with sharded/bucketed modes of CreationKit's command line options there are situations in which the created plugins appear to process data for the same cells (seems to mainly affect previs - perhaps due to 3x3 cell logic andoverlap). However, the VISI timestamps for the same cell from one plugin are older than the timestamps for the older plugin, almost as if it simply forwarded on unprocessed cells. In practice this might not create an issue but it seems like something that shouldn't be trusted.
+
+---
+
+With Regrowth and updated SCOLs for non-occluder:
+
+ 20572  MODELS:                         Ref TreeLeanDead06 static collection aggregation result in empty geometry.
+ 20573  DEFAULT:                                Warnings were encountered creating geometry for static collection 'TreeLeanDead06'. Check warnings file for more info.
+ 20574  MODELS:                         Ref TreeLeanDead01 static collection aggregation result in empty geometry.
+ 20575  DEFAULT:                                Warnings were encountered creating geometry for static collection 'TreeLeanDead01'. Check warnings file for more info.
+
+---
+
+Regrowth BGSM issues (meaning something is building for trees in an esm that is not dependent on DLCCoast.esm - in this case it's Fallout4.esm)
+
+ 21802  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21803  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21804  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21805  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21806  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21807  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
+ 21808  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\TreePineLog01.BGSM
+ 21809  SHADERS:                                Could not find material Materials\DLC03\Landscape\Trees\RedPineBark01.BGSM
 
 ---
 
