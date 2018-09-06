@@ -26,7 +26,7 @@ delete() {
 	done
 }
 
-flip() {
+use() {
 	while getopts "" opt; do
 		case $opt in
 		?) exit -1 ;;
@@ -37,9 +37,7 @@ flip() {
 	if [[ -z "$PROFILE" ]]; then
 		echo "No profile specified" 1>&2
 		exit -1
-	fi
-
-	if [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+	elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 		echo "$PROGDIR/Fallout 4.$PROFILE does not exist!" 1>&2
 		exit -1
 	elif [[ ! -d "$USERDIR/Fallout4.$PROFILE" ]]; then
@@ -69,9 +67,7 @@ new() {
 	if [[ -z "$PROFILE" ]]; then
 		echo "No profile specified" 1>&2
 		exit -1
-	fi
-
-	if [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+	elif [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 		echo "$PROGDIR/Fallout 4.$PROFILE already exists!" 1>&2
 		exit -1
 	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]]; then
@@ -164,15 +160,19 @@ MODE="$1"; shift || true
 if [[ -z "$MODE" ]]; then
 	echo "No mode specified" 1>&2
 	exit -1
-elif [[ "$MODE" == "list" ]]; then
-	list "$@"
-elif [[ "$MODE" == "flip" ]]; then
-	flip "$@"
-elif [[ "$MODE" == "new" || "$MODE" == "clone" ]]; then
-	new "$@"
-elif [[ "$MODE" == "delete" || "$MODE" == "clean" ]]; then
-	delete "$@"
-else
+fi
+
+case "$MODE" in
+list)
+	list "$@" ;;
+use|flip)
+	use "$@" ;;
+new|clone)
+	new "$@" ;;
+delete|clean)
+	delete "$@" ;;
+*)
 	echo "Invalid mode: $MODE" 1>&2
 	exit -1
-fi
+	;;
+esac
