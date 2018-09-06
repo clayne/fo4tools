@@ -116,9 +116,9 @@ new() {
 
 	# XXX: Clean this up to use a more proper ini editing tool/function
 	# The insane backslash stuff is due to both shell escaping + sed escaping
-	for i in CreationKit.ini CreationKitPrefs.ini; do
+	for i in CreationKit.ini CreationKitPrefs.ini CreationKitCustom.ini; do
 		[[ -f "$PROGDIR/Fallout 4.$PROFILE/$i" ]] || continue
-		sed -i \ 
+		sed -i \
 			-e "s#^sFile Path=.*\\\\#sFile Path=$SFILEPATH\\\\#g" \
 			"$PROGDIR/Fallout 4.$PROFILE/$i"
 
