@@ -83,7 +83,7 @@ for mode in ${MODE[*]}; do
 		SHARDS=1
 		SHARDS_FORCE=1
 		;;
-	precombined|previs)
+	precombine|previs)
 		if ((!MANUAL)); then
 			TYPE="$1"; shift
 			AREA="$1"; shift
@@ -341,7 +341,7 @@ ck_wrap() {
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
 	case "$mode" in
-	precombined)
+	precombine)
 		if ((!manual)); then
 			CKARGS=( -generateprecombined:"$esm" $type $area $cur $max )
 		fi
@@ -425,7 +425,7 @@ for mode in "${MODE[@]}"; do
 			[[ -n $s ]] || s=$SHARDS
 
 			for area in ${atmp[*]}; do
-				if [[ "$area" != "all" && "$mode" == "precombined" && "$type" == "clean" ]]; then
+				if [[ "$area" != "all" && "$mode" == "precombine" && "$type" == "clean" ]]; then
 					echo "$esm: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
 					exit -1
 				elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then

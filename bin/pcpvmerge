@@ -24,7 +24,8 @@ ESM=( "$@" )
 CKGEN_OUT=ckgen.out; export CKGEN_OUT
 
 for mode in ${MODE[*]}; do
-	if [[ "$mode" == "precombined" ]]; then
+	case "$mode" in
+	precombine)
 		echo "Merging precombines..."
 
 		# XXX: Check if Merging/<esm> exists before doing anything
@@ -62,8 +63,8 @@ for mode in ${MODE[*]}; do
 				fi
 			done
 		'
-
-	elif [[ "$mode" == "previs" ]]; then
+		;;
+	previs)
 		echo "Merging previs..."
 
 		# XXX: Check if Merging/<esm> exists before doing anything
@@ -80,7 +81,12 @@ for mode in ${MODE[*]}; do
 				fi
 			done
 		'
-	fi
+		;;
+	*)
+		echo "Unknown mode: $mode" 1>&2
+		exit -1
+		;;
+	esac
 
 	for esm in ${ESM[*]}; do
 		rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data" "$CKGEN_OUT/$esm/Data"/ "Data"/
