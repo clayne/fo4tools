@@ -46,7 +46,7 @@ PRESERVE_BUILD=0
 PRESERVE_OUT=0
 
 # XXX: Use -c for cache option?
-while getopts "j:s:S:t:A:PpamM" opt; do
+while getopts "j:s:S:t:A:PpamMg" opt; do
         case $opt in
 	j) JOBS="$OPTARG" ;;
 	s) SHARDS="$OPTARG" ;;
@@ -58,6 +58,7 @@ while getopts "j:s:S:t:A:PpamM" opt; do
 	a) ARCHIVE=1 ;;
 	m) MERGE=1 ;;
 	M) MANUAL=1 ;;
+	g) DEBUG=1 ;;
 	?) exit -1 ;;
         esac
 done; shift $((OPTIND - 1))
@@ -220,9 +221,13 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude input.scene.json \
 			--exclude CombinedObjects.esp \
 			--exclude PreVis.esp \
-			--exclude PreCombined* \
-			--exclude Vis* \
-			--exclude Scripts \
+			--exclude [pP]reCombined* \
+			--exclude [vV]is* \
+			--exclude [sS]cripts \
+			--exclude [tT]extures \
+			--exclude [sS]ound \
+			--exclude [mM]usic \
+			--exclude [vV]ideo \
 			--exclude Backup \
 			--exclude CheckinBackup \
 			--exclude VersionBackup \
@@ -277,14 +282,25 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 					shash[section][a[1]]=a[2];
 				}
 			}END{
+#				shash["Memory"]["bEnableMemoryTracking"]=1;
+#				shash["General"]["bMinimizeCachedExteriors"]=1;
+#				shash["General"]["bAllowClearOldestBufferedExterior"]=1;
+#				shash["General"]["bChangingLotsOfBaseObjects"]=1;
+#				shash["General"]["bPreemptivelyUnloadCells"]=1;
+#				shash["General"]["bSkipValidateForms"]=1;
+#				shash["General"]["bSkipValidateInfos"]=1;
+#				shash["General"]["bThrowProcessCompleteExceptions"]=1;
+				shash["General"]["iNumHWThreads"]=threads;
+				shash["General"]["iMaxJobThreads"]=threads;
 				shash["General"]["iMaxUmbraBakeThreads"]=threads;
 				shash["General"]["bExportSceneOnUmbraGenerate"]=0;
 				shash["General"]["bExportTomeOnUmbraGenerate"]=0;
 				shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
 				shash["General"]["bKeepPluginWhenMerging"]=1;
 				shash["General"]["bHideImportantWarnings"]=1;
-				shash["General"]["bAllowMultipleEditors"]=1
-				shash["General"]["bAllowMultipleMasterLoads"]=1
+				shash["General"]["bAllowMultipleEditors"]=1;
+				shash["General"]["bAllowMultipleMasterLoads"]=1;
+				shash["General"]["bLoadTheUserPlugin"]=0;
 				shash["General"]["bUseVersionControl"]=0;
 				shash["General"]["sFile Path"]=wpwd;
 				shash["Archive"]["bInvalidateOlderFiles"]=1;
@@ -337,6 +353,12 @@ ck_wrap() {
 
 	echo -e "$bdir\t$mode\t$type\t$esm\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
+	if ((DEBUG)); then
+		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
+	else
+		CKEXEC="./CreationKit.exe"
+	fi
+
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
@@ -344,26 +366,30 @@ ck_wrap() {
 	precombine)
 		if ((!manual)); then
 			CKARGS=( -generateprecombined:"$esm" $type $area $cur $max )
+			FILE_BASE="${mode}_merge"
+		else
+			FILE_BASE="${mode}_manual"
 		fi
 		rm -rf	"$bdir/$job/Data/Meshes/PreCombined" \
 			"$bdir/$job/Data/CombinedObjects.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/PreCombined.$area.$wcur" \
-			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
 			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
 					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$esm/PreCombined.$area.$wcur"
 				fi
+				# XXX: Look for any newly added or modified files instead?
 				if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
 					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$esm.precombine_merge.$area.$wcur.needed.out" \
+							> "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.needed.out" \
 						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$esm.precombine_merge.$area.$wcur.esp"
+					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.esp"
 				fi
 			) \
 			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
@@ -371,6 +397,9 @@ ck_wrap() {
 	previs)
 		if ((!manual)); then
 			CKARGS=( -generateprevisdata:"$esm" $type $area $cur $max )
+			FILE_BASE="${mode}_merge"
+		else
+			FILE_BASE="${mode}_manual"
 		fi
 		rm -rf	"$bdir/$job/Data/Vis" \
 			"$bdir/$job/Data/PreVis.esp" \
@@ -388,9 +417,9 @@ ck_wrap() {
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$esm.previs_merge.$area.$wcur.needed.out" \
+							> "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.needed.out" \
 						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$esm.previs_merge.$area.$wcur.esp"
+					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.esp"
 				fi
 			) \
 			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
@@ -411,6 +440,7 @@ ck_wrap() {
 	esac
 }
 export -f ck_wrap
+export DEBUG
 
 # Precompute filenames rather than rely on shell globbing as they're usually
 # non-existent when tail starts (and tail -F handles that issue on it's own).
@@ -441,7 +471,7 @@ for mode in "${MODE[@]}"; do
 	)
 
 	if ((MANUAL)); then
-		PFLAGS="--res $BUILD/tmp --delay 4 --lb -vr -j $JOBS"
+		PFLAGS="--res $BUILD/tmp --progress --delay 4 --lb -vr -j $JOBS"
 	else
 		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -vr -j $JOBS"
 	fi

@@ -5,13 +5,17 @@
 
 unit FO4_Precombined_Split;
 const
-	Debug = False;
-	VersionInc = False;
-	StopOnError = False;
-	ConflictOnly = False;
-	PrecombineFileSuffix = 'precombine_merge';
-	PrevisFileSuffix = 'previs_final';
+	Debug = True;
+	StopOnError = True;
+	VersionInc = False;		// Not implemented
+	ConflictOnly = False;		// Not implemented
+	MergeIntoOverride = True;
+	PerElementMasters = True;
+	InitFileBase = 'pcv';
+	InitFileSuffix = 'init';
 	PrevisFileBase = 'pcv';
+	PrevisFileSuffix = 'previs_final';
+	PrecombineFileSuffix = 'precombine_merge';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 8;
 var
@@ -48,30 +52,34 @@ begin
 	Result := nil; Exit;
 end;
 
-function plugin_file_resolve(ofstr: TString; mode: TString): IInterface;
+function plugin_file_resolve(ofstr: TString; idx: integer; mode: TString): IInterface;
 var
 	plugin: IInterface;
 	b, s, pfile: TString;
 	i: integer;
 begin
 	// Attempt to locate existing plugin for the same file or create a new one
-	for i := 0 to Pred(MaxFileAttempts) do begin
+	for i := idx to Pred(idx + MaxFileAttempts) do begin
 		if mode = 'precombine' then begin
 			b := ofstr;
 
-			if i = 0 then begin
-				s := PrecombineFileSuffix;
-			end else begin
-				s := PrecombineFileSuffix + '.' + IntToStr(i);
+			if i = 0 then begin	s := PrecombineFileSuffix;
+			end else begin		s := PrecombineFileSuffix + '.' + IntToStr(i);
 			end;
-		end else begin
+		end else if mode = 'previs' then begin
 			b := PrevisFileBase;
 
-			if i = 0 then begin
-				s := PrevisFileSuffix;
-			end else begin
-				s := PrevisFileSuffix + '.' + IntToStr(i);
+			if i = 0 then begin	s := PrevisFileSuffix;
+			end else begin		s := PrevisFileSuffix + '.' + IntToStr(i);
 			end;
+		end else if mode = 'init' then begin
+			b := InitFileBase;
+
+			if i = 0 then begin	s := InitFileSuffix;
+			end else begin		s := InitFileSuffix + '.' + IntToStr(i);
+			end;
+		end else begin
+			Exit;
 		end;
 
 		pfile := b + '.' + s + '.' + PluginSuffix;
@@ -81,6 +89,9 @@ begin
 		end;
 
 		try
+			if FileExists(pfile) then
+				continue;
+
 			// create new plugin
 			AddMessage('Creating file: ' + pfile);
 			plugin := AddNewFileName(pfile);
@@ -103,10 +114,11 @@ end;
 
 function plugin_resolve(e, o, m: IInterface; mode: TString): IInterface;
 var
-	t, ofile, plugin: IInterface;
+	t, tfile, ofile, plugin: IInterface;
 	s, pfile, mfstr, ofstr: TString;
 	idx, i, j: integer;
 begin
+	// plugin index in plugin_map is based on the load order index of the overridden plugin
 	ofile := GetFile(o);
 	idx := GetLoadOrder(ofile);
 	plugin := plugin_map[idx];
@@ -115,17 +127,21 @@ begin
 	end;
 
 	// Master and immediately preceeding master (if any) of the element being processed
-	mfstr := GetFileName(m);
 	ofstr := GetFileName(ofile);
-	plugin := plugin_file_resolve(ofstr, mode);
+	plugin := plugin_file_resolve(ofstr, 0, mode);
 	plugin_map[idx] := plugin;
+
+	if Debug then AddMessage('plugin_resolve: processing for ' + ofstr);
 
 	try
 		// Almost always the main game master (Fallout4.esm), however
 		// there are situations with entirely new records where the
 		// the actual master is the one originating said records.
-		if Debug then AddMessage('Adding master: ' + mfstr);
-		AddMasterIfMissing(plugin, mfstr);
+		mfstr := GetFileName(m);
+		if not HasMaster(plugin, mfstr) then begin
+			if Debug then AddMessage('Adding master: ' + mfstr);
+			AddMasterIfMissing(plugin, mfstr);
+		end;
 
 		// For the overridden master of the element being processed
 		// add its masters as an explicit master to the plugin being
@@ -136,14 +152,19 @@ begin
 		// the created plugin is merged back in with version control.
 		for j := 0 to Pred(MasterCount(ofile)) do begin
 			t := MasterByIndex(ofile, j);
-			if Debug then AddMessage('Adding master: ' + GetFileName(t));
-			AddMasterIfMissing(plugin, GetFileName(t));
+			tfile := GetFileName(t);
+			if not HasMaster(plugin, tfile) then begin
+				if Debug then AddMessage('Adding master: ' + GetFileName(t));
+				AddMasterIfMissing(plugin, tfile);
+			end;
 		end;
 
 		// The actual override prior to this elements plugin
 		if not Equals(o, m) then begin
-			if Debug then AddMessage('Adding master: ' + ofstr);
-			AddMasterIfMissing(plugin, ofstr);
+			if not HasMaster(plugin, ofstr) then begin
+				if Debug then AddMessage('Adding master: ' + ofstr);
+				AddMasterIfMissing(plugin, ofstr);
+			end;
 		end;
 
 		// Sort only, do *not* clean masters or it will wreck CKs idea
@@ -162,6 +183,56 @@ begin
 	Result := plugin;
 end;
 
+procedure elem_masters_add(plugin: IwbFile; e: IInterface);
+var
+	sl: TStringList;
+	i: integer;
+begin
+	sl := TStringList.create;
+	sl.Sorted := True;
+	sl.Duplicates := dupIgnore;
+
+	ReportRequiredMasters(e, sl, False, True);
+	for i := 0 to Pred(sl.Count) do begin
+		if Debug then AddMessage('Element requires master: ' + sl[i]);
+		AddMasterIfMissing(plugin, sl[i]);
+	end;
+
+	sl.free;
+end;
+
+procedure elem_previs_flag_check(e, m: IInterface);
+var
+	flags, mflags: cardinal;
+begin
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	mflags := GetElementNativeValues(m, 'Record Header\Record Flags');
+
+	// If record has 'no previs' set but master does not, remove it
+	if ((flags and $80) <> 0) and ((mflags and $80) = 0) then begin
+		AddMessage('Warning: disabling explicitly set "no previs" flag: ' + FullPath(e));
+		SetElementNativeValues(e, 'Record Header\Record Flags', flags - $80);
+	end;
+end;
+
+procedure elem_sync(e, r: IInterface; s: TString);
+begin
+	if ElementExists(e, s) then begin
+		if not ElementExists(r, s) then
+			Add(r, s, True);
+		ElementAssign(ElementBySignature(r, s), LowInteger, ElementBySignature(e, s), False);
+	end else if ElementExists(r, s) then begin
+		RemoveElement(r, s);
+	end;
+end;
+
+procedure elem_version_sync(e, r: IInterface);
+begin
+	SetFormVersion(r, GetFormVersion(e));
+	SetFormVCS1(r, GetFormVCS1(e));
+	SetFormVCS2(r, GetFormVCS2(e));
+end;
+
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
@@ -169,25 +240,16 @@ var
 	i: integer;
 begin
 	try
-		// It might be safe to simply copy from e rather than
-		// the last overridden non-pcv related plugin. This
-		// depends on how reliable the XCRI data is in the
-		// plugin providing the authoritative XPRI data.
+		// Copy overridden plugin data as a starting base
 		r := wbCopyElementToFile(o, plugin, False, True);
 
+		// Copy previs data from current element to plugin
 		for i := 0 to Pred(length(pv_sig_tab)) do begin
 			s := pv_sig_tab[i];
-			t := ElementBySignature(e, s);
-			if Assigned(t) then begin
-				if not ElementExists(r, s) then
-					Add(r, s, True);
-				ElementAssign(ElementBySignature(r, s), LowInteger, t, False);
-			end;
+			elem_sync(e, r, s);
 		end;
 
-		SetFormVersion(r, GetFormVersion(e));
-		SetFormVCS1(r, GetFormVCS1(e));
-		SetFormVCS2(r, GetFormVCS2(e));
+		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
 			Remove(r);
@@ -198,17 +260,48 @@ begin
 	Result := True;
 end;
 
+function precombine_merge(plugin: IwbFile; e, o, m: IInterface): boolean;
+var
+	r, t: IInterface;
+	s: TString;
+	i, j: integer;
+	flags, mflags: cardinal;
+begin
+	try
+		if PerElementMasters then
+			elem_masters_add(plugin, e);
+
+		// Merge precombine data from current element to overridden plugin
+		for i := 0 to Pred(length(pc_sig_tab)) do begin
+			s := pc_sig_tab[i];
+			elem_sync(e, o, s);
+		end;
+
+		elem_previs_flag_check(o, m);
+		elem_version_sync(e, o);
+	except
+		on Ex: Exception do begin
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+end;
+
 function precombine_split(plugin: IwbFile; e, o, m: IInterface): boolean;
 var
 	r, t: IInterface;
 	s: TString;
-	flags, mflags, i, j, oc: integer;
+	i, j: integer;
+	flags, mflags: cardinal;
 begin
 	try
 		// XXX: xEdit will choke on delocalized plugins containing strings like '$Farm05Location'
 		// XXX: due to it wrongly interpreting it as a hex/integer value and will also disallow copying
 		// XXX: an element with busted references. Attempt a normal deepcopy first and if it does not
 		// XXX: succeed then attempt an element by element copy whilst avoiding bogus XPRI data.
+
+		if PerElementMasters then
+			elem_masters_add(plugin, e);
+
 		r := wbCopyElementToFile(e, plugin, False, True);
 	except
 		// Deep copy failed, most likely due to bad XPRI data, attempt a per-element copy.
@@ -221,6 +314,9 @@ begin
 			end;
 
 			try
+				if PerElementMasters then
+					elem_masters_add(plugin, e);
+
 				r := wbCopyElementToFile(e, plugin, False, False);
 				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
 
@@ -257,27 +353,11 @@ begin
 		// overwritten by previs generation anyway.
 		for i := 0 to Pred(length(pv_sig_tab)) do begin
 			s := pv_sig_tab[i];
-			if ElementExists(o, s) then begin
-				if not ElementExists(r, s) then
-					Add(r, s, True);
-				ElementAssign(ElementBySignature(r, s), LowInteger, ElementBySignature(o, s), False);
-			end else if ElementExists(r, s) then begin
-				RemoveElement(r, s);
-			end;
+			elem_sync(o, r, s);
 		end;
 
-		SetFormVersion(r, GetFormVersion(e));
-		SetFormVCS1(r, GetFormVCS1(e));
-		SetFormVCS2(r, GetFormVCS2(e));
-
-		flags := GetElementNativeValues(r, 'Record Header\Record Flags');
-		mflags := GetElementNativeValues(m, 'Record Header\Record Flags');
-
-		// If record has 'no previs' set but master does not, remove it
-		if ((flags and $80) <> 0) and ((mflags and $80) = 0) then begin
-			AddMessage('Warning: disabling explicitly set "no previs" flag: ' + FullPath(e));
-			SetElementNativeValues(r, 'Record Header\Record Flags', flags - $80);
-		end;
+		elem_previs_flag_check(r, m);
+		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
 			Remove(r);
@@ -288,32 +368,250 @@ begin
 	Result := True;
 end;
 
+function plugin_init_refs(t: IInterface; sl: TStringList): Boolean;
+var
+	e, r, rt, rb: IInterface;
+	s: array [0..1] of IInterface;
+	f, tfile: TString;
+	i, j, k, n: integer;
+	flags: cardinal;
+begin
+	s[0] := GroupBySignature(t, 'STAT');
+	s[1] := GroupBySignature(t, 'SCOL');
+
+	if ((ElementCount(s[0]) <> 0) or (ElementCount(s[1]) <> 0)) then begin
+		tfile := GetFileName(t);
+		AddMessage(tfile + ' stat count == ' + IntToStr(ElementCount(s[0])) + ' scol count == ' + IntToStr(ElementCount(s[1])));
+	end;
+
+	// iterate over records in a plugin
+	for i := 0 to Pred(length(s)) do begin
+		for j := 0 to Pred(ElementCount(s[i])) do begin
+			e := ElementByIndex(s[i], j);
+
+			// ignore markers entirely
+			flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+			if (flags and $800000) <> 0 then
+				continue;
+
+			// referenced by information is available for master records only
+			if not IsMaster(e) then
+				continue;
+
+			for k := 0 to Pred(ReferencedByCount(e)) do begin
+				r := ReferencedByIndex(e, k);
+				f := GetFileName(r);
+
+				if not (Signature(r) = 'REFR') then
+					continue;
+
+				if sl.indexOf(f) < 0 then begin
+					if Debug then begin
+						AddMessage('	Referencing plugin: ' + f + ' (rcount == ' + IntToStr(ReferencedByCount(e)) + ')');
+						AddMessage('	  ' + Signature(e) + ' ' + FullPath(e));
+						AddMessage('	  ' + Signature(r) + ' ' + FullPath(r));
+					end;
+					sl.Add(f);
+
+if false then begin
+					for n := 0 to Pred(ReferencedByCount(r)) do begin
+						rt := ReferencedByIndex(r, n);
+						f := GetFileName(rt);
+
+						AddMessage('		Referencing plugin: ' + f + ' (rcount == ' + IntToStr(ReferencedByCount(r)) + ')');
+						AddMessage('	 	 ' + Signature(rt) + ' ' + FullPath(rt));
+						if n > 4 then
+							break;
+					end;
+end;
+
+					AddMessage('');
+				end;
+			end;
+		end;
+	end;
+
+	Result := True;
+end;
+
+function group_desc(g: IInterface): Boolean;
+var
+	cg, r, t: IInterface;
+	i, j: integer;
+begin
+	AddMessage(FullPath(g));
+
+	for i := 0 to Pred(ElementCount(g)) do begin
+		r := ElementByIndex(g, i);
+		AddMessage(FullPath(r));
+
+		if Signature(r) = 'CELL' then
+			continue;
+
+		cg := ChildGroup(r);
+		if Assigned(cg) then begin
+			group_desc(cg);
+			continue;
+		end;
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			AddMessage(FullPath(t));
+		end;
+	end;
+end;
+
+function plugin_init(mode: TString): boolean;
+var
+	e, r, t, g, rr, rg, rgg, rggg, plugin: IInterface;
+	sl: array[0..1] of TStringList;
+	f, tfile, pfile: TString;
+	i, j, k, n: integer;
+begin
+	// Create a new initial plugin
+//	plugin := plugin_file_resolve(nil, 0, mode);
+//	if not Assigned(plugin) then begin
+//		Result := StopOnError; Exit;
+//	end;
+
+//	pfile := GetFileName(plugin);
+	sl[0] := TStringList.create;
+	sl[0].Sorted := True;
+	sl[1] := TStringList.create;
+	sl[1].Sorted := False;
+
+	for i := 0 to Pred(FileCount) do begin
+		t := FileByIndex(i);
+		tfile := GetFileName(t);
+
+//		if tfile = pfile then
+//			continue;
+		if Pos('.Hardcoded.', tfile) <> 0 then
+			continue;
+
+		if ContainerStates(t) and (1 shl csRefsBuild) = 0 then begin
+			// Special hack for the main master
+			if tfile = 'Fallout4.esm' then begin
+				sl[0].Add(tfile);
+			end else begin
+				AddMessage(Format('Building reference info: %s', [tfile]));
+				BuildRef(t);
+			end;
+		end;
+
+		plugin_init_refs(t, sl[0]);
+	end;
+
+	j := 0;
+	for i := 0 to Pred(FileCount) do begin
+		t := FileByIndex(i);
+		tfile := GetFileName(t);
+
+		if sl[0].indexOf(tfile) < 0 then
+			continue;
+//		if not (HasGroup(t, 'CELL') or HasGroup(t, 'WRLD')) then
+//			continue;
+
+//		AddMessage(Format('Candidate[%d]: %s (pre-add)', [j, tfile]));
+//		inc(j);
+
+		sl[1].AddObject(tfile, t);
+	end;
+
+	AddMessage('s[1] length == ' + IntToStr(sl[1].Count));
+
+	k := 0;
+	for i := 0 to Pred(sl[1].Count) do begin
+		t := ObjectToElement(sl[1].Objects[i]);
+		tfile := GetFileName(t);
+		k := k + RecordCount(t);
+		AddMessage(Format('Candidate[%d]: %s (nrec == %d, nrec_total == %d)', [i, tfile, RecordCount(t), k]));
+
+		if i <> 14 then
+			continue;
+
+		// WRLD
+		//	Commonwealth
+		//		CELL
+		//		Block -1, -1
+		//			Sub-Block -1, -1
+		//				CELL
+		//
+		g := GroupBySignature(t, 'WRLD');
+		if Assigned(g) then begin
+			group_desc(g);
+			AddMessage('');
+		end;
+	end;
+
+if false then begin
+
+	for i := 20 to Pred(sl[1].Count) do begin
+		plugin := plugin_file_resolve(nil, i, mode);
+		if not Assigned(plugin) then begin
+			Result := StopOnError; Exit;
+		end;
+
+		k := 0;
+		for j := 0 to Pred(sl[1].Count) do begin
+			t := ObjectToElement(sl[1].Objects[j]);
+			tfile := GetFileName(t);
+			k := k + RecordCount(t);
+			AddMessage(Format('Candidate[%d]: %s (nrec == %d, nrec_total == %d)', [j, tfile, RecordCount(t), k]));
+
+			if j <= i then begin
+				AddMasterIfMissing(plugin, tfile);
+			end else begin
+				break;
+			end;
+		end;
+
+	end;
+
+end;
+
+	sl[0].free;
+	sl[1].free;
+
+	Result := True;
+end;
+
 function Process(e: IInterface): integer;
 var
-	o, m, r, t, f, ofile, plugin: IInterface;
-	s, mode, mfstr, ofstr, pfile: TString;
-	i, j, oc: integer;
-	o_visi, o_pcmb: IInterface;
-	ts, pcmb_max, visi_max: integer;
+	o, m, t, plugin: IInterface;
+	s, mode: TString;
 	nv: string;
+	i, j, oc: integer;
+	ts, pcmb_max, visi_max: integer;
+	merge: boolean;
 begin
-//	mode := 'precombine';
-	mode := 'previs';
+//	mode := 'init';
+	mode := 'precombine';
+//	mode := 'previs';
+
+	if mode = 'init' then begin
+		Result := plugin_init(mode);
+		Exit;
+	end;
 
 	// operate on the last override
-	e := WinningOverride(e);
+//	e := WinningOverride(e);
 
 	// skip if this is a plugin file generated by this script
-	if (Pos(PrecombineFileSuffix, GetFileName(e)) <> 0) then
+	if (Pos(PrecombineFileSuffix, GetFileName(e)) <> 0) then begin
+		if Debug then AddMessage('Element file contains PrecombineFileSuffix');
 		Exit;
-	if (Pos(PrevisFileSuffix, GetFileName(e)) <> 0) then
+	end else if (Pos(PrevisFileSuffix, GetFileName(e)) <> 0) then begin
+		if Debug then AddMessage('Element file contains PrevisFileSuffix');
 		Exit;
+	end;
 
 	// Skip non-cells
 	if Signature(e) <> 'CELL' then
 		Exit;
 
 	// XXX: check existing generated precombined plugins for cells without precombines
+	// XXX: but possibly with XPRI data (or vice versa)
 	// Skip cells without precombination
 	if not (ElementExists(e, 'XCRI') or ElementExists(e, 'PCMB')) then begin
 		// XXX: Clean this up
@@ -325,48 +623,57 @@ begin
 
 	m := Master(e);
 	oc := OverrideCount(m);
-	if (oc = 0 or Equals(e, m)) then begin
+	if (oc = 0 or Equals(e, m)) then
 		Exit;
-	end else if Debug then begin
+
+	// Find this actual element and consider it the highest override so
+	// that additional overrides are ignored.
+	for oc := OverrideCount(m) downto 0 do begin
+		if oc = 0 then Exit;
+
+		t := OverrideByIndex(m, oc - 1);
+		if Equals(e, t) then break;
+	end;
+
+	if Debug then begin
 		for i := 0 to Pred(oc) do begin
 			t := OverrideByIndex(m, i);
-			AddMessage('override[' + IntToStr(i) + '] == ' + GetFileName(t));
+			AddMessage(Format('override[%d] == %s', [i, GetFileName(t)]));
 		end;
 	end;
 
-	// XXX: ensure last override is never used (change for loop counter?)
+	// XXX: precombines: ensure last override is never used (change for loop counter?)
 	// | [0] master | [1] override | [2] *override* | [3] element | ...
 	o := m;
-	o_pcmb := nil;
-	o_visi := nil;
+	ts := 0;
 	pcmb_max := 0;
 	visi_max := 0;
-	for i := Pred(oc) downto 0 do begin
+	for i := Pred(oc - 1) downto 0 do begin
 		t := OverrideByIndex(m, i);
 		s := GetFileName(t);
 
-		if ElementExists(t, 'PCMB') then begin
+		if (mode = 'precombine') and ElementExists(t, 'PCMB') then begin
 			nv := GetElementEditValues(t, 'PCMB');
-			if length(nv) >= 5 then
+			if Assigned(nv) and length(nv) >= 5 then
 				ts := StrToInt('$' + nv[4] + nv[5] + nv[1] + nv[2]);
-				if ts = 0 or ts > pcmb_max then begin
-					if pcmb_max <> 0 then
-						AddMessage('Plugin with greater PCMB: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
-					pcmb_max := ts;
-					e := t;
-				end
-		end;
 
-		if ElementExists(t, 'VISI') then begin
+			if ts = 0 or ts > pcmb_max then begin
+				if pcmb_max <> 0 then
+					AddMessage('Plugin with greater PCMB: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
+				pcmb_max := ts;
+				e := t;
+			end;
+		end else if (mode = 'previs') and ElementExists(t, 'VISI') then begin
 			nv := GetElementEditValues(t, 'VISI');
-			if length(nv) >= 5 then
+			if Assigned(nv) and length(nv) >= 5 then
 				ts := StrToInt('$' + nv[4] + nv[5] + nv[1] + nv[2]);
-				if ts = 0 or ts > visi_max then begin
-					if visi_max <> 0 then
-						AddMessage('Plugin with greater VISI: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
-					visi_max := ts;
-					e := t;
-				end
+
+			if ts = 0 or ts > visi_max then begin
+				if visi_max <> 0 then
+					AddMessage('Plugin with greater VISI: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
+				visi_max := ts;
+				e := t;
+			end
 		end;
 
 		// XXX: consider allowing precombine_merge files in previs mode
@@ -379,18 +686,33 @@ begin
 		break;
 	end;
 
-	if Debug then
-		AddMessage('m == ' + GetFileName(m) + ', o == ' + GetFileName(o) + ', oc == ' + IntToStr(oc));
+	merge := (MergeIntoOverride and IsEditable(o));
+	if Debug then begin
+		if merge then begin
+			AddMessage(Format('m == %s, o == %s, oc == %d, merge == 1', [GetFileName(m), GetFileName(o), oc]));
+		end else begin
+			AddMessage(Format('m == %s, o == %s, oc == %d, merge == 0', [GetFileName(m), GetFileName(o), oc]));
+		end;
+	end;
 
-	plugin := plugin_resolve(e, o, m, mode);
+	if merge then begin
+		plugin := GetFile(o);
+	end else begin
+		plugin := plugin_resolve(e, o, m, mode);
+	end;
+
 	if not Assigned(plugin) then begin
 		Result := StopOnError; Exit;
 	end;
 
 	try
 		if mode = 'precombine' then begin
-			precombine_split(plugin, e, o, m);
-		end else begin
+			if merge then begin
+				precombine_merge(plugin, e, o, m);
+			end else begin
+				precombine_split(plugin, e, o, m);
+			end;
+		end else if mode = 'previs' then begin
 			previs_merge(plugin, e, o, m);
 		end;
 	except

@@ -32,6 +32,31 @@ revised after testing:
 
 ---
 
+Probably controls auto master copying from Merging -> Data:
+
+sGeneralMasterMismatchWarning:GeneralWarnings
+sMasterMismatchWarning:GeneralWarnings
+
+Might be related to cell precombined overlap, but maybe not:
+
+bCheckDLCCombinedKeys:General
+bCheckForMultiFileForms:General
+bFixDLCCombinedKeys:General
+
+Might also be useful:
+
+bWarnOnUserVersionDifferences:General
+
+---
+
+Critical CK issue:
+
+Loading too many records at once will result in:
+
+.rdata:00000001438525D0	00000042	C	OUT OF HANDLE ARRAY ENTRIES.  Null handle created for pointer %p.
+
+---
+
 * Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
 
 ---
@@ -146,3 +171,14 @@ DF54
 DF75
 E614 (DLCworkshop03 overlaps with Fallout4, but pcv-world-merged previs generation doesn't take into account DLCworkshop03 [double-check this])
 03016E33
+
+---
+
+General difficulties:
+
+1. xEdit doesn't allow editing Fallout4.esm. This would be useful for the intermediate step between merging XCRI data and generating new previs data.
+2. CK has max handle limitations for forms/objects. This speaks for itself and means one cannot just open their entire load order in CK and generate precombines once. Really sucks and makes things a lot harder to setup for previs generation.
+3. CK has max handle limitations for loose files. This means 100k+ loose precombine files will result in CK crashing and not generating complete previs data. The only way around this is to temporarily rearchive the new precombined NIFs with the vanilla archives and shim that into place before previs generation.
+4. CK -generateprecombined and -generateprevisdata require atleast one REFR in each cell to be generating. Simply providing a plugin of overidden cell data won't do anything without actual statics to generate for.
+5. CK likes to remove all esps from the master list of a plugin and provide broken formids for anything those esps were master for. The only fix is to manually readd them in xEdit but one cannot use "add masters" as this will increment all the broken references. Instead the main header must be edited. This sucks.
+6. CK likes to trash the master id of XPRI formids if more than 2 masters are used.
