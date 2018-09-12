@@ -9,7 +9,8 @@ const
 	StopOnError = True;
 	VersionInc = False;		// Not implemented
 	ConflictOnly = False;		// Not implemented
-	MergeIntoOverride = True;
+	MergeIntoOverride = False;
+	CopyPerCellStatic = True;
 	PerElementMasters = True;
 	InitFileBase = 'pcv';
 	InitFileSuffix = 'init';
@@ -89,7 +90,7 @@ begin
 		end;
 
 		try
-			if FileExists(pfile) then
+			if FileExists(DataPath + '/' + pfile) then
 				continue;
 
 			// create new plugin
@@ -289,6 +290,7 @@ end;
 function precombine_split(plugin: IwbFile; e, o, m: IInterface): boolean;
 var
 	r, t: IInterface;
+	a: array[0..1] of IInterface;
 	s: TString;
 	i, j: integer;
 	flags, mflags: cardinal;
@@ -365,6 +367,32 @@ begin
 		end;
 	end;
 
+	try
+		// Grab the 1st refr in the cell (from the override or master) and dupe as an override
+		// This is purely to get -generateprevisdata or -generateprecombined to generate data
+		// for the cell without actually duplicating the entire plugin being overridden. The
+		// reason for this is that the automated commands will only generate data for cells
+		// which define a REFR. It is not enough to simply override the CELL itself. Once
+		// data is generated these duplicated REFRs are no longer needed and will not be used
+		// in the final generated plugin containing both precombine and previs data.
+
+		if CopyPerCellStatic then begin
+			a[0] := o; a[1] := m;
+			for i := 0 to Pred(length(a)) do begin
+				t := cell_refr_first(a[i]);
+				if not Assigned(t) then continue;
+
+				wbCopyElementToFile(t, plugin, False, True);
+				break;
+			end;
+		end;
+	except
+		on Ex: Exception do begin
+			Remove(r);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+
 	Result := True;
 end;
 
@@ -434,7 +462,36 @@ end;
 	Result := True;
 end;
 
-function group_desc(g: IInterface): Boolean;
+function cell_refr_first(e: IInterface): IInterface;
+var
+	cg, rcg, r, t: IInterface;
+	i, j: integer;
+begin
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+		if Pos('Temporary Children', Name(r)) = 0 then
+			continue;
+
+		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			if Signature(t) <> 'REFR' then
+				continue;
+
+			AddMessage('t: ' + FullPath(t));
+			Result := t;
+			Exit;
+		end;
+	end;
+end;
+
+function group_desc(g: IInterface; s: string): Boolean;
 var
 	cg, r, t: IInterface;
 	i, j: integer;
@@ -456,7 +513,8 @@ begin
 
 		for j := 0 to Pred(ElementCount(r)) do begin
 			t := ElementByIndex(r, j);
-			AddMessage(FullPath(t));
+			if (not Assigned(s)) or (Signature(t) = s) then
+				AddMessage(FullPath(t));
 		end;
 	end;
 end;
@@ -539,7 +597,7 @@ begin
 		//
 		g := GroupBySignature(t, 'WRLD');
 		if Assigned(g) then begin
-			group_desc(g);
+			group_desc(g, nil);
 			AddMessage('');
 		end;
 	end;
@@ -578,13 +636,15 @@ end;
 
 function Process(e: IInterface): integer;
 var
-	o, m, t, plugin: IInterface;
+	o, m, t, g, plugin: IInterface;
 	s, mode: TString;
 	nv: string;
 	i, j, oc: integer;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
 begin
+
+
 //	mode := 'init';
 	mode := 'precombine';
 //	mode := 'previs';
@@ -704,6 +764,16 @@ begin
 	if not Assigned(plugin) then begin
 		Result := StopOnError; Exit;
 	end;
+
+
+if False then begin
+	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
+//	g := ChildGroup(o);
+	cell_refr_first(o);
+
+	Result := True;
+	Exit;
+end;
 
 	try
 		if mode = 'precombine' then begin

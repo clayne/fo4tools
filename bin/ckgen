@@ -16,6 +16,9 @@ done
 function esm_parse() {
 	local t e a s
 
+	OIFS="$IFS"
+	IFS="
+"
 	t=( ${1//[\/:]/ } )
 	e=${t[0]}
 	if [[ ${#t[*]} -gt 2 ]]; then
@@ -25,7 +28,9 @@ function esm_parse() {
 		s=${t[1]}
 	fi
 
-	echo "'$e'" "'$a'" "'$s'"
+	IFS="$OIFS"
+
+	echo "\"$e\"" "\"$a\"" "\"$s\""
 }
 
 TMUX=1
@@ -113,12 +118,12 @@ done
 ESM=( "$@" )
 
 for esm in "${ESM[@]}"; do
-	eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
+	eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
 
-	if [[ "$esm" =~ [[:space:]] ]]; then
-		echo "Plugins cannot have spaces in them (CK limitation): '$esm'" 1>&2
-		exit -1
-	fi
+#	if [[ "$esm" =~ [[:space:]] ]]; then
+#		echo "Plugins cannot have spaces in them (CK limitation): '$esm'" 1>&2
+#		exit -1
+#	fi
 
 	((!SHARDS_MAX || s > SHARDS_MAX)) && SHARDS_MAX=$((SHARDS_FORCE ? SHARDS : s))
 done
@@ -142,8 +147,8 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 			# However, since loose files override archives, the actual
 			# directory needs to be moved aside so CreationKit doesn't
 			# parse the loose files.
-			for esm in ${ESM[*]}; do
-				eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
+			for esm in "${ESM[@]}"; do
+				eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
 
 				# XXX: cleanup
 				(
@@ -204,7 +209,7 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	rm -rf "$BUILD" && mkdir -p "$BUILD" "$BUILD/tmp" || exit -1
 
 	echo "Cloning build directories (hardlinks)..." 1>&2
-	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: ${ESM[*]} ::: ${AREA[*]} ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
+	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${ESM[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
 	(
 		set -e
 		set -o pipefail
@@ -359,13 +364,21 @@ ck_wrap() {
 		CKEXEC="./CreationKit.exe"
 	fi
 
+	# XXX: Check for any alnum + [_-] character
+	if [[ "$esm" =~ [^A-Za-z0-9._-] ]]; then
+		# XXX: generate new temporary file name
+		# XXX: ensure any generated precombined or previs subdirs are renamed
+		esm_ck="${esm//[^A-Za-z0-9_.-]/_}"
+		ln -f "$bdir/$job/Data/$esm" "$bdir/$job/Data/$esm_ck"
+	fi
+
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
 	case "$mode" in
 	precombine)
 		if ((!manual)); then
-			CKARGS=( -generateprecombined:"$esm" $type $area $cur $max )
+			CKARGS=( -generateprecombined:"${esm_ck:-$esm}" $type $area $cur $max )
 			FILE_BASE="${mode}_merge"
 		else
 			FILE_BASE="${mode}_manual"
@@ -379,11 +392,15 @@ ck_wrap() {
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+					if [[ -n "$esm_ck" ]]; then
+						find "$bdir/$job/Data/Meshes/PreCombined" -name "$esm_ck" -print0 \
+							| xargs -tr0 rename "$esm_ck" "$esm"
+					fi
 					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$esm/PreCombined.$area.$wcur"
 				fi
 				# XXX: Look for any newly added or modified files instead?
 				if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
-					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
+					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
@@ -396,7 +413,7 @@ ck_wrap() {
 		;;
 	previs)
 		if ((!manual)); then
-			CKARGS=( -generateprevisdata:"$esm" $type $area $cur $max )
+			CKARGS=( -generateprevisdata:"${esm_ck:-$esm}" $type $area $cur $max )
 			FILE_BASE="${mode}_merge"
 		else
 			FILE_BASE="${mode}_manual"
@@ -405,15 +422,19 @@ ck_wrap() {
 			"$bdir/$job/Data/PreVis.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
 			"$bdir/$esm/Vis.$area.$wcur" \
-			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
 			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& (
 				if [[ -d "$bdir/$job/Data/Vis" ]]; then
+					if [[ -n "$esm_ck" ]]; then
+						find "$bdir/$job/Data/Vis" -name "$esm_ck" -print0 \
+							| xargs -tr0 rename "$esm_ck" "$esm"
+					fi
 					 mv "$bdir/$job/Data/Vis" "$bdir/$esm/Vis.$area.$wcur"
 				fi
 				if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-					(cd "$bdir/$job" && ./CreationKit.exe -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out") \
+					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out") \
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
@@ -426,10 +447,10 @@ ck_wrap() {
 		;;
 	needed)
 		if ((!manual)); then
-			CKARGS=( -dumpneededfiles:"$esm" "dumpneededfiles.out" )
+			CKARGS=( -dumpneededfiles:"${esm_ck:-$esm}" "dumpneededfiles.out" )
 		fi
 		rm -rf	"$bdir/$job/dumpneededfiles.out" \
-			&& (cd "$bdir/$job" && ./CreationKit.exe ${CKARGS[*]}) \
+			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
 			&& mkdir -p "$bdir/$esm" \
 			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
 			&& cat "$bdir/$job/dumpneededfiles.out" \
@@ -447,33 +468,33 @@ export DEBUG
 LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
 
 for mode in "${MODE[@]}"; do
-	CMDS=$(
-		for esm in ${ESM[*]}; do
-			eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
+	for esm in "${ESM[@]}"; do
+		eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
 
-			[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
-			[[ -n $s ]] || s=$SHARDS
+		[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
+		[[ -n $s ]] || s=$SHARDS
 
-			for area in ${atmp[*]}; do
-				if [[ "$area" != "all" && "$mode" == "precombine" && "$type" == "clean" ]]; then
-					echo "$esm: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
-					exit -1
-				elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
-					echo "$esm: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
-					s=1
-				elif ((s > SHARDS_MAX)); then
-					s=$SHARDS_MAX
-				fi
+		for area in ${atmp[*]}; do
+			if [[ "$area" != "all" && "$mode" == "precombine" && "$type" == "clean" ]]; then
+				echo "$esm: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+				exit -1
+			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
+				echo "$esm: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
+				s=1
+			elif ((s > SHARDS_MAX)); then
+				s=$SHARDS_MAX
+			fi
 
-				parallel -r -j1 echo "ck_wrap $BUILD $mode $TYPE $esm {1} {2} $s" ::: $area ::: $(seq -s ' ' $START $s)
-			done
+			# Use tabs for arg separation and escape-quote $esm so that when parallel
+			# interprets this input line to call ck_wrap it doesn't consume quotes.
+			parallel -tr -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$esm\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
 		done
-	)
+	done > "$BUILD/tmp/parallel.in"
 
 	if ((MANUAL)); then
-		PFLAGS="--res $BUILD/tmp --progress --delay 4 --lb -vr -j $JOBS"
+		PFLAGS="--res $BUILD/tmp --progress --delay 4 --lb -tr -j $JOBS --colsep '\t'"
 	else
-		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -vr -j $JOBS"
+		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
 	fi
 
 	# Note: final 'read' commands are to prevent tmux from closing each sub-window
@@ -483,14 +504,14 @@ for mode in "${MODE[@]}"; do
 			split -p 40 \
 			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
 			split -p 50 \
-			"echo '$CMDS' | tee '$BUILD/tmp/parallel.in' | parallel $PFLAGS --lb -vr -j $JOBS '{} {%} $MANUAL'; read" ';' \
+			"cat '$BUILD/tmp/parallel.in' | parallel $PFLAGS --lb -vr -j $JOBS '{} {%} $MANUAL'; read" ';' \
 			set-option status off
 	else
-		echo "$CMDS" | parallel $PFLAGS "{} {%} $MANUAL" || exit -1
+		cat "$BUILD/tmp/parallel.in" | parallel $PFLAGS "{} {%} $MANUAL" || exit -1
 	fi
 
-	for esm in ${ESM[*]}; do
-		eval ep=( $(esm_parse $esm) ); esm=${ep[0]}; a=${ep[1]}; s=${ep[2]}
+	for esm in "${ESM[@]}"; do
+		eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
 		[[ -d "$BUILD/$esm" ]] || continue
 
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
@@ -499,9 +520,9 @@ for mode in "${MODE[@]}"; do
 
 			# XXX: do not use --remove-source-files so overlapping files are still present for reference
 			mkdir -p "$OUT/$esm/Data/Meshes/PreCombined"
-			for i in $(ls -d "$BUILD/$esm/PreCombined".*); do
-				rsync -aS --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
-				rmdir --ignore-fail-on-non-empty "$i" || true
+			ls -d "$BUILD/$esm/PreCombined".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+				rmdir --ignore-fail-on-non-empty "$tmp" || true
 			done
 		fi
 
@@ -509,9 +530,9 @@ for mode in "${MODE[@]}"; do
 			echo "$esm: Moving previs..." 1>&2
 
 			mkdir -p "$OUT/$esm/Data/Vis"
-			for i in $(ls -d "$BUILD/$esm/Vis".*); do
-				rsync -aS --link-dest="$PWD/$i" "$i"/ "$OUT/$esm/Data/Vis"/ || true
-				rmdir --ignore-fail-on-non-empty "$i" || true
+			ls -d "$BUILD/$esm/Vis".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$esm/Data/Vis"/ || true
+				rmdir --ignore-fail-on-non-empty "$tmp" || true
 			done
 		fi
 
