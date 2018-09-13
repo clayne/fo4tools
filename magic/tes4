@@ -1,0 +1,5 @@
+# TES4 (Fallout4)
+0			string	TES4	Bethesda TES4 plugin,
+>4			long	x	size=%d
+>8			long	&0x1	esm
+>8			long	&0x80	localized
