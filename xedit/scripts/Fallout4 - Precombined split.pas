@@ -5,7 +5,8 @@
 
 unit FO4_Precombined_Split;
 const
-	Debug = True;
+//	Debug = True;
+	Debug = False;
 	StopOnError = True;
 	VersionInc = False;		// Not implemented
 	ConflictOnly = False;		// Not implemented
@@ -24,6 +25,7 @@ var
 	plugin_map: array [0..255] of IInterface;
 	pc_sig_tab: array [0..1] of TString;
 	pv_sig_tab: array [0..2] of TString;
+	rmap: array [0..1] of THashedStringList;
 
 function Initialize: integer;
 begin
@@ -35,6 +37,14 @@ begin
 	pv_sig_tab[0] := 'XPRI';
 	pv_sig_tab[1] := 'RVIS';
 	pv_sig_tab[2] := 'VISI';
+
+	rmap[0] := THashedStringList.create;
+	rmap[0].Sorted := True;
+	rmap[0].Duplicates := dupAccept;
+
+	rmap[1] := THashedStringList.create;
+	rmap[1].Sorted := True;
+	rmap[1].Duplicates := dupAccept;
 end;
 
 function plugin_file_resolve_existing(pfile: TString): IInterface;
@@ -319,7 +329,7 @@ begin
 				if PerElementMasters then
 					elem_masters_add(plugin, e);
 
-				r := wbCopyElementToFile(e, plugin, False, False);
+				r := wbCopyElementToFile(e, plugin, False, True);
 				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
 
 				for i := 0 to Pred(ElementCount(e)) do begin
@@ -375,6 +385,12 @@ begin
 		// which define a REFR. It is not enough to simply override the CELL itself. Once
 		// data is generated these duplicated REFRs are no longer needed and will not be used
 		// in the final generated plugin containing both precombine and previs data.
+		// If the references were not duplicated then all dependent data would have to be
+		// merged back into each plugin before it could be used with -generateprevisdata.
+
+		// temp: nuke xcri/xpri
+//		Remove(ElementBySignature(r, 'XCRI'));
+//		Remove(ElementBySignature(r, 'XPRI'));
 
 		if CopyPerCellStatic then begin
 			a[0] := o; a[1] := m;
@@ -386,6 +402,7 @@ begin
 				break;
 			end;
 		end;
+
 	except
 		on Ex: Exception do begin
 			Remove(r);
@@ -396,13 +413,13 @@ begin
 	Result := True;
 end;
 
-function plugin_init_refs(t: IInterface; sl: TStringList): Boolean;
+function plugin_init_refs(t: IInterface; sl: TStringList; rmap: THashedStringList): Boolean;
 var
-	e, r, rt, rb: IInterface;
+	cell, e, r, rr, rt, rb: IInterface;
 	s: array [0..1] of IInterface;
-	f, tfile: TString;
-	i, j, k, n: integer;
-	flags: cardinal;
+	hsl: THashedStringList;
+	key, f, tfile: TString;
+	idx, i, j, k, n: integer;
 begin
 	s[0] := GroupBySignature(t, 'STAT');
 	s[1] := GroupBySignature(t, 'SCOL');
@@ -418,8 +435,7 @@ begin
 			e := ElementByIndex(s[i], j);
 
 			// ignore markers entirely
-			flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-			if (flags and $800000) <> 0 then
+			if marker_check(e) then
 				continue;
 
 			// referenced by information is available for master records only
@@ -430,17 +446,34 @@ begin
 				r := ReferencedByIndex(e, k);
 				f := GetFileName(r);
 
-				if not (Signature(r) = 'REFR') then
+				// Placed objects only
+				if (Signature(r) <> 'REFR') then begin
 					continue;
+				end;
+
+if false then begin
+//				AddMessage('r: ' + FullPath(r));
+				for n := 0 to Pred(ReferencedByCount(r)) do begin
+					rr := ReferencedByIndex(r, n);
+					AddMessage('rr: ' + FullPath(rr));
+					if Signature(rr) <> 'CELL' then begin
+						AddMessage('rr is not a CELL: ' + FullPath(rr));
+						continue;
+					end;
+					cell := rr;
+//					AddMessage('cell: ' + FullPath(cell));
+					break;
+				end;
+end;
 
 				if sl.indexOf(f) < 0 then begin
+					sl.add(f);
+
 					if Debug then begin
 						AddMessage('	Referencing plugin: ' + f + ' (rcount == ' + IntToStr(ReferencedByCount(e)) + ')');
 						AddMessage('	  ' + Signature(e) + ' ' + FullPath(e));
 						AddMessage('	  ' + Signature(r) + ' ' + FullPath(r));
 					end;
-					sl.Add(f);
-
 if false then begin
 					for n := 0 to Pred(ReferencedByCount(r)) do begin
 						rt := ReferencedByIndex(r, n);
@@ -455,6 +488,20 @@ end;
 
 					AddMessage('');
 				end;
+
+if false then begin
+				key := ShortName(cell);
+				idx := rmap.indexOf(key);
+				if idx < 0 then begin
+					hsl := THashedStringList.create;
+					idx := rmap.AddObject(key, hsl);
+				end else begin
+					hsl := ObjectToElement(rmap.Objects[idx]);
+				end;
+
+				AddMessage(Format('Adding "%s" to key "%s"', [f, key]));
+				hsl.add(f);
+end;
 			end;
 		end;
 	end;
@@ -462,9 +509,22 @@ end;
 	Result := True;
 end;
 
-function cell_refr_first(e: IInterface): IInterface;
+function marker_check(e: IInterface): Boolean;
 var
-	cg, rcg, r, t: IInterface;
+	flags: cardinal;
+begin
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $800000) <> 0 then begin
+		Result := True;
+		Exit;
+	end;
+
+	Result := False;
+end;
+
+function cell_refr_all(e: IInterface): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
 begin
 	cg := ChildGroup(e);
@@ -474,17 +534,59 @@ begin
 
 	for i := 0 to Pred(ElementCount(cg)) do begin
 		r := ElementByIndex(cg, i);
-		if Pos('Temporary Children', Name(r)) = 0 then
-			continue;
 
-		AddMessage('r: ' + FullPath(r));
+//		AddMessage('r: ' + FullPath(r));
 
 		for j := 0 to Pred(ElementCount(r)) do begin
 			t := ElementByIndex(r, j);
+			b := BaseRecord(t);
+
 			if Signature(t) <> 'REFR' then
+				continue;
+			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
+				continue;
+
+			// ignore markers entirely
+			if marker_check(b) then
 				continue;
 
 			AddMessage('t: ' + FullPath(t));
+exit;
+//			Result := t;
+//			Exit;
+		end;
+	end;
+end;
+
+function cell_refr_first(e: IInterface): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j: integer;
+begin
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			b := BaseRecord(t);
+
+			if (Signature(t) <> 'REFR') then
+				continue;
+			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
+				continue;
+
+			// ignore markers entirely
+			if marker_check(b) then
+				continue;
+
+//			AddMessage('t: ' + FullPath(t));
 			Result := t;
 			Exit;
 		end;
@@ -523,6 +625,7 @@ function plugin_init(mode: TString): boolean;
 var
 	e, r, t, g, rr, rg, rgg, rggg, plugin: IInterface;
 	sl: array[0..1] of TStringList;
+	hsl, rmap: THashedStringList;
 	f, tfile, pfile: TString;
 	i, j, k, n: integer;
 begin
@@ -537,6 +640,9 @@ begin
 	sl[0].Sorted := True;
 	sl[1] := TStringList.create;
 	sl[1].Sorted := False;
+
+	rmap := THashedStringList.create;
+	rmap.Duplicates := dupIgnore;
 
 	for i := 0 to Pred(FileCount) do begin
 		t := FileByIndex(i);
@@ -557,9 +663,16 @@ begin
 			end;
 		end;
 
-		plugin_init_refs(t, sl[0]);
+		plugin_init_refs(t, sl[0], rmap);
 	end;
 
+	for i := to Pred(rmap.count) do begin
+		hsl := ObjectToElement(rmap.Objects[i]);
+		AddMessage(Format('rmap[%d] count == %d', [i, hsl.count]));
+	end;
+
+	// sl[0] is sorted to speed up indexOf checks, produce another list
+	// sl[1] that is ordered by plugin load order.
 	j := 0;
 	for i := 0 to Pred(FileCount) do begin
 		t := FileByIndex(i);
@@ -570,8 +683,8 @@ begin
 //		if not (HasGroup(t, 'CELL') or HasGroup(t, 'WRLD')) then
 //			continue;
 
-//		AddMessage(Format('Candidate[%d]: %s (pre-add)', [j, tfile]));
-//		inc(j);
+		AddMessage(Format('Candidate[%d]: %s (pre-add)', [j, tfile]));
+		inc(j);
 
 		sl[1].AddObject(tfile, t);
 	end;
@@ -636,12 +749,15 @@ end;
 
 function Process(e: IInterface): integer;
 var
-	o, m, t, g, plugin: IInterface;
-	s, mode: TString;
-	nv: string;
-	i, j, oc: integer;
+	o, m, t, r, g, plugin: IInterface;
+	f, s, mode: TString;
+	key, nv: string;
+	idx, i, j, oc: integer;
+	hsl: THashedStringList;
+	sl: TStringList;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
+	xy : TwbGridCell;
 begin
 
 
@@ -746,6 +862,61 @@ begin
 		break;
 	end;
 
+// TEST HERE NOW
+if True then begin
+	key := GetFileName(e);
+
+	for i := Pred(oc) downto -1 do begin
+		if i < 0 then begin
+			t := m;
+		end else begin
+			t := OverrideByIndex(m, i);
+		end;
+
+		if Equals(t, e) then
+			continue;
+
+		f := GetFileName(t);
+		r := cell_refr_first(t);
+		if not Assigned(r) then begin
+//			AddMessage(Format('%s: %s: No temporary statics', [ f, ShortName(t) ]));
+			continue;
+		end;
+
+//		AddMessage(Format('cell: %s, o: %s', [ ShortName(t), f ]));
+
+//		key := IntToStr(FixedFormID(t));
+//		key := ShortName(t);
+
+//		if not Assigned(key) then begin
+//			key := f;
+//			continue;
+//		end;
+
+		if rmap[0].indexOf(f + ':' + key) < 0 then begin
+			xy := GetGridCell(t);
+			AddMessage(Format('%s: Adding: %s (%d, %d)', [f, key, xy.x, xy.y]));
+			rmap[0].addObject(f + ':' + key, t);
+		end;
+
+		if rmap[1].indexOf(key + ':' + f) < 0 then begin
+			xy := GetGridCell(e);
+			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [key, f, xy.x, xy.y]));
+			rmap[1].addObject(key + ':' + f, e);
+		end;
+	end;
+
+	Result := False;
+	Exit;
+
+	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
+//	g := ChildGroup(o);
+//	cell_refr_all(o);
+
+	Result := True;
+	Exit;
+end;
+
 	merge := (MergeIntoOverride and IsEditable(o));
 	if Debug then begin
 		if merge then begin
@@ -764,16 +935,6 @@ begin
 	if not Assigned(plugin) then begin
 		Result := StopOnError; Exit;
 	end;
-
-
-if False then begin
-	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
-//	g := ChildGroup(o);
-	cell_refr_first(o);
-
-	Result := True;
-	Exit;
-end;
 
 	try
 		if mode = 'precombine' then begin
@@ -797,9 +958,14 @@ end;
 
 function Finalize: integer;
 var
-	plugin: IInterface;
-	i: integer;
+	t, plugin: IInterface;
+	last, s: string;
+	i, j, k, idx: integer;
+	hl: THashedStringList;
+	tl, sl: TStringList;
+	sl_out: array[0..255] of TStringList;
 begin
+
 //	for i := 0 to 255 do begin
 //		plugin := plugin_map[i];
 //		if not Assigned(plugin) then Continue;
@@ -807,6 +973,53 @@ begin
 //		SortMasters(plugin);
 //		CleanMasters(plugin);
 //	end;
+
+	for i := 0 to Pred(length(rmap)) do begin
+		AddMessage('');
+		if i = 0 then begin
+			AddMessage('FORWARD:');
+		end else begin
+			AddMessage('REVERSE:');
+		end;
+		AddMessage('');
+
+		hl := rmap[i];
+		tl := TStringList.create;
+		tl.Delimiter := ':';
+		tl.StrictDelimiter := True;
+
+		AddMessage('rmap[i].count == ' + IntToStr(hl.count));
+		for j := 0 to Pred(hl.count) do begin
+			t := ObjectToElement(hl.Objects[j]);
+			tl.DelimitedText := hl[j];
+
+			idx := GetLoadOrder(GetFile(t));
+			if not Assigned(sl_out[idx]) then
+				sl_out[idx] := TStringList.create;
+			sl_out[idx].add(tl[1]);
+		end;
+
+		tl.free;
+
+		AddMessage('');
+		for j := 0 to Pred(FileCount) do begin
+			sl := sl_out[j];
+			sl_out[j] := nil;
+
+			if not Assigned(sl) then
+				continue;
+
+			t := FileByLoadOrder(j);
+			for k := 0 to Pred(sl.count) do begin
+				AddMessage(Format('[%d] rmap[%d]: %s :: %s', [j, k, GetFileName(t), sl[k]]));
+			end;
+			AddMessage('');
+
+			sl.free;
+		end;
+
+		rmap[i].free;
+	end
 end;
 
 end.
