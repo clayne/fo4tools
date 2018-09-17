@@ -25,7 +25,10 @@ var
 	plugin_map: array [0..255] of IInterface;
 	pc_sig_tab: array [0..1] of TString;
 	pv_sig_tab: array [0..2] of TString;
-	rmap: array [0..1] of THashedStringList;
+
+	// Experimental
+	rmap: array [0..2] of THashedStringList;
+	cmap: array [0..255] of THashedStringList;
 
 function Initialize: integer;
 begin
@@ -45,6 +48,11 @@ begin
 	rmap[1] := THashedStringList.create;
 	rmap[1].Sorted := True;
 	rmap[1].Duplicates := dupAccept;
+
+	rmap[2] := THashedStringList.create;
+	rmap[2].Sorted := True;
+	rmap[2].Duplicates := dupAccept;
+
 end;
 
 function plugin_file_resolve_existing(pfile: TString): IInterface;
@@ -61,6 +69,20 @@ begin
 	end;
 
 	Result := nil; Exit;
+end;
+
+function plugin_file_resolve_existing_idx(pfile: TString): integer;
+var
+	t: IInterface;
+	idx: integer;
+begin
+	t := plugin_file_resolve_existing(pfile);
+	if not Assigned(t) then begin;
+		Result := -1;
+		Exit;
+	end;
+
+	Result := GetLoadOrder(GetFile(t));
 end;
 
 function plugin_file_resolve(ofstr: TString; idx: integer; mode: TString): IInterface;
@@ -715,6 +737,7 @@ begin
 		end;
 	end;
 
+// attempt to figure out the handle limit in CK through trial and error
 if false then begin
 
 	for i := 20 to Pred(sl[1].Count) do begin
@@ -750,8 +773,8 @@ end;
 function Process(e: IInterface): integer;
 var
 	o, m, t, r, g, plugin: IInterface;
-	f, s, mode: TString;
-	key, nv: string;
+	f, s, cs, mode: TString;
+	efile, tfile, key, nv: string;
 	idx, i, j, oc: integer;
 	hsl: THashedStringList;
 	sl: TStringList;
@@ -864,51 +887,67 @@ begin
 
 // TEST HERE NOW
 if True then begin
-	key := GetFileName(e);
 
-	for i := Pred(oc) downto -1 do begin
+	cs := nil;
+	efile := GetFileName(e);
+	for i := Pred(OverrideCount(m)) downto -1 do begin
 		if i < 0 then begin
 			t := m;
 		end else begin
 			t := OverrideByIndex(m, i);
 		end;
 
+		// XXX: Figure out what to do about statics in t or e or both t and e?
+		if not Assigned(cell_refr_first(t)) then begin
+//			AddMessage('no stat refr(t): ' + FullPath(t));
+			continue;
+		end;
+		if not Assigned(cell_refr_first(e)) then begin
+//			AddMessage('no stat refr(e): ' + FullPath(e));
+			continue;
+		end;
+
+		tfile := GetFileName(t);
+
+		if Assigned(cs) then begin
+			cs := cs + ':' + tfile;
+		end else begin
+			cs := tfile;
+		end;
+
+		idx := GetLoadOrder(GetFile(e));
+		if not Assigned(cmap[idx]) then
+			cmap[idx] := THashedStringList.create;
+		if cmap[idx].indexOf(tfile) < 0 then
+			cmap[idx].addObject(tfile, t);
+
 		if Equals(t, e) then
 			continue;
 
-		f := GetFileName(t);
-		r := cell_refr_first(t);
-		if not Assigned(r) then begin
-//			AddMessage(Format('%s: %s: No temporary statics', [ f, ShortName(t) ]));
-			continue;
-		end;
-
-//		AddMessage(Format('cell: %s, o: %s', [ ShortName(t), f ]));
-
-//		key := IntToStr(FixedFormID(t));
-//		key := ShortName(t);
-
-//		if not Assigned(key) then begin
-//			key := f;
-//			continue;
-//		end;
-
-		if rmap[0].indexOf(f + ':' + key) < 0 then begin
+		if (rmap[0].indexOf(tfile + ':' + efile) < 0) then begin
 			xy := GetGridCell(t);
-			AddMessage(Format('%s: Adding: %s (%d, %d)', [f, key, xy.x, xy.y]));
-			rmap[0].addObject(f + ':' + key, t);
+			AddMessage(Format('%s: Adding: %s (%d, %d)', [tfile, efile, xy.x, xy.y]));
+			rmap[0].addObject(tfile + ':' + efile, t);
 		end;
 
-		if rmap[1].indexOf(key + ':' + f) < 0 then begin
+		if (rmap[1].indexOf(efile + ':' + tfile) < 0) then begin
 			xy := GetGridCell(e);
-			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [key, f, xy.x, xy.y]));
-			rmap[1].addObject(key + ':' + f, e);
+			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [efile, tfile, xy.x, xy.y]));
+			rmap[1].addObject(efile + ':' + tfile, e);
 		end;
+
+	end;
+
+	if Assigned(cs) and (rmap[2].indexOf(cs) < 0) then begin
+//		AddMessage('adding cs: ' + cs);
+		rmap[2].addObject(cs, e);
 	end;
 
 	Result := False;
 	Exit;
+end;
 
+if false then begin
 	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
 //	g := ChildGroup(o);
 //	cell_refr_all(o);
@@ -958,12 +997,14 @@ end;
 
 function Finalize: integer;
 var
-	t, plugin: IInterface;
+	t, r, plugin: IInterface;
 	last, s: string;
 	i, j, k, idx: integer;
 	hl: THashedStringList;
 	tl, sl: TStringList;
 	sl_out: array[0..255] of TStringList;
+	s_out: array[0..255] of string;
+	rc, rct: integer;
 begin
 
 //	for i := 0 to 255 do begin
@@ -978,8 +1019,10 @@ begin
 		AddMessage('');
 		if i = 0 then begin
 			AddMessage('FORWARD:');
-		end else begin
+		end else if i = 1 then begin
 			AddMessage('REVERSE:');
+		end else begin
+			AddMessage('COMBINED:');
 		end;
 		AddMessage('');
 
@@ -996,7 +1039,12 @@ begin
 			idx := GetLoadOrder(GetFile(t));
 			if not Assigned(sl_out[idx]) then
 				sl_out[idx] := TStringList.create;
-			sl_out[idx].add(tl[1]);
+
+			if i > 1 then begin
+				sl_out[idx].add(hl[j]);
+			end else begin
+				sl_out[idx].add(tl[1]);
+			end;
 		end;
 
 		tl.free;
@@ -1011,7 +1059,12 @@ begin
 
 			t := FileByLoadOrder(j);
 			for k := 0 to Pred(sl.count) do begin
-				AddMessage(Format('[%d] rmap[%d]: %s :: %s', [j, k, GetFileName(t), sl[k]]));
+				r := plugin_file_resolve_existing(sl[k]);
+				if Assigned(r) then begin
+					AddMessage(Format('[%d] rmap[%d]: %s :: %s (reccnt: %d :: %d)', [j, k, GetFileName(t), sl[k], RecordCount(t), RecordCount(r)]));
+				end else begin
+					AddMessage(Format('[%d] rmap[%d]: %s :: %s (reccnt: %d)', [j, k, GetFileName(t), sl[k], RecordCount(t)]));
+				end;
 			end;
 			AddMessage('');
 
@@ -1019,7 +1072,45 @@ begin
 		end;
 
 		rmap[i].free;
-	end
+	end;
+
+	AddMessage('');
+	AddMessage('CROSS-COMBINED:');
+	AddMessage('');
+	for i := 0 to Pred(length(cmap)) do begin
+		hl := cmap[i];
+		if not Assigned(hl) then
+			continue;
+
+		rct := 0;
+		for j := 0 to Pred(hl.count) do begin
+			t := ObjectToElement(hl.Objects[j]);
+			idx := GetLoadOrder(GetFile(t));
+			s_out[idx] := hl[j];
+			rct := rct + RecordCount(GetFile(t));
+		end;
+
+		t := FileByLoadOrder(i);
+		AddMessage(Format('cmap[%d]: %s (%d)', [i,GetFileName(t),rct]));
+
+		for j := 0 to Pred(length(s_out)) do begin
+			s := s_out[j];
+			s_out[j] := nil;
+
+			if not Assigned(s) then
+				continue;
+
+			t := plugin_file_resolve_existing(s);
+			rc := RecordCount(t);
+
+			AddMessage(Format('cmap[%d][%d]: %s (%d)', [i,j,s,rc]));
+		end;
+		AddMessage('');
+
+		hl.free;
+	end;
+	AddMessage('');
+
 end;
 
 end.
