@@ -23,41 +23,53 @@ sub main {
 	my $esm_to_esp = 0;
 	my $esp_to_esm = 0;
 	my $unlink = 1;
+	my $clone = 1;
 
 	local @ARGV = @_;
 	GetOptions(
                 'h|help' => \$help,
 		'verbose|v+' => \$verbose,
+		'clone!' => \$clone,
+		'unlink!' => \$unlink,
 		'esp|esm-to-esp+' => \$esm_to_esp,
 		'esm|esp-to-esm+' => \$esp_to_esm,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
+	my $head;
 	my %seen;
 	my @unlink;
+
+	# Defend against esm files mistakenly being used.
 	my @q = (@ARGV ? grep !/\.esm$/i, @ARGV : '-');
 	while (local $_ = shift @q) {
 		next unless (!$seen{$_}++);
-		printf STDERR "$_\n" if ($verbose);
+		printf STDERR ("%s%s:\n", $head++ ? "\n" : "", $_) if ($verbose);
 
+		# In case the plugin is a hardlink, clone it to get a new inode.
+		if ($clone) {
+			copy("$_", "$_.$$") or die "copy: $_ -> $_.$$";
+			rename("$_.$$", "$_") or die "rename: $!";
+		}
+
+		my $fd;
 		if ($_ eq '-') {
 			$fd = *STDIN;
 			$esm_to_esp = 0;
 			$esp_to_esm = 0;
 			$unlink = 0;
+			$clone = 0;
 		} else {
-			open($fd, '+<', $_) or die "open: $!: $_";
+			open($fd, '+<', $_) or die "open: $!:";
 		}
 
 		my $mtab = [];
 		my ($dirname, $basename) = (dirname($_), basename($_));
-		my ($fd, $buf, $off, $len, $bsz);
 
+		my ($off, $len, $bsz, $buf) = (0, 0, 0);
 		$len = sysread($fd, $buf, 4096) or die "sysread: $!";
 		print STDERR Dumper length($buf) if ($verbose > 1);
-
-		$off = 0;
 
 		# Read initial TES4 header to get it's overall length
 		$bsz = 8; my ($sig, $sz) = unpack("a4 L", substr($buf, $off, $bsz)); $off += $bsz;
@@ -91,9 +103,11 @@ sub main {
 		}
 
 		my @qt;
-		foreach (@$mtab) {
-			printf STDERR ("%4d %s\n", @$_) if ($verbose);
+		for (my $i = 0; $i < @$mtab; $i++) {
+			printf STDERR ("[%02d] %4d %s\n", $i, @{$mtab->[$i]}) if ($verbose);
+		}
 
+		foreach (@$mtab) {
 			if ($esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
 				# extension and update the MAST entry to point to it.
@@ -106,16 +120,16 @@ sub main {
 
 				my $esm = ($esp =~ s/\.esp$/\.esm/r);
 				if (! -f "$dirname/$esm") {
-					# Copy esp to esm and clone atime/mtime
+					# Copy esp to esm and clone atime/mtime.
 					my @stat = stat("$dirname/$esp") or die "stat: $!";
-					copy("$dirname/$esp", "$dirname/$esm");
+					copy("$dirname/$esp", "$dirname/$esm") or die "$dirname/$esp -> $dirname/$esm";
 					utime($stat[8], $stat[9], "$dirname/$esm");
 				}
 
 				# Update MAST to point to esm file
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esm, length($esm)) or die "syswrite: $!";
-				printf STDERR ("%s: %4d %s\n", $basename, $len, $esm);
+				printf STDERR ("Writing %s: %4d %s\n", $basename, $len, $esm) if ($verbose);
 
 				push @qt, "$dirname/$esm";
 			} elsif ($esm_to_esp) {
@@ -129,12 +143,12 @@ sub main {
 				next if ($esm =~ /\.esp/i);
 
 				my $esp = ($esm =~ s/\.esm$/\.esp/r);
-				next if (! -f "$dirname/$esp"); # IMPORTANT
+				next if (! -f "$dirname/$esp"); # CRITICAL
 
-				# Update MAST to point to esp file
+				# Update MAST to point to esp file.
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esp, length($esp)) or die "syswrite: $!";
-				printf STDERR ("%s: %4d %s\n", $basename, $len, $esp);
+				printf STDERR ("Writing %s: %4d %s\n", $basename, $len, $esp) if ($verbose);
 
 				# The only esms which will be removed are those which
 				# have matching esp files and those which were resolved
@@ -145,8 +159,6 @@ sub main {
 		}
 
 		unshift @q, @qt;
-		printf STDERR "\n" if ($verbose);
-
 		close($fd);
 	}
 
