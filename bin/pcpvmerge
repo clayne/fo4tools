@@ -26,61 +26,81 @@ CKGEN_OUT=ckgen.out; export CKGEN_OUT
 for mode in ${MODE[*]}; do
 	case "$mode" in
 	precombine)
-		echo "Merging precombines..."
-
-		# XXX: Check if Merging/<esm> exists before doing anything
-		# Used purely for interactive CK + xedit workflow
-		find Data/*[_.]precombine_merge*.esp -type f -name '*.esp' -printf '%f\n' -prune | parallel -r --lb -j6 '
-			set -e
-			esp_bn="{}"
-			esm=${esp_bn/[_.]precombine_merge*}
-			if [[ -f "Data/$esm" ]]; then
-				echo "./CreationKit.exe -checkinplugin:{} $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
-				./CreationKit.exe -checkinplugin:{} $esm && cp -p Data/Merging/$esm Data/$esm
-				echo "./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out" 1>&2
-				./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out
-				cat Data/{}.needed.out | tr -d '[\r\0\031]' | tr '\\' '/' \
-					> Data/{}.needed.out.tmp && mv Data/{}.needed.out.tmp Data/{}.needed.out
-			else
-				echo "Data/$esm" does not exist 1>&2
-			fi
-		'
-
-		# XXX: Not able to be used yet
-		continue
-
-		# XXX: Check if Merging/<esm> exists before doing anything
-		find "$CKGEN_OUT" -type d -name '*.esm' -printf '%f\n' -prune | parallel -r --lb -j6 '
-			set -e
-			find "$CKGEN_OUT/{}" -type f -name '*[_.]precombine_merge*.esp' -printf "%p %f\n" | while read esp esp_bn; do
+		if ((MERGE)); then
+			# XXX: Check if Merging/<esm> exists before doing anything
+			# Used purely for interactive CK + xedit workflow
+			echo "Merging precombines... (CK)"
+			find Data/*[_.]precombine_merge*.esp -type f -name '*.esp' -printf '%f\n' -prune | parallel -r --lb -j6 '
+				set -e
+				esp_bn="{}"
 				esm=${esp_bn/[_.]precombine_merge*}
 				if [[ -f "Data/$esm" ]]; then
-					ln -f "$esp" "Data/$esp_bn" || exit -1
-					echo "./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
-					./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm
+					echo "./CreationKit.exe -checkinplugin:{} $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
+					./CreationKit.exe -checkinplugin:{} $esm && cp -p Data/Merging/$esm Data/$esm
+					echo "./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out" 1>&2
+					./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out
+					cat Data/{}.needed.out | tr -d '[\r\0\031]' | tr '\\' '/' \
+						> Data/{}.needed.out.tmp && mv Data/{}.needed.out.tmp Data/{}.needed.out
 				else
 					echo "Data/$esm" does not exist 1>&2
 				fi
-			done
-		'
+			'
+		fi
+
+		if ((DUMPNEEDED)); then
+			# XXX: Check if Merging/<esm> exists before doing anything
+			# Used purely for interactive CK + xedit workflow
+			find Data/*[_.]precombine_merge*.esp -type f -name '*.esp' -printf '%f\n' -prune | parallel -r --lb -j6 '
+				set -e
+				esp_bn="{}"
+				esm=${esp_bn/[_.]precombine_merge*}
+				if [[ -f "Data/$esm" ]]; then
+					echo "./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out" 1>&2
+					./CreationKit.exe -dumpneededfiles:{} Data/{}.needed.out
+					cat Data/{}.needed.out | tr -d '[\r\0\031]' | tr '\\' '/' \
+						> Data/{}.needed.out.tmp && mv Data/{}.needed.out.tmp Data/{}.needed.out
+				else
+					echo "Data/$esm" does not exist 1>&2
+				fi
+			'
+		fi
+
+		if ((MERGE)); then
+			# XXX: Check if Merging/<esm> exists before doing anything
+			echo "Merging precombines..."
+			find "$CKGEN_OUT" -type d -name '*.esm' -printf '%f\n' -prune | parallel -r --lb -j6 '
+				set -e
+				find "$CKGEN_OUT/{}" -type f -name '*[_.]precombine_merge*.esp' -printf "%p %f\n" | while read esp esp_bn; do
+					esm=${esp_bn/[_.]precombine_merge*}
+					if [[ -f "Data/$esm" ]]; then
+						ln -f "$esp" "Data/$esp_bn" || exit -1
+						echo "./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
+						./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm
+					else
+						echo "Data/$esm" does not exist 1>&2
+					fi
+				done
+			'
+		fi
 		;;
 	previs)
-		echo "Merging previs..."
-
-		# XXX: Check if Merging/<esm> exists before doing anything
-		find "$CKGEN_OUT" -type d -name '*.esm' -printf '%f\n' -prune | parallel -r --lb -j6 '
-			set -e
-			find "$CKGEN_OUT/{}" -type f -name '*[_.]previs_merge*.esp' -printf "%p %f\n" | while read esp esp_bn; do
-				esm=${esp_bn/[_.]previs_merge*}
-				if [[ -f "Data/$esm" ]]; then
-					ln -f "$esp" "Data/$esp_bn" || exit -1
-					echo "./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
-					./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm
-				else
-					echo "Data/$esm" does not exist 1>&2
-				fi
-			done
-		'
+		if ((MERGE)); then
+			# XXX: Check if Merging/<esm> exists before doing anything
+			echo "Merging previs..."
+			find "$CKGEN_OUT" -type d -name '*.esm' -printf '%f\n' -prune | parallel -r --lb -j6 '
+				set -e
+				find "$CKGEN_OUT/{}" -type f -name '*[_.]previs_merge*.esp' -printf "%p %f\n" | while read esp esp_bn; do
+					esm=${esp_bn/[_.]previs_merge*}
+					if [[ -f "Data/$esm" ]]; then
+						ln -f "$esp" "Data/$esp_bn" || exit -1
+						echo "./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm" 1>&2
+						./CreationKit.exe -checkinplugin:$esp_bn $esm && cp -p Data/Merging/$esm Data/$esm
+					else
+						echo "Data/$esm" does not exist 1>&2
+					fi
+				done
+			'
+		fi
 		;;
 	*)
 		echo "Unknown mode: $mode" 1>&2
@@ -89,6 +109,7 @@ for mode in ${MODE[*]}; do
 	esac
 
 	for esm in ${ESM[*]}; do
+		esm=$(basename $esm);
 		rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data" "$CKGEN_OUT/$esm/Data"/ "Data"/
 	done
 done

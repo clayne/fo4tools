@@ -364,6 +364,12 @@ ck_wrap() {
 		CKEXEC="./CreationKit.exe"
 	fi
 
+	if [[ "$esm" =~ .esp ]]; then
+		PLUGIN_BASE="${esm/.esp*/.esp}"
+	else
+		PLUGIN_BASE="${esm/.esm*/.esm}"
+	fi
+
 	# XXX: Check for any alnum + [_-] character
 	if [[ "$esm" =~ [^A-Za-z0-9._-] ]]; then
 		# XXX: generate new temporary file name
@@ -379,9 +385,9 @@ ck_wrap() {
 	precombine)
 		if ((!manual)); then
 			CKARGS=( -generateprecombined:"${esm_ck:-$esm}" $type $area $cur $max )
-			FILE_BASE="${mode}_merge"
+			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
 		else
-			FILE_BASE="${mode}_manual"
+			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
 		fi
 		rm -rf	"$bdir/$job/Data/Meshes/PreCombined" \
 			"$bdir/$job/Data/CombinedObjects.esp" \
@@ -404,9 +410,9 @@ ck_wrap() {
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.needed.out" \
-						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.esp"
+							> "$bdir/$esm/$FILE_BASE.$area.$wcur.needed.out" \
+						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$FILE_BASE.$area.$wcur.esp"
 				fi
 			) \
 			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
@@ -414,9 +420,9 @@ ck_wrap() {
 	previs)
 		if ((!manual)); then
 			CKARGS=( -generateprevisdata:"${esm_ck:-$esm}" $type $area $cur $max )
-			FILE_BASE="${mode}_merge"
+			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
 		else
-			FILE_BASE="${mode}_manual"
+			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
 		fi
 		rm -rf	"$bdir/$job/Data/Vis" \
 			"$bdir/$job/Data/PreVis.esp" \
@@ -438,9 +444,9 @@ ck_wrap() {
 						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.needed.out" \
-						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$esm.$FILE_BASE.$area.$wcur.esp"
+							> "$bdir/$esm/$FILE_BASE.$area.$wcur.needed.out" \
+						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$FILE_BASE.$area.$wcur.esp"
 				fi
 			) \
 			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
