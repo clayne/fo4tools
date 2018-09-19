@@ -5,19 +5,18 @@
 
 unit FO4_Precombined_Split;
 const
-//	Debug = True;
-	Debug = False;
+	Debug = True;
+//	Debug = False;
 	StopOnError = True;
 	VersionInc = False;		// Not implemented
 	ConflictOnly = False;		// Not implemented
 	MergeIntoOverride = False;
 	CopyPerCellStatic = True;
 	PerElementMasters = True;
-	InitFileBase = 'pcv';
-	InitFileSuffix = 'init';
+	InitFileSuffix = 'precombine_gen';
+	PrecombineFileSuffix = 'precombine_merge';
 	PrevisFileBase = 'pcv';
 	PrevisFileSuffix = 'previs_final';
-	PrecombineFileSuffix = 'precombine_merge';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 8;
 var
@@ -93,24 +92,15 @@ var
 begin
 	// Attempt to locate existing plugin for the same file or create a new one
 	for i := idx to Pred(idx + MaxFileAttempts) do begin
-		if mode = 'precombine' then begin
+		if mode = 'init' then begin
 			b := ofstr;
-
-			if i = 0 then begin	s := PrecombineFileSuffix;
-			end else begin		s := PrecombineFileSuffix + '.' + IntToStr(i);
-			end;
+			s := InitFileSuffix + '.' + IntToStr(i);
+		end else if mode = 'precombine' then begin
+			b := ofstr;
+			s := PrecombineFileSuffix + '.' + IntToStr(i);
 		end else if mode = 'previs' then begin
 			b := PrevisFileBase;
-
-			if i = 0 then begin	s := PrevisFileSuffix;
-			end else begin		s := PrevisFileSuffix + '.' + IntToStr(i);
-			end;
-		end else if mode = 'init' then begin
-			b := InitFileBase;
-
-			if i = 0 then begin	s := InitFileSuffix;
-			end else begin		s := InitFileSuffix + '.' + IntToStr(i);
-			end;
+			s := PrevisFileSuffix + '.' + IntToStr(i);
 		end else begin
 			Exit;
 		end;
@@ -147,9 +137,9 @@ end;
 
 function plugin_resolve(e, o, m: IInterface; mode: TString): IInterface;
 var
-	t, tfile, ofile, plugin: IInterface;
-	s, pfile, mfstr, ofstr: TString;
-	idx, i, j: integer;
+	t, r, tfile, rfile, ofile, plugin: IInterface;
+	s, pfile, mfstr, tfstr, rfstr, ofstr: TString;
+	idx, i, j, oc: integer;
 begin
 	// plugin index in plugin_map is based on the load order index of the overridden plugin
 	ofile := GetFile(o);
@@ -167,36 +157,75 @@ begin
 	if Debug then AddMessage('plugin_resolve: processing for ' + ofstr);
 
 	try
-		// Almost always the main game master (Fallout4.esm), however
-		// there are situations with entirely new records where the
-		// the actual master is the one originating said records.
-		mfstr := GetFileName(m);
-		if not HasMaster(plugin, mfstr) then begin
-			if Debug then AddMessage('Adding master: ' + mfstr);
-			AddMasterIfMissing(plugin, mfstr);
-		end;
-
-		// For the overridden master of the element being processed
-		// add its masters as an explicit master to the plugin being
-		// created. This is necessary due to CKs idea of how the per
-		// master plugin should look had it been saved from CK. Not
-		// doing this and instead adding only element-required masters
-		// will result in CK misnumbering the reference formids when
-		// the created plugin is merged back in with version control.
-		for j := 0 to Pred(MasterCount(ofile)) do begin
-			t := MasterByIndex(ofile, j);
-			tfile := GetFileName(t);
-			if not HasMaster(plugin, tfile) then begin
-				if Debug then AddMessage('Adding master: ' + GetFileName(t));
-				AddMasterIfMissing(plugin, tfile);
+		if mode = 'init' then begin
+if false then begin
+			tfstr := 'Fallout4.esm';
+			if not HasMaster(plugin, tfstr) then begin
+				if Debug then AddMessage('Adding master: ' + tfstr);
+				AddMasterIfMissing(plugin, tfstr);
 			end;
-		end;
+end;
 
-		// The actual override prior to this elements plugin
-		if not Equals(o, m) then begin
-			if not HasMaster(plugin, ofstr) then begin
-				if Debug then AddMessage('Adding master: ' + ofstr);
-				AddMasterIfMissing(plugin, ofstr);
+			oc := OverrideCount(m);
+			for i := -1 to Pred(oc) do begin
+				if i < 0 then begin
+					t := m;
+				end else begin
+					t := OverrideByIndex(m, i);
+				end;
+
+				tfile := GetFile(t);
+				tfstr := GetFileName(t);
+
+if false then begin
+				for j := 0 to Pred(MasterCount(tfile)) do begin
+					r := MasterByIndex(tfile, j);
+					rfstr := GetFileName(r);
+					if not HasMaster(plugin, rfstr) then begin
+						if Debug then AddMessage('Adding master: ' + rfstr);
+						AddMasterIfMissing(plugin, rfstr);
+					end;
+				end;
+end;
+
+				if not HasMaster(plugin, tfstr) then begin
+					if Debug then AddMessage('Adding master: ' + tfstr);
+					AddMasterIfMissing(plugin, tfstr);
+				end;
+
+			end;
+		end else begin
+			// Almost always the main game master (Fallout4.esm), however
+			// there are situations with entirely new records where the
+			// the actual master is the one originating said records.
+			mfstr := GetFileName(m);
+			if not HasMaster(plugin, mfstr) then begin
+				if Debug then AddMessage('Adding master: ' + mfstr);
+				AddMasterIfMissing(plugin, mfstr);
+			end;
+
+			// For the overridden master of the element being processed
+			// add its masters as an explicit master to the plugin being
+			// created. This is necessary due to CKs idea of how the per
+			// master plugin should look had it been saved from CK. Not
+			// doing this and instead adding only element-required masters
+			// will result in CK misnumbering the reference formids when
+			// the created plugin is merged back in with version control.
+			for j := 0 to Pred(MasterCount(ofile)) do begin
+				t := MasterByIndex(ofile, j);
+				tfile := GetFileName(t);
+				if not HasMaster(plugin, tfile) then begin
+					if Debug then AddMessage('Adding master: ' + GetFileName(t));
+					AddMasterIfMissing(plugin, tfile);
+				end;
+			end;
+
+			// The actual override prior to this elements plugin
+			if not Equals(o, m) then begin
+				if not HasMaster(plugin, ofstr) then begin
+					if Debug then AddMessage('Adding master: ' + ofstr);
+					AddMasterIfMissing(plugin, ofstr);
+				end;
 			end;
 		end;
 
@@ -216,10 +245,21 @@ begin
 	Result := plugin;
 end;
 
+function elem_copy_deep_safe(plugin: IwbFile; e: IInterface): IInterface;
+begin
+	if PerElementMasters then
+		elem_masters_add(plugin, e);
+
+	Result := wbCopyElementToFile(e, plugin, False, True);
+end;
+
 procedure elem_masters_add(plugin: IwbFile; e: IInterface);
 var
+	tfile: IwbFile;
+	r: IInterface;
 	sl: TStringList;
-	i: integer;
+	rfstr: string;
+	i, j: integer;
 begin
 	sl := TStringList.create;
 	sl.Sorted := True;
@@ -227,8 +267,20 @@ begin
 
 	ReportRequiredMasters(e, sl, False, True);
 	for i := 0 to Pred(sl.Count) do begin
-		if Debug then AddMessage('Element requires master: ' + sl[i]);
-		AddMasterIfMissing(plugin, sl[i]);
+		tfile := plugin_file_resolve_existing(sl[i]);
+		for j := 0 to Pred(MasterCount(tfile)) do begin
+			r := MasterByIndex(tfile, j);
+			rfstr := GetFileName(r);
+			if not HasMaster(plugin, rfstr) then begin
+				if Debug then AddMessage('Adding element required master: ' + rfstr);
+				AddMasterIfMissing(plugin, rfstr);
+			end;
+		end;
+
+		if not HasMaster(plugin, sl[i]) then begin
+			if Debug then AddMessage('Adding element required master: ' + sl[i]);
+			AddMasterIfMissing(plugin, sl[i]);
+		end;
 	end;
 
 	sl.free;
@@ -248,6 +300,19 @@ begin
 	end;
 end;
 
+function elem_marker_check(e: IInterface): Boolean;
+var
+	flags: cardinal;
+begin
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $800000) <> 0 then begin
+		Result := True;
+		Exit;
+	end;
+
+	Result := False;
+end;
+
 procedure elem_sync(e, r: IInterface; s: TString);
 begin
 	if ElementExists(e, s) then begin
@@ -259,11 +324,147 @@ begin
 	end;
 end;
 
+procedure elem_pc_sync(e, r: IInterface);
+var
+	i: integer;
+	s: string;
+begin
+	// Copy precombine records from e to r
+	for i := 0 to Pred(length(pc_sig_tab)) do begin
+		s := pc_sig_tab[i];
+		elem_sync(e, r, s);
+	end;
+end;
+
+procedure elem_pv_sync(e, r: IInterface);
+var
+	i: integer;
+	s: string;
+begin
+	// Copy previs records from e to r
+	for i := 0 to Pred(length(pv_sig_tab)) do begin
+		s := pv_sig_tab[i];
+		elem_sync(e, r, s);
+	end;
+end;
+
 procedure elem_version_sync(e, r: IInterface);
 begin
 	SetFormVersion(r, GetFormVersion(e));
 	SetFormVCS1(r, GetFormVCS1(e));
 	SetFormVCS2(r, GetFormVCS2(e));
+end;
+
+procedure stat_refr_promote(plugin: IwbFile; e: IInterface);
+var
+	t, r, m: IInterface;
+	i, oc: integer;
+begin
+	// Grab the 1st refr in the cell (from the overrides or master) and dupe as an override
+	// This is purely to get -generateprevisdata or -generateprecombined to generate data
+	// for the cell without actually duplicating the entire plugin being overridden. The
+	// reason for this is that the automated commands will only generate data for cells
+	// which define a REFR. It is not enough to simply override the CELL itself. Once
+	// data is generated these duplicated REFRs are no longer needed and will not be used
+	// in the final generated plugin containing both precombine and previs data.
+	// If the references were not duplicated then all dependent data would have to be
+	// merged back into each plugin before it could be used with -generateprevisdata.
+
+	if CopyPerCellStatic then begin
+		m := Master(e);
+		oc := OverrideCount(m);
+		for i := Pred(oc) downto -1 do begin
+			if i < 0 then begin
+				t := m;
+			end else begin
+				t := OverrideByIndex(m, i);
+			end;
+
+			if Equals(t, e) then
+				continue;
+
+			r := cell_refr_first(t);
+			if not Assigned(r) then continue;
+
+			if Debug then begin
+				AddMessage('copying REFR: ' + FullPath(r));
+			end;
+
+			elem_copy_deep_safe(plugin, r);
+			break;
+		end;
+	end;
+end;
+
+function form_copy_safe(plugin: IwbFile; e: IInterface; nopv: boolean): IInterface;
+var
+	r, t: IInterface;
+	i: integer;
+	s: string;
+begin
+	try
+		// XXX: xEdit will choke on delocalized plugins containing strings like '$Farm05Location'
+		// XXX: due to it wrongly interpreting it as a hex/integer value and will also disallow copying
+		// XXX: an element with busted references. Attempt a normal deepcopy first and if it does not
+		// XXX: succeed then attempt an element by element copy whilst avoiding bogus XPRI data.
+
+		r := elem_copy_deep_safe(plugin, e);
+	except
+		// Deep copy failed, most likely due to bad XPRI data, attempt a per-element copy.
+		// The vast majority of the time this branch will only be taken for XPRI data.
+		on Ex: Exception do begin
+			if Debug then begin
+				AddMessage('Failed to deep copy: ' + FullPath(e));
+				AddMessage('             reason: ' + Ex.Message);
+				AddMessage('Attempting per element copy');
+			end;
+
+			try
+				if PerElementMasters then
+					elem_masters_add(plugin, e);
+
+				r := wbCopyElementToFile(e, plugin, False, False);
+				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
+
+				for i := 0 to Pred(ElementCount(e)) do begin
+					t := ElementByIndex(e, i);
+					if not Assigned(t) then Continue;
+
+					s := Signature(t);
+					if not Assigned(s) then Continue;
+
+					if nopv then begin
+						// If the previous deep copy failed it is extremely likely
+						// it was due to these elements and they will be copied
+						// from the prior override (see comment below).
+						if (s = 'XPRI') or (s = 'RVIS') or (s = 'VISI') then
+							Continue;
+					end;
+
+					if not ElementExists(r, s) then
+						Add(r, s, True);
+					ElementAssign(ElementBySignature(r, s), LowInteger, t, False);
+				end;
+			except
+				on Ex: Exception do begin
+					Remove(r);
+					Raise Exception.Create(Ex.Message);
+				end;
+			end;
+		end;
+	end;
+
+	try
+		// Copy form version info
+		elem_version_sync(e, r);
+	except
+		on Ex: Exception do begin
+			Remove(r);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+
+	Result := r;
 end;
 
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
@@ -277,11 +478,9 @@ begin
 		r := wbCopyElementToFile(o, plugin, False, True);
 
 		// Copy previs data from current element to plugin
-		for i := 0 to Pred(length(pv_sig_tab)) do begin
-			s := pv_sig_tab[i];
-			elem_sync(e, r, s);
-		end;
+		elem_pv_sync(e, r);
 
+		// Copy form version info
 		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
@@ -293,39 +492,38 @@ begin
 	Result := True;
 end;
 
-function precombine_merge(plugin: IwbFile; e, o, m: IInterface): boolean;
+function precombine_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
 	s: TString;
 	i, j: integer;
-	flags, mflags: cardinal;
 begin
 	try
 		if PerElementMasters then
 			elem_masters_add(plugin, e);
 
 		// Merge precombine data from current element to overridden plugin
-		for i := 0 to Pred(length(pc_sig_tab)) do begin
-			s := pc_sig_tab[i];
-			elem_sync(e, o, s);
-		end;
+		elem_pc_sync(e, o);
 
+		// Ensure any 'no previs' flags are removed if master also does not have
 		elem_previs_flag_check(o, m);
+
+		// Copy form version info
 		elem_version_sync(e, o);
 	except
 		on Ex: Exception do begin
 			Raise Exception.Create(Ex.Message);
 		end;
 	end;
+
+	Result := True;
 end;
 
-function precombine_split(plugin: IwbFile; e, o, m: IInterface): boolean;
+function precombine_split(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
-	a: array[0..1] of IInterface;
 	s: TString;
 	i, j: integer;
-	flags, mflags: cardinal;
 begin
 	try
 		// XXX: xEdit will choke on delocalized plugins containing strings like '$Farm05Location'
@@ -348,8 +546,8 @@ begin
 			end;
 
 			try
-				if PerElementMasters then
-					elem_masters_add(plugin, e);
+//				if PerElementMasters then
+//					elem_masters_add(plugin, e);
 
 				r := wbCopyElementToFile(e, plugin, False, True);
 				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
@@ -385,12 +583,12 @@ begin
 		// when >2 masters are used for precombine generation. 99% of the time the most
 		// recent overridden refs are the actual refs used and these values will be
 		// overwritten by previs generation anyway.
-		for i := 0 to Pred(length(pv_sig_tab)) do begin
-			s := pv_sig_tab[i];
-			elem_sync(o, r, s);
-		end;
+		elem_pv_sync(o, r);
 
+		// Ensure any 'no previs' flags are removed if master also does not have
 		elem_previs_flag_check(r, m);
+
+		// Copy form version info
 		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
@@ -400,31 +598,35 @@ begin
 	end;
 
 	try
-		// Grab the 1st refr in the cell (from the override or master) and dupe as an override
-		// This is purely to get -generateprevisdata or -generateprecombined to generate data
-		// for the cell without actually duplicating the entire plugin being overridden. The
-		// reason for this is that the automated commands will only generate data for cells
-		// which define a REFR. It is not enough to simply override the CELL itself. Once
-		// data is generated these duplicated REFRs are no longer needed and will not be used
-		// in the final generated plugin containing both precombine and previs data.
-		// If the references were not duplicated then all dependent data would have to be
-		// merged back into each plugin before it could be used with -generateprevisdata.
+		// temp: nuke xcri/xpri
+//		Remove(ElementBySignature(e, 'XCRI'));
+//		Remove(ElementBySignature(e, 'XPRI'));
+
+		// Promote static references from any containing cells to generated plugin
+		stat_refr_promote(plugin, r);
+	except
+		on Ex: Exception do begin
+			Remove(r);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+
+	Result := True;
+end;
+
+function init_gen(plugin: IwbFile; e, o, m: IInterface): Boolean;
+var
+	r: IInterface;
+begin
+	try
+		r := form_copy_safe(plugin, e, False);
 
 		// temp: nuke xcri/xpri
 //		Remove(ElementBySignature(r, 'XCRI'));
 //		Remove(ElementBySignature(r, 'XPRI'));
 
-		if CopyPerCellStatic then begin
-			a[0] := o; a[1] := m;
-			for i := 0 to Pred(length(a)) do begin
-				t := cell_refr_first(a[i]);
-				if not Assigned(t) then continue;
-
-				wbCopyElementToFile(t, plugin, False, True);
-				break;
-			end;
-		end;
-
+		// Promote static references from any containing cells to generated plugin
+		stat_refr_promote(plugin, r);
 	except
 		on Ex: Exception do begin
 			Remove(r);
@@ -457,7 +659,7 @@ begin
 			e := ElementByIndex(s[i], j);
 
 			// ignore markers entirely
-			if marker_check(e) then
+			if elem_marker_check(e) then
 				continue;
 
 			// referenced by information is available for master records only
@@ -531,19 +733,6 @@ end;
 	Result := True;
 end;
 
-function marker_check(e: IInterface): Boolean;
-var
-	flags: cardinal;
-begin
-	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $800000) <> 0 then begin
-		Result := True;
-		Exit;
-	end;
-
-	Result := False;
-end;
-
 function cell_refr_all(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
@@ -552,7 +741,7 @@ begin
 	cg := ChildGroup(e);
 	if not Assigned(cg) then
 		Exit;
-	AddMessage('cg: ' + FullPath(cg));
+//	AddMessage('cg: ' + FullPath(cg));
 
 	for i := 0 to Pred(ElementCount(cg)) do begin
 		r := ElementByIndex(cg, i);
@@ -569,7 +758,7 @@ begin
 				continue;
 
 			// ignore markers entirely
-			if marker_check(b) then
+			if elem_marker_check(b) then
 				continue;
 
 			AddMessage('t: ' + FullPath(t));
@@ -605,7 +794,7 @@ begin
 				continue;
 
 			// ignore markers entirely
-			if marker_check(b) then
+			if elem_marker_check(b) then
 				continue;
 
 //			AddMessage('t: ' + FullPath(t));
@@ -737,33 +926,6 @@ begin
 		end;
 	end;
 
-// attempt to figure out the handle limit in CK through trial and error
-if false then begin
-
-	for i := 20 to Pred(sl[1].Count) do begin
-		plugin := plugin_file_resolve(nil, i, mode);
-		if not Assigned(plugin) then begin
-			Result := StopOnError; Exit;
-		end;
-
-		k := 0;
-		for j := 0 to Pred(sl[1].Count) do begin
-			t := ObjectToElement(sl[1].Objects[j]);
-			tfile := GetFileName(t);
-			k := k + RecordCount(t);
-			AddMessage(Format('Candidate[%d]: %s (nrec == %d, nrec_total == %d)', [j, tfile, RecordCount(t), k]));
-
-			if j <= i then begin
-				AddMasterIfMissing(plugin, tfile);
-			end else begin
-				break;
-			end;
-		end;
-
-	end;
-
-end;
-
 	sl[0].free;
 	sl[1].free;
 
@@ -775,32 +937,41 @@ var
 	o, m, t, r, g, plugin: IInterface;
 	f, s, cs, mode: TString;
 	efile, tfile, key, nv: string;
-	idx, i, j, oc: integer;
+	idx, i, j, oc, oc_sub: integer;
 	hsl: THashedStringList;
 	sl: TStringList;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
 	xy : TwbGridCell;
+	flags: cardinal;
 begin
 
 
-//	mode := 'init';
-	mode := 'precombine';
+//	mode := 'init_alt';
+	mode := 'init';
+//	mode := 'precombine';
 //	mode := 'previs';
 
-	if mode = 'init' then begin
+	if mode = 'init_alt' then begin
 		Result := plugin_init(mode);
 		Exit;
 	end;
 
 	// operate on the last override
 //	e := WinningOverride(e);
+	if mode = 'init' then
+		e := WinningOverride(e);
+
+	efile := GetFileName(e);
 
 	// skip if this is a plugin file generated by this script
-	if (Pos(PrecombineFileSuffix, GetFileName(e)) <> 0) then begin
+	if (Pos(InitFileSuffix, efile) <> 0) then begin
+		if Debug then AddMessage('Element file contains InitFileSuffix');
+		Exit;
+	end else if (Pos(PrecombineFileSuffix, efile) <> 0) then begin
 		if Debug then AddMessage('Element file contains PrecombineFileSuffix');
 		Exit;
-	end else if (Pos(PrevisFileSuffix, GetFileName(e)) <> 0) then begin
+	end else if (Pos(PrevisFileSuffix, efile) <> 0) then begin
 		if Debug then AddMessage('Element file contains PrevisFileSuffix');
 		Exit;
 	end;
@@ -809,6 +980,13 @@ begin
 	if Signature(e) <> 'CELL' then
 		Exit;
 
+	// Skip persistent worldspace cells (which never have precombines/previs)
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $400) <> 0 then begin
+		Exit;
+	end;
+
+if false then begin
 	// XXX: check existing generated precombined plugins for cells without precombines
 	// XXX: but possibly with XPRI data (or vice versa)
 	// Skip cells without precombination
@@ -819,12 +997,14 @@ begin
 		if not (ElementExists(e, 'XPRI') or ElementExists(e, 'VISI') or ElementExists(e, 'RVIS')) then
 			Exit;
 	end;
+end;
 
-	m := Master(e);
+	m := MasterOrSelf(e);
 	oc := OverrideCount(m);
-	if (oc = 0 or Equals(e, m)) then
+	if (mode <> 'init') and (oc = 0 or Equals(e, m)) then
 		Exit;
 
+if false then begin
 	// Find this actual element and consider it the highest override so
 	// that additional overrides are ignored.
 	for oc := OverrideCount(m) downto 0 do begin
@@ -833,6 +1013,7 @@ begin
 		t := OverrideByIndex(m, oc - 1);
 		if Equals(e, t) then break;
 	end;
+end;
 
 	if Debug then begin
 		for i := 0 to Pred(oc) do begin
@@ -841,13 +1022,20 @@ begin
 		end;
 	end;
 
-	// XXX: precombines: ensure last override is never used (change for loop counter?)
+	// When in precombine or previs mode, Ensure winning override is not
+	// the same as the override used for copying authoritative XPRI data.
+	if mode = 'init' then begin
+		oc_sub := 0;
+	end else begin
+		oc_sub := 1;	
+	end;
+
 	// | [0] master | [1] override | [2] *override* | [3] element | ...
 	o := m;
 	ts := 0;
 	pcmb_max := 0;
 	visi_max := 0;
-	for i := Pred(oc - 1) downto 0 do begin
+	for i := Pred(oc - oc_sub) downto 0 do begin
 		t := OverrideByIndex(m, i);
 		s := GetFileName(t);
 
@@ -886,7 +1074,7 @@ begin
 	end;
 
 // TEST HERE NOW
-if True then begin
+if false then begin
 
 	cs := nil;
 	efile := GetFileName(e);
@@ -931,8 +1119,8 @@ if True then begin
 		end;
 
 		if (rmap[1].indexOf(efile + ':' + tfile) < 0) then begin
-			xy := GetGridCell(e);
-			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [efile, tfile, xy.x, xy.y]));
+//			xy := GetGridCell(e);
+//			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [efile, tfile, xy.x, xy.y]));
 			rmap[1].addObject(efile + ':' + tfile, e);
 		end;
 
@@ -959,9 +1147,9 @@ end;
 	merge := (MergeIntoOverride and IsEditable(o));
 	if Debug then begin
 		if merge then begin
-			AddMessage(Format('m == %s, o == %s, oc == %d, merge == 1', [GetFileName(m), GetFileName(o), oc]));
+			AddMessage(Format('m == %s, o == %s, e == %s, oc == %d, merge == 1', [GetFileName(m), GetFileName(o), GetFileName(e), oc]));
 		end else begin
-			AddMessage(Format('m == %s, o == %s, oc == %d, merge == 0', [GetFileName(m), GetFileName(o), oc]));
+			AddMessage(Format('m == %s, o == %s, e == %s, oc == %d, merge == 0', [GetFileName(m), GetFileName(o), GetFileName(e), oc]));
 		end;
 	end;
 
@@ -976,7 +1164,9 @@ end;
 	end;
 
 	try
-		if mode = 'precombine' then begin
+		if mode = 'init' then begin
+			init_gen(plugin, e, o, m);
+		end else if mode = 'precombine' then begin
 			if merge then begin
 				precombine_merge(plugin, e, o, m);
 			end else begin
@@ -1077,6 +1267,7 @@ begin
 	AddMessage('');
 	AddMessage('CROSS-COMBINED:');
 	AddMessage('');
+	k := 0;
 	for i := 0 to Pred(length(cmap)) do begin
 		hl := cmap[i];
 		if not Assigned(hl) then
@@ -1091,7 +1282,7 @@ begin
 		end;
 
 		t := FileByLoadOrder(i);
-		AddMessage(Format('cmap[%d]: %s (%d)', [i,GetFileName(t),rct]));
+		if rct >= 2000000 then AddMessage(Format('cluster[%d] cmap[%d]: %s (%d)', [k,i,GetFileName(t),rct]));
 
 		for j := 0 to Pred(length(s_out)) do begin
 			s := s_out[j];
@@ -1103,11 +1294,12 @@ begin
 			t := plugin_file_resolve_existing(s);
 			rc := RecordCount(t);
 
-			AddMessage(Format('cmap[%d][%d]: %s (%d)', [i,j,s,rc]));
+			if rct >= 2000000 then AddMessage(Format('cluster[%d] cmap[%d][%d]: %s (%d)', [k,i,j,s,rc]));
 		end;
 		AddMessage('');
 
 		hl.free;
+		inc(k);
 	end;
 	AddMessage('');
 
