@@ -178,7 +178,21 @@ Ensure any patched CK exe's are done in temporary build dir
 
 ---
 
-Ensure any cells that are specific to a given plugin (i.e. the plugin is it's master) are created in precombine_gen esps
+Possible xEdit bug?
+
+Failed to copy:  \ [00] Fallout4.esm \ [55] GRUP Top "CELL" \ [2] GRUP Interior Cell Block 2 \ [0] GRUP Interior Cell Sub-Block 0 \ [8] COPY0281 [CELL:000939BA]
+        reason: [000939E1] < Error: Could not be resolved >
+
+That ref doesn't exist anywhere.
+
+---
+
+-generatescol by default for every plugin passed in?
+
+---
+
+Only promote overridden masters if they have stat or scol refrs
+Figure out what's up with certain masters not being used and banging off the Suffix already seen check
 
 ---
 

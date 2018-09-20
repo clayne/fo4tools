@@ -13,7 +13,7 @@ for i in tmux rsync parallel; do
 	fi
 done
 
-function esm_parse() {
+function plugin_parse() {
 	local t e a s
 
 	OIFS="$IFS"
@@ -58,8 +58,8 @@ while getopts "j:s:S:t:A:PpamMg" opt; do
 	S) START="$OPTARG" ;;
 	t) TMUX="$OPTARG" ;;
 	A) ARCHIVE="$OPTARG" ;;
-	p) PRESERVE_BUILD=1 ;;
-	P) PRESERVE_OUT=1 ;;
+	p) PRESERVE_OUT=1 ;;
+	P) PRESERVE_OUT=1; PRESERVE_BUILD=1 ;;
 	a) ARCHIVE=1 ;;
 	m) MERGE=1 ;;
 	M) MANUAL=1 ;;
@@ -80,7 +80,7 @@ fi
 MODE="$1"; shift
 MODE=( ${MODE//,/ } )
 
-# XXX: cdx, merge plugins?
+# XXX: buildcdx, checkinplugin, generatescol?
 for mode in ${MODE[*]}; do
 	# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
 	# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
@@ -115,13 +115,16 @@ for mode in ${MODE[*]}; do
 	esac
 done
 
-ESM=( "$@" )
+PLUGIN=()
+for i in "$@"; do
+	PLUGIN+=( "$(basename \\"$i\\")" )
+done
 
-for esm in "${ESM[@]}"; do
-	eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
+for plugin in "${PLUGIN[@]}"; do
+	eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
 
-#	if [[ "$esm" =~ [[:space:]] ]]; then
-#		echo "Plugins cannot have spaces in them (CK limitation): '$esm'" 1>&2
+#	if [[ "$plugin" =~ [[:space:]] ]]; then
+#		echo "Plugins cannot have spaces in them (CK limitation): '$plugin'" 1>&2
 #		exit -1
 #	fi
 
@@ -147,13 +150,13 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 			# However, since loose files override archives, the actual
 			# directory needs to be moved aside so CreationKit doesn't
 			# parse the loose files.
-			for esm in "${ESM[@]}"; do
-				eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
+			for plugin in "${PLUGIN[@]}"; do
+				eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
 
 				# XXX: cleanup
 				(
 				for i in Main MeshesExtra; do
-					b="${esm/.es[mp]} - $i.ba2"
+					b="${plugin/.es[mp]} - $i.ba2"
 					if [[ -f "Data/$b" ]]; then
 						BASE_BA2="$b"
 						break
@@ -170,31 +173,31 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 # XXX: This needs to work better with PRESERVE_CACHE
 #				# Check mtime of vanilla archives / loose files
 #				if [[ -f "$CKGEN_BA2" ]] && ! find "Data/Meshes/PreCombined" "$DATA_BA2" -newer "$CKGEN_BA2" | grep -q ''; then
-#					echo "$esm: Using cached '$BASE_BA2'" 1>&2
+#					echo "$plugin: Using cached '$BASE_BA2'" 1>&2
 #					continue
 #				fi
 
 				# Get the latest needed.out file if available
-				PC_NEEDED=$(ls -t {Data,.}/$esm.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
+				PC_NEEDED=$(ls -t {Data,.}/$plugin.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
 				[[ -n "$PC_NEEDED" ]] || continue
 
-				echo "$esm: Repackaging temporary '$BASE_BA2' with updated precombines..." 1>&2
-				mkdir -p "$CACHE/tmp/$esm"
-				Tools/Archive2/Archive2.exe "$DATA_BA2" -e="$CACHE/tmp/$esm/Data" -q
+				echo "$plugin: Repackaging temporary '$BASE_BA2' with updated precombines..." 1>&2
+				mkdir -p "$CACHE/tmp/$plugin"
+				Tools/Archive2/Archive2.exe "$DATA_BA2" -e="$CACHE/tmp/$plugin/Data" -q
 
 				# XXX: Cleanup into 1 awk?
 				(
 					awk -v sd='Data' '/(PreCombined|Vis)\//{ printf("%s/%s\0", sd, $NF) }' "$PC_NEEDED" | xargs -r0 find 2>/dev/null || true
-					find "$CACHE/tmp/$esm" -type f
-				) | tee "$CACHE/tmp/$esm.archive.list.pre" | awk '{ s=gensub("^.*Data/", "", 1); if (!stab[s]++) print $0 }' > "$CACHE/tmp/$esm.archive.list"
+					find "$CACHE/tmp/$plugin" -type f
+				) | tee "$CACHE/tmp/$plugin.archive.list.pre" | awk '{ s=gensub("^.*Data/", "", 1); if (!stab[s]++) print $0 }' > "$CACHE/tmp/$plugin.archive.list"
 
-				LIST_CNT=$(wc -l < "$CACHE/tmp/$esm.archive.list")
-				LIST_WIN=$(cygpath -aw "$CACHE/tmp/$esm.archive.list")
+				LIST_CNT=$(wc -l < "$CACHE/tmp/$plugin.archive.list")
+				LIST_WIN=$(cygpath -aw "$CACHE/tmp/$plugin.archive.list")
 
 				Tools/Archive2/Archive2.exe -s="$LIST_WIN" -c="$CKGEN_BA2" 2>&1 \
-					| tee "$CACHE/tmp/archive.$esm.$LIST_CNT.out" \
+					| tee "$CACHE/tmp/archive.$plugin.$LIST_CNT.out" \
 					| awk -v cnt="$LIST_CNT" '/^(Adding|Skipped non-existing)/{ ++i; printf("\r%s / %s (%0.2f%%)", i, cnt, i * 100 / cnt) }END{ printf("\n") }'
-				rm -rf "$CACHE/tmp/$esm"
+				rm -rf "$CACHE/tmp/$plugin"
 
 				# XXX: Store generated archives in src Data or ckgen.cache?
 				) &
@@ -209,7 +212,7 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	rm -rf "$BUILD" && mkdir -p "$BUILD" "$BUILD/tmp" || exit -1
 
 	echo "Cloning build directories (hardlinks)..." 1>&2
-	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${ESM[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
+	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${PLUGIN[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
 	(
 		set -e
 		set -o pipefail
@@ -234,14 +237,19 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude [mM]usic \
 			--exclude [vV]ideo \
 			--exclude Backup \
+			--exclude Edit\ Scripts \
 			--exclude CheckinBackup \
 			--exclude VersionBackup \
+			--exclude '*.esp' \
 			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/ \
 			|| exit -1
 #			--exclude "$SELF*" \
 
 		# Hardcopy CK ini files
-		rsync -aSH "$SRC"/CreationKit*.ini "$BUILD/$i"/ || exit -1
+		rsync -aSH --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/ || exit -1
+
+		# Hardcopy plugins
+		rsync -aSH --include '*.esp' --exclude '*' "$SRC"/Data/ "$BUILD/$i/Data"/ || exit -1
 
 		# Hardlink temporary archives (if any) into build-dir (this won't affect the originals)
 		if [[ -d "$CACHE/Data" ]]; then
@@ -290,11 +298,13 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 #				shash["Memory"]["bEnableMemoryTracking"]=1;
 #				shash["General"]["bMinimizeCachedExteriors"]=1;
 #				shash["General"]["bAllowClearOldestBufferedExterior"]=1;
-#				shash["General"]["bChangingLotsOfBaseObjects"]=1;
-#				shash["General"]["bPreemptivelyUnloadCells"]=1;
-#				shash["General"]["bSkipValidateForms"]=1;
-#				shash["General"]["bSkipValidateInfos"]=1;
-#				shash["General"]["bThrowProcessCompleteExceptions"]=1;
+				shash["General"]["bPreemptivelyUnloadCells"]=1;
+				shash["General"]["bChangingLotsOfBaseObjects"]=1;
+				shash["General"]["bSkipValidateForms"]=1;
+				shash["General"]["bSkipValidateInfos"]=1;
+				shash["General"]["bSkipProgramFlows"]=1;
+				shash["General"]["bSkipInitializationFlows"]=1;
+				shash["General"]["bThrowProcessCompleteExceptions"]=0;
 				shash["General"]["iNumHWThreads"]=threads;
 				shash["General"]["iMaxJobThreads"]=threads;
 				shash["General"]["iMaxUmbraBakeThreads"]=threads;
@@ -307,9 +317,9 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 				shash["General"]["bAllowMultipleMasterLoads"]=1;
 				shash["General"]["bLoadTheUserPlugin"]=0;
 				shash["General"]["bUseVersionControl"]=0;
-				shash["General"]["sFile Path"]=wpwd;
 				shash["Archive"]["bInvalidateOlderFiles"]=1;
 				shash["Archive"]["sResourceDataDirsFinal"]="";
+				shash["General"]["sFile Path"]=wpwd;
 
 				for (i = 1; i <= slidx; i++) {
 					section=slist[i];
@@ -341,7 +351,7 @@ ck_wrap() {
 	bdir="$1"; shift
 	mode="$1"; shift
 	type="$1"; shift
-	esm="$1"; shift
+	plugin="$1"; shift
 	area="$1"; shift
 	cur="$1"; shift
 	max="$1"; shift
@@ -356,7 +366,7 @@ ck_wrap() {
 	set -e
 	set -o pipefail
 
-	echo -e "$bdir\t$mode\t$type\t$esm\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
+	echo -e "$bdir\t$mode\t$type\t$plugin\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
 	if ((DEBUG)); then
 		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
@@ -364,18 +374,35 @@ ck_wrap() {
 		CKEXEC="./CreationKit.exe"
 	fi
 
-	if [[ "$esm" =~ .esp ]]; then
-		PLUGIN_BASE="${esm/.esp*/.esp}"
+	if [[ "$plugin" =~ .esp ]]; then
+		PLUGIN_BASE="${plugin/.esp*/.esp}"
 	else
-		PLUGIN_BASE="${esm/.esm*/.esm}"
+		PLUGIN_BASE="${plugin/.esm*/.esm}"
+	fi
+
+	# Ensure all plugins using esp masters (including their masters) are temporarily
+	# altered to use esm masters instead.
+	if [[ "$plugin" =~ .esp ]]; then
+		OIFS="$IFS"
+		IFS="
+"
+		ESP_MASTERS=( $(plugin-master-reloc -q --esp-only "$bdir/$job/Data/$plugin") )
+		IFS="$OIFS"
+
+		# Clone plugin before modification in case it's hard linked
+		cp -p "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin.$$" \
+			&& mv "$bdir/$job/Data/$plugin.$$" "$bdir/$job/Data/$plugin"
+		plugin-master-reloc -v --copy-plugin-to-esm --esp-to-esm "$bdir/$job/Data/$plugin"
+
+		plugin_esm="${plugin/%.esp/.esm}"
 	fi
 
 	# XXX: Check for any alnum + [_-] character
-	if [[ "$esm" =~ [^A-Za-z0-9._-] ]]; then
-		# XXX: generate new temporary file name
-		# XXX: ensure any generated precombined or previs subdirs are renamed
-		esm_ck="${esm//[^A-Za-z0-9_.-]/_}"
-		ln -f "$bdir/$job/Data/$esm" "$bdir/$job/Data/$esm_ck"
+	if [[ "$plugin" =~ [^A-Za-z0-9._-] ]]; then
+		[[ -n "$plugin_esm" ]] && __plugin="$plugin_esm" || __plugin="$plugin"
+
+		plugin_ck="${__plugin//[^A-Za-z0-9_.-]/_}"
+		ln -f "$bdir/$job/Data/$__plugin" "$bdir/$job/Data/$plugin_ck"
 	fi
 
 	# For each given mode, nuke any old data left in per-job build
@@ -384,7 +411,7 @@ ck_wrap() {
 	case "$mode" in
 	precombine)
 		if ((!manual)); then
-			CKARGS=( -generateprecombined:"${esm_ck:-$esm}" $type $area $cur $max )
+			CKARGS=( -generateprecombined:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
 			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
 		else
 			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
@@ -392,34 +419,64 @@ ck_wrap() {
 		rm -rf	"$bdir/$job/Data/Meshes/PreCombined" \
 			"$bdir/$job/Data/CombinedObjects.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
-			"$bdir/$esm/PreCombined.$area.$wcur" \
+			"$bdir/$plugin/PreCombined.$area.$wcur" \
 			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mkdir -p "$bdir/$esm" \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt" \
 			&& (
-				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-					if [[ -n "$esm_ck" ]]; then
-						find "$bdir/$job/Data/Meshes/PreCombined" -name "$esm_ck" -print0 \
-							| xargs -tr0 rename "$esm_ck" "$esm"
-					fi
-					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$esm/PreCombined.$area.$wcur"
-				fi
-				# XXX: Look for any newly added or modified files instead?
+				# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+				# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 				if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
 					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
-						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
+						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
+							| sed -e "s#CombinedObjects.esp#$plugin#g" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$FILE_BASE.$area.$wcur.needed.out" \
-						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$esm/$FILE_BASE.$area.$wcur.esp"
+							> "$bdir/$job/dumpneededfiles.out.cleaned" \
+						|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+
+					# If the plugin was copied to an esm, change any references in dumpneeded.out
+					# and switch esm masters back to esp masters in output file.
+					if [[ -n "$plugin_esm" ]]; then
+						sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+						plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/CombinedObjects.esp"
+					fi
+
+					mkdir -p "$bdir/$plugin" || exit -1
+					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+				fi
+
+				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+					# If plugin name has been sanitized or flipped to an esm, change any
+					# directory references back to the original plugin name.
+					for __plugin in "$plugin_ck" "$plugin_esm"; do
+						[[ -n "$__plugin" ]] || continue
+						find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$__plugin" -print0 \
+							| xargs -tr0 rename "$__plugin" "$plugin"
+					done
+
+					# If there are any esp masters which were changed to esm masters in the
+					# plugin, change any directory references back to their esp form.
+					for esp in "${ESP_MASTERS[@]}"; do
+						esm="${esp/%.esp/.esm}"
+						find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$esm" -print0 \
+							| xargs -tr0 rename "$esm" "$esp"
+					done
+
+					mkdir -p "$bdir/$plugin" || exit -1
+					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
 				fi
 			) \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
+			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
+
+			mkdir -p "$bdir/$plugin" || exit -1
+			mv "$bdir/$job/EditorWarnings.gen.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.txt"
+			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
 		;;
+
 	previs)
 		if ((!manual)); then
-			CKARGS=( -generateprevisdata:"${esm_ck:-$esm}" $type $area $cur $max )
+			CKARGS=( -generateprevisdata:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
 			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
 		else
 			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
@@ -427,44 +484,89 @@ ck_wrap() {
 		rm -rf	"$bdir/$job/Data/Vis" \
 			"$bdir/$job/Data/PreVis.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
-			"$bdir/$esm/Vis.$area.$wcur" \
+			"$bdir/$plugin/Vis.$area.$wcur" \
 			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mkdir -p "$bdir/$esm" \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt" \
 			&& (
-				if [[ -d "$bdir/$job/Data/Vis" ]]; then
-					if [[ -n "$esm_ck" ]]; then
-						find "$bdir/$job/Data/Vis" -name "$esm_ck" -print0 \
-							| xargs -tr0 rename "$esm_ck" "$esm"
-					fi
-					 mv "$bdir/$job/Data/Vis" "$bdir/$esm/Vis.$area.$wcur"
-				fi
+				# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+				# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 				if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
 					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out") \
-						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt" \
+						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
 						&& cat "$bdir/$job/dumpneededfiles.out" \
+							| sed -e "s#PreVis.esp#$plugin#g" \
 							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$esm/$FILE_BASE.$area.$wcur.needed.out" \
-						|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
-					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$esm/$FILE_BASE.$area.$wcur.esp"
+							> "$bdir/$job/dumpneededfiles.out.cleaned" \
+						|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+
+					# If the plugin was copied to an esm, change any references in dumpneeded.out
+					# and switch esm masters back to esp masters in output file.
+					if [[ -n "$plugin_esm" ]]; then
+						sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+						plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/PreVis.esp"
+					fi
+
+					mkdir -p "$bdir/$plugin" || exit -1
+					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+				fi
+
+				if [[ -d "$bdir/$job/Data/Vis" ]]; then
+					# If plugin name has been sanitized or flipped to an esm, change any
+					# directory references back to the original plugin name.
+					for __plugin in "$plugin_ck" "$plugin_esm"; do
+						[[ -n "$__plugin" ]] || continue
+						find "$bdir/$job/Data/Vis" -type d -name "$__plugin" -print0 \
+							| xargs -tr0 rename "$__plugin" "$plugin"
+					done
+
+					# If there are any esp masters which were changed to esm masters in the
+					# plugin, change any directory references back to their esp form.
+					for esp in "${ESP_MASTERS[@]}"; do
+						esm="${esp/%.esp/.esm}"
+						find "$bdir/$job/Data/Vis" -type d -name "$esm" -print0 \
+							| xargs -tr0 rename "$esm" "$esp"
+					done
+
+					mkdir -p "$bdir/$plugin" || exit -1
+					mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
 				fi
 			) \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.error"
+			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
+
+			mkdir -p "$bdir/$plugin" || exit -1
+			mv "$bdir/$job/EditorWarnings.gen.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.txt"
+			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
 		;;
+
 	needed)
 		if ((!manual)); then
-			CKARGS=( -dumpneededfiles:"${esm_ck:-$esm}" "dumpneededfiles.out" )
+			CKARGS=( -dumpneededfiles:"${plugin_ck:-${plugin_esm:-$plugin}}" "dumpneededfiles.out" )
 		fi
 		rm -rf	"$bdir/$job/dumpneededfiles.out" \
 			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mkdir -p "$bdir/$esm" \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$esm/EditorWarnings.$mode.$area.$wcur.txt" \
+			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
 			&& cat "$bdir/$job/dumpneededfiles.out" \
 				| tr -d '[\r\0\031]' | tr '\\' '/' \
-				> "$bdir/$esm/$esm.needed.out" \
-			|| ln "$bdir/$job/EditorWarnings.txt" "$bdir/$esm.$mode.$area.$wcur.dumpneeded.error"
+				> "$bdir/$job/dumpneededfiles.out.cleaned" \
+			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+
+			# If the plugin was copied to an esm, change any references in dumpneeded.out
+			if [[ -n "$plugin_esm" ]]; then
+				sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+			fi
+
+			mkdir -p "$bdir/$plugin" || exit -1
+			mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
 		;;
 	esac
+
+	# Revert any master rewrites on target plugin
+#	if [[ "$plugin" =~ .esp ]]; then
+#		plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/$plugin"
+#	fi
+
 }
 export -f ck_wrap
 export DEBUG
@@ -474,26 +576,26 @@ export DEBUG
 LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
 
 for mode in "${MODE[@]}"; do
-	for esm in "${ESM[@]}"; do
-		eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
+	for plugin in "${PLUGIN[@]}"; do
+		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
 
 		[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
 		[[ -n $s ]] || s=$SHARDS
 
 		for area in ${atmp[*]}; do
 			if [[ "$area" != "all" && "$mode" == "precombine" && "$type" == "clean" ]]; then
-				echo "$esm: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+				echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
 				exit -1
 			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
-				echo "$esm: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
+				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
 				s=1
 			elif ((s > SHARDS_MAX)); then
 				s=$SHARDS_MAX
 			fi
 
-			# Use tabs for arg separation and escape-quote $esm so that when parallel
+			# Use tabs for arg separation and escape-quote $plugin so that when parallel
 			# interprets this input line to call ck_wrap it doesn't consume quotes.
-			parallel -tr -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$esm\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
+			parallel -tr -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
 		done
 	done > "$BUILD/tmp/parallel.in"
 
@@ -510,71 +612,70 @@ for mode in "${MODE[@]}"; do
 			split -p 40 \
 			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
 			split -p 50 \
-			"cat '$BUILD/tmp/parallel.in' | parallel $PFLAGS --lb -vr -j $JOBS '{} {%} $MANUAL'; read" ';' \
+			"cat '$BUILD/tmp/parallel.in' | parallel $PFLAGS '{} {%} $MANUAL'; read" ';' \
 			set-option status off
 	else
 		cat "$BUILD/tmp/parallel.in" | parallel $PFLAGS "{} {%} $MANUAL" || exit -1
 	fi
 
-	for esm in "${ESM[@]}"; do
-		eval ep=( $(esm_parse "$esm") ); esm="${ep[0]}"; a="${ep[1]}"; s="${ep[2]}"
-		[[ -d "$BUILD/$esm" ]] || continue
+	for plugin in "${PLUGIN[@]}"; do
+		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
+		[[ -d "$BUILD/$plugin" ]] || continue
 
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
-		if ls -d "$BUILD/$esm/PreCombined".* &>/dev/null; then
-			echo "$esm: Moving precombined..." 1>&2
+		if ls -d "$BUILD/$plugin/PreCombined".* &>/dev/null; then
+			echo "$plugin: Moving precombined..." 1>&2
 
-			# XXX: do not use --remove-source-files so overlapping files are still present for reference
-			mkdir -p "$OUT/$esm/Data/Meshes/PreCombined"
-			ls -d "$BUILD/$esm/PreCombined".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$esm/Data/Meshes/PreCombined"/ || true
+			mkdir -p "$OUT/$plugin/Data/Meshes/PreCombined"
+			ls -d "$BUILD/$plugin/PreCombined".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$plugin/Data/Meshes/PreCombined"/ || true
 				rmdir --ignore-fail-on-non-empty "$tmp" || true
 			done
 		fi
 
-		if ls -d "$BUILD/$esm/Vis".* &>/dev/null; then
-			echo "$esm: Moving previs..." 1>&2
+		if ls -d "$BUILD/$plugin/Vis".* &>/dev/null; then
+			echo "$plugin: Moving previs..." 1>&2
 
-			mkdir -p "$OUT/$esm/Data/Vis"
-			ls -d "$BUILD/$esm/Vis".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$esm/Data/Vis"/ || true
+			mkdir -p "$OUT/$plugin/Data/Vis"
+			ls -d "$BUILD/$plugin/Vis".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$plugin/Data/Vis"/ || true
 				rmdir --ignore-fail-on-non-empty "$tmp" || true
 			done
 		fi
 
-		if ls -d "$BUILD/$esm/"*.esp &>/dev/null; then
-			echo "$esm: Moving plugins..." 1>&2
+		if ls -d "$BUILD/$plugin/"*.esp &>/dev/null; then
+			echo "$plugin: Moving plugins..." 1>&2
 
-			mkdir -p "$OUT/$esm/Data"
-			mv -nt "$OUT/$esm/Data" "$BUILD/$esm/"*.esp || true
+			mkdir -p "$OUT/$plugin/Data"
+			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.esp || true
 		fi
 			
 
-		if ls -d "$BUILD/$esm/"*.needed*out &>/dev/null; then
-			echo "$esm: Moving needed files output..." 1>&2
+		if ls -d "$BUILD/$plugin/"*.needed*out &>/dev/null; then
+			echo "$plugin: Moving needed files output..." 1>&2
 
-			mkdir -p "$OUT/$esm/Data"
-			mv -nt "$OUT/$esm/Data" "$BUILD/$esm/"*.needed*out || true
+			mkdir -p "$OUT/$plugin/Data"
+			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.needed*out || true
 		fi
 
 		# XXX: hardlink plugins into Data?
 		if false && ((MERGE)); then
-			echo "$esm: Merging plugins..." 1>&2
+			echo "$plugin: Merging plugins..." 1>&2
 
 			# XXX: Plugins might have to be in Data first
 			# Could not parse command line properly.  Should be -CheckInPlugin:<PluginFilename> <ESMFilename>
-			find "$OUT/$esm" -type f -name '*.esp' -print0 \
-				| xargs -I{} -r0 -n1 ./CreationKit.exe -checkinplugin:{} $esm
+			find "$OUT/$plugin" -type f -name '*.esp' -print0 \
+				| xargs -I{} -r0 -n1 ./CreationKit.exe -checkinplugin:{} $plugin
 		fi
 
 		# XXX: hardlink archive into Data?
 		# XXX: Make sure filenames are compatible with vanilla and/or reexamine if this should
 		# XXX: just create a single archive from all ESMs
 		if false && ((ARCHIVE)); then
-			echo "$esm: Archiving data..." 1>&2
+			echo "$plugin: Archiving data..." 1>&2
 
 			# Output data will contain precombined and/or previs data only at this point
-			Tools/Archive2/Archive2.exe "$OUT/$esm/Data" -c="$OUT/$esm/${esm/.es[pm]} - ckgen.ba2"
+			Tools/Archive2/Archive2.exe "$OUT/$plugin/Data" -c="$OUT/$plugin/${plugin/.es[pm]} - ckgen.ba2"
 		fi
 
 	done
