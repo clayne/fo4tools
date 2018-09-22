@@ -44,7 +44,7 @@ SELF=$(basename $0)
 CACHE=$SELF.cache
 BUILD=$SELF.build
 OUT=$SELF.out
-TYPE="clean"
+TYPE="filtered"
 AREA="main"
 PRESERVE_CACHE=1
 PRESERVE_BUILD=0
@@ -93,6 +93,10 @@ for mode in ${MODE[*]}; do
 		if ((!MANUAL)); then
 			TYPE="$1"; shift
 			AREA="$1"; shift
+		elif [[ "$1" == "clean" || "$1" == "filtered" ]]; then
+			case "$2" in
+			all|main|other|ints) shift; shift ;;
+			esac
 		fi
 
 		if [[ "$TYPE" != "clean" && "$TYPE" != "filtered" ]]; then
@@ -222,6 +226,21 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude "$OUT*" \
 			--exclude "$BUILD*" \
 			--exclude "$CACHE*" \
+			--exclude [pP]reCombined* \
+			--exclude [vV]is* \
+			--exclude [iI]nterface \
+			--exclude [sS]trings \
+			--exclude [sS]cripts \
+			--exclude [tT]extures \
+			--exclude [sS]ound \
+			--exclude [mM]usic \
+			--exclude [vV]ideo \
+			--exclude MCM \
+			--exclude F4SE \
+			--exclude Backup \
+			--exclude Edit\ Scripts \
+			--exclude CheckinBackup \
+			--exclude VersionBackup \
 			--exclude log.txt \
 			--exclude EditorWarnings.txt \
 			--exclude output.tome \
@@ -229,18 +248,12 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude input.scene.json \
 			--exclude CombinedObjects.esp \
 			--exclude PreVis.esp \
-			--exclude [pP]reCombined* \
-			--exclude [vV]is* \
-			--exclude [sS]cripts \
-			--exclude [tT]extures \
-			--exclude [sS]ound \
-			--exclude [mM]usic \
-			--exclude [vV]ideo \
-			--exclude Backup \
-			--exclude Edit\ Scripts \
-			--exclude CheckinBackup \
-			--exclude VersionBackup \
-			--exclude '*.esp' \
+			--exclude 'FO4Edit*' \
+			--exclude 'f4se*.dll' \
+			--exclude 'x3d*.dll' \
+			--exclude 'd3d*.dll' \
+			--exclude 'la_d3d*.dll' \
+			--exclude '*.es[pm]' \
 			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/ \
 			|| exit -1
 #			--exclude "$SELF*" \
@@ -249,7 +262,17 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 		rsync -aSH --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/ || exit -1
 
 		# Hardcopy plugins
-		rsync -aSH --include '*.esp' --exclude '*' "$SRC"/Data/ "$BUILD/$i/Data"/ || exit -1
+		rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data"/ "$BUILD/$i/Data"/ || exit -1
+
+		# Hardcopy plugins (orig)
+		if [[ -d "$SRC/Data/orig" ]]; then
+			rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
+		fi
+
+		# Hardcopy plugins (modified)
+		if [[ -d "$SRC/Data/ckgen" ]]; then
+			rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
+		fi
 
 		# Hardlink temporary archives (if any) into build-dir (this won't affect the originals)
 		if [[ -d "$CACHE/Data" ]]; then
@@ -296,10 +319,10 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 				}
 			}END{
 #				shash["Memory"]["bEnableMemoryTracking"]=1;
-#				shash["General"]["bMinimizeCachedExteriors"]=1;
+#				shash["General"]["bChangingLotsOfBaseObjects"]=1;
 #				shash["General"]["bAllowClearOldestBufferedExterior"]=1;
+				shash["General"]["bMinimizeCachedExteriors"]=1;
 				shash["General"]["bPreemptivelyUnloadCells"]=1;
-				shash["General"]["bChangingLotsOfBaseObjects"]=1;
 				shash["General"]["bSkipValidateForms"]=1;
 				shash["General"]["bSkipValidateInfos"]=1;
 				shash["General"]["bSkipProgramFlows"]=1;
@@ -347,6 +370,8 @@ if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
 fi
 
 ck_wrap() {
+	set -x
+
 	# 1st parallel
 	bdir="$1"; shift
 	mode="$1"; shift
@@ -362,22 +387,32 @@ ck_wrap() {
 	# Equalized width of $cur
 	wcur=$(printf "%02d" $cur)
 
-	set -x
 	set -e
 	set -o pipefail
 
 	echo -e "$bdir\t$mode\t$type\t$plugin\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
-	if ((DEBUG)); then
-		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
-	else
-		CKEXEC="./CreationKit.exe"
+if false; then
+	# XXX: Figure out something better for this
+	if ((!manual)) && [[ -d "$bdir/$job/Data/orig" ]]; then
+		cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig"/*.es[mp]
+
+		if [[ -f "$bdir/$job/Data/ckgen/$plugin" ]]; then
+			cp -p "$bdir/$job/Data/ckgen/$plugin" "$bdir/$job/Data/$plugin"
+		fi
 	fi
+fi
 
 	if [[ "$plugin" =~ .esp ]]; then
 		PLUGIN_BASE="${plugin/.esp*/.esp}"
 	else
 		PLUGIN_BASE="${plugin/.esm*/.esm}"
+	fi
+
+	if ((!manual)); then
+		FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
+	else
+		FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
 	fi
 
 	# Ensure all plugins using esp masters (including their masters) are temporarily
@@ -398,6 +433,8 @@ ck_wrap() {
 	fi
 
 	# XXX: Check for any alnum + [_-] character
+	# XXX: Check if localized, not changing the archive will result in a "Null Pointer" error
+	# XXX: from CK when it tries to access STRINGS/<plugin>.*
 	if [[ "$plugin" =~ [^A-Za-z0-9._-] ]]; then
 		[[ -n "$plugin_esm" ]] && __plugin="$plugin_esm" || __plugin="$plugin"
 
@@ -405,175 +442,292 @@ ck_wrap() {
 		ln -f "$bdir/$job/Data/$__plugin" "$bdir/$job/Data/$plugin_ck"
 	fi
 
+	if ((DEBUG)); then
+		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
+	else
+		CKEXEC="./CreationKit.exe"
+	fi
+
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
 	case "$mode" in
 	precombine)
-		if ((!manual)); then
-			CKARGS=( -generateprecombined:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
-			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
-		else
-			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
-		fi
 		rm -rf	"$bdir/$job/Data/Meshes/PreCombined" \
 			"$bdir/$job/Data/CombinedObjects.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
-			"$bdir/$plugin/PreCombined.$area.$wcur" \
-			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt" \
-			&& (
-				# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
-				# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
-				if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
-					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out") \
-						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
-						&& cat "$bdir/$job/dumpneededfiles.out" \
-							| sed -e "s#CombinedObjects.esp#$plugin#g" \
-							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$job/dumpneededfiles.out.cleaned" \
-						|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+			"$bdir/$plugin/PreCombined.$area.$wcur"
 
-					# If the plugin was copied to an esm, change any references in dumpneeded.out
-					# and switch esm masters back to esp masters in output file.
-					if [[ -n "$plugin_esm" ]]; then
-						sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-						plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/CombinedObjects.esp"
-					fi
+		if ((!manual)); then
+			CKARGS=( -generateprecombined:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
+		fi
 
-					mkdir -p "$bdir/$plugin" || exit -1
-					mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+		if ( \
+			cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]} \
+				&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
+		);
+		then
+			echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt"
+
+			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+			if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
+				CKARGS=( -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out" )
+				if ( \
+					cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]} \
+						&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
+				);
+				then
+					echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt"
+
+					cat "$bdir/$job/dumpneededfiles.out" \
+						| sed -e "s#CombinedObjects.esp#$plugin#g" \
+						| tr -d '[\r\0\031]' | tr '\\' '/' \
+						> "$bdir/$job/dumpneededfiles.out.cleaned"
+				else
+					echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
 				fi
 
-				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-					# If plugin name has been sanitized or flipped to an esm, change any
-					# directory references back to the original plugin name.
-					for __plugin in "$plugin_ck" "$plugin_esm"; do
-						[[ -n "$__plugin" ]] || continue
-						find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$__plugin" -print0 \
-							| xargs -tr0 rename "$__plugin" "$plugin"
-					done
+				# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+				for __plugin in "$plugin_ck" "$plugin_esm"; do
+					[[ -n "$__plugin" ]] || continue
+					sed -i -e "s#$__plugin#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+				done
 
-					# If there are any esp masters which were changed to esm masters in the
-					# plugin, change any directory references back to their esp form.
-					for esp in "${ESP_MASTERS[@]}"; do
-						esm="${esp/%.esp/.esm}"
-						find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$esm" -print0 \
-							| xargs -tr0 rename "$esm" "$esp"
-					done
-
-					mkdir -p "$bdir/$plugin" || exit -1
-					mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
+				# If the plugin was copied to an esm, switch esm masters back to esp masters
+				if [[ -n "$plugin_esm" ]]; then
+					plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/CombinedObjects.esp"
 				fi
-			) \
-			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
 
-			mkdir -p "$bdir/$plugin" || exit -1
+				mkdir -p "$bdir/$plugin" || exit -1
+				mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+				mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out" || true
+			fi
+
+			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+				# If plugin name has been sanitized or flipped to an esm, change any
+				# directory references back to the original plugin name.
+				for __plugin in "$plugin_ck" "$plugin_esm"; do
+					[[ -n "$__plugin" ]] || continue
+					find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$__plugin" -print0 \
+						| xargs -tr0 rename "$__plugin" "$plugin"
+				done
+
+				# If there are any esp masters which were changed to esm masters in the
+				# plugin, change any directory references back to their esp form.
+				for esp in "${ESP_MASTERS[@]}"; do
+					esm="${esp/%.esp/.esm}"
+					find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$esm" -print0 \
+						| xargs -tr0 rename "$esm" "$esp"
+				done
+
+				mkdir -p "$bdir/$plugin" || exit -1
+				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
+			fi
+		else
+			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
+		fi
+
+		if [[ -f "$bdir/$job/EditorWarnings.gen.txt" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/EditorWarnings.gen.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.txt"
+		fi
+		if [[ -f "$bdir/$job/EditorWarnings.dumpneeded.txt" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+		fi
+
 		;;
 
 	previs)
-		if ((!manual)); then
-			CKARGS=( -generateprevisdata:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
-			FILE_BASE="${PLUGIN_BASE}.${mode}_merge"
-		else
-			FILE_BASE="${PLUGIN_BASE}.${mode}_manual"
-		fi
 		rm -rf	"$bdir/$job/Data/Vis" \
 			"$bdir/$job/Data/PreVis.esp" \
 			"$bdir/$job/dumpneededfiles.out" \
-			"$bdir/$plugin/Vis.$area.$wcur" \
-			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt" \
-			&& (
-				# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
-				# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
-				if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-					(cd "$bdir/$job" && eval "$CKEXEC" -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out") \
-						&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
-						&& cat "$bdir/$job/dumpneededfiles.out" \
-							| sed -e "s#PreVis.esp#$plugin#g" \
-							| tr -d '[\r\0\031]' | tr '\\' '/' \
-							> "$bdir/$job/dumpneededfiles.out.cleaned" \
-						|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+			"$bdir/$plugin/Vis.$area.$wcur"
 
-					# If the plugin was copied to an esm, change any references in dumpneeded.out
-					# and switch esm masters back to esp masters in output file.
-					if [[ -n "$plugin_esm" ]]; then
-						sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-						plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/PreVis.esp"
-					fi
+		if ((!manual)); then
+			CKARGS=( -generateprevisdata:"${plugin_ck:-${plugin_esm:-$plugin}}" $type $area $cur $max )
+		fi
 
-					mkdir -p "$bdir/$plugin" || exit -1
-					mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+		if ( \
+			cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]} \
+				&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
+		);
+		then
+			echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.gen.txt"
+
+			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+			if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
+				CKARGS=( -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out" )
+				if ( \
+					cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]} \
+						&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
+				);
+				then
+					echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt"
+
+					cat "$bdir/$job/dumpneededfiles.out" \
+						| sed -e "s#PreVis.esp#$plugin#g" \
+						| tr -d '[\r\0\031]' | tr '\\' '/' \
+						> "$bdir/$job/dumpneededfiles.out.cleaned"
+				else
+					echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
 				fi
 
-				if [[ -d "$bdir/$job/Data/Vis" ]]; then
-					# If plugin name has been sanitized or flipped to an esm, change any
-					# directory references back to the original plugin name.
-					for __plugin in "$plugin_ck" "$plugin_esm"; do
-						[[ -n "$__plugin" ]] || continue
-						find "$bdir/$job/Data/Vis" -type d -name "$__plugin" -print0 \
-							| xargs -tr0 rename "$__plugin" "$plugin"
-					done
+				# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+				for __plugin in "$plugin_ck" "$plugin_esm"; do
+					[[ -n "$__plugin" ]] || continue
+					sed -i -e "s#$__plugin#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+				done
 
-					# If there are any esp masters which were changed to esm masters in the
-					# plugin, change any directory references back to their esp form.
-					for esp in "${ESP_MASTERS[@]}"; do
-						esm="${esp/%.esp/.esm}"
-						find "$bdir/$job/Data/Vis" -type d -name "$esm" -print0 \
-							| xargs -tr0 rename "$esm" "$esp"
-					done
-
-					mkdir -p "$bdir/$plugin" || exit -1
-					mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
+				# If the plugin was copied to an esm, switch esm masters back to esp masters
+				if [[ -n "$plugin_esm" ]]; then
+					plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/PreVis.esp"
 				fi
-			) \
-			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
 
-			mkdir -p "$bdir/$plugin" || exit -1
+				mkdir -p "$bdir/$plugin" || exit -1
+				mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+				mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out" || true
+			fi
+
+			if [[ -d "$bdir/$job/Data/Vis" ]]; then
+				# If plugin name has been sanitized or flipped to an esm, change any
+				# directory references back to the original plugin name.
+				for __plugin in "$plugin_ck" "$plugin_esm"; do
+					[[ -n "$__plugin" ]] || continue
+					find "$bdir/$job/Data/Vis" -type d -name "$__plugin" -print0 \
+						| xargs -tr0 rename "$__plugin" "$plugin"
+				done
+
+				# If there are any esp masters which were changed to esm masters in the
+				# plugin, change any directory references back to their esp form.
+				for esp in "${ESP_MASTERS[@]}"; do
+					esm="${esp/%.esp/.esm}"
+					find "$bdir/$job/Data/Vis" -type d -name "$esm" -print0 \
+						| xargs -tr0 rename "$esm" "$esp"
+				done
+
+				mkdir -p "$bdir/$plugin" || exit -1
+				mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
+			fi
+		else
+			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
+		fi
+
+		if [[ -f "$bdir/$job/EditorWarnings.gen.txt" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/EditorWarnings.gen.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.txt"
+		fi
+		if [[ -f "$bdir/$job/EditorWarnings.dumpneeded.txt" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+		fi
+
 		;;
 
 	needed)
+		rm -rf	"$bdir/$job/dumpneededfiles.out"
+
 		if ((!manual)); then
 			CKARGS=( -dumpneededfiles:"${plugin_ck:-${plugin_esm:-$plugin}}" "dumpneededfiles.out" )
 		fi
-		rm -rf	"$bdir/$job/dumpneededfiles.out" \
-			&& (cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]}) \
-			&& mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt" \
-			&& cat "$bdir/$job/dumpneededfiles.out" \
+		if ( \
+			cd "$bdir/$job" && eval "$CKEXEC" ${CKARGS[*]} \
+				&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
+		);
+		then
+			echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt"
+
+			cat "$bdir/$job/dumpneededfiles.out" \
 				| tr -d '[\r\0\031]' | tr '\\' '/' \
-				> "$bdir/$job/dumpneededfiles.out.cleaned" \
-			|| ln -f "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+				> "$bdir/$job/dumpneededfiles.out.cleaned"
+		else
+			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+		fi
 
-			# If the plugin was copied to an esm, change any references in dumpneeded.out
-			if [[ -n "$plugin_esm" ]]; then
-				sed -i -e "s#${plugin/%.esp/.esm}#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-			fi
+		# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+		for __plugin in "$plugin_ck" "$plugin_esm"; do
+			[[ -n "$__plugin" ]] || continue
+			sed -i -e "s#$__plugin#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
+		done
 
-			mkdir -p "$bdir/$plugin" || exit -1
+		if [[ -f "$bdir/$job/dumpneededfiles.out.cleaned" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+		fi
+		if [[ -f "$bdir/$job/EditorWarnings.dumpneeded.txt" ]] && mkdir -p "$bdir/$plugin"; then
 			mv "$bdir/$job/EditorWarnings.dumpneeded.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+		fi
+
 		;;
 	esac
 
-	# Revert any master rewrites on target plugin
-#	if [[ "$plugin" =~ .esp ]]; then
-#		plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/$plugin"
-#	fi
+	# Revert any master rewrites on target plugin and remove it
+	if [[ -n "$plugin_esm" && -f "$bdir/$job/Data/$plugin_esm" ]]; then
+		plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/$plugin_esm"
+		rm -f "$bdir/$job/Data/$plugin_esm"
+	fi
+
+	# Nuke sanitized plugin file if it exists
+	if [[ -n "$plugin_ck" && -f "$bdir/$job/Data/$plugin_ck" ]]; then
+		rm -f "$bdir/$job/Data/$plugin_ck"
+	fi
 
 }
-export -f ck_wrap
-export DEBUG
 
-# Precompute filenames rather than rely on shell globbing as they're usually
-# non-existent when tail starts (and tail -F handles that issue on it's own).
-LOGS=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $JOBS)) )
+function ck_log_wrap() {
+	local mode=$1; shift
+	local jobs=$1; shift
+
+	# Precompute filenames rather than rely on shell globbing as they're usually
+	# non-existent when tail starts (and tail -F handles that issue on it's own).
+	local -a logs=( $(printf "$BUILD/%s/EditorWarnings.txt " $(seq -s ' ' 1 $jobs)) )
+
+	tail -vn 10000 -s 0.1 -F "${logs[@]}" 2>/dev/null \
+		| awk \
+			-v mode="$mode" \
+			-v build_dir="$BUILD" \
+			-v info_file="ck_wrap.info" '
+	BEGIN{
+		IGNORECASE=1
+	}
+	{
+		if (match($0, "==> .+/([0-9]+)/.+ <==", a)) {
+			id_cur=a[1];
+			f = sprintf("%s/%d/%s", build_dir, id_cur, info_file);
+			while (getline < f > 0) {
+				split($0, info, "\t");
+			}
+			close(f);
+			next;
+		} else if (mode == "cell") {
+			if ($0 !~ /gen.*for.*cell|Number of registered paths|SUCCESS|FAILURE/)
+				next;
+			if ($0 ~ /ROOTCELL/)
+				next;
+		} else if (mode == "all") {
+			if ($0 ~ /gen.*for.*cell/)
+				next;
+		} else {
+			next;
+		}
+
+		plugin=info[4];
+
+		printf("%8d %32.32s [%02d] %8d %s\n", ++cnt, plugin, id_cur, ++cnttab[plugin], $0);
+	}'
+}
+
+export -f ck_wrap
+export -f ck_log_wrap
+export DEBUG
+export BUILD
 
 for mode in "${MODE[@]}"; do
 	for plugin in "${PLUGIN[@]}"; do
@@ -595,12 +749,12 @@ for mode in "${MODE[@]}"; do
 
 			# Use tabs for arg separation and escape-quote $plugin so that when parallel
 			# interprets this input line to call ck_wrap it doesn't consume quotes.
-			parallel -tr -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
+			parallel -r -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
 		done
 	done > "$BUILD/tmp/parallel.in"
 
 	if ((MANUAL)); then
-		PFLAGS="--res $BUILD/tmp --progress --delay 4 --lb -tr -j $JOBS --colsep '\t'"
+		PFLAGS="--res $BUILD/tmp --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
 	else
 		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
 	fi
@@ -608,9 +762,9 @@ for mode in "${MODE[@]}"; do
 	# Note: final 'read' commands are to prevent tmux from closing each sub-window
 	if ((TMUX)); then
 		tmux new \
-			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -i 'gen.*for.*cell|Number of registered paths' | grep --line-buffered -v "ROOTCELL" | cat -n" ';' \
+			"ck_log_wrap cell $JOBS" ';' \
 			split -p 40 \
-			"tail -qn 10000 -s 0.1 -F ${LOGS[*]} 2>/dev/null | egrep --line-buffered -v -i gen.*for.*cell | cat -n" ';' \
+			"ck_log_wrap all $JOBS" ';' \
 			split -p 50 \
 			"cat '$BUILD/tmp/parallel.in' | parallel $PFLAGS '{} {%} $MANUAL'; read" ';' \
 			set-option status off

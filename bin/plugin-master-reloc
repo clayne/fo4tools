@@ -157,15 +157,15 @@ sub main {
 				printf STDERR ("[%02d] %s\n", $i, $mtab->[$i][1]);
 			} elsif (!$esp_to_esm && !$esm_to_esp) {
 				if (!$quick) {
-					printf STDOUT ("%s %s\n", $basename, $mtab->[$i][1]);
+					printf STDOUT ("%s\t%s\n", $basename, $mtab->[$i][1]);
 				} else {
 					printf STDOUT ("%s\n", $mtab->[$i][1]);
 				}
 			}
 		}
 
-		foreach (@$mtab) {
-			my ($off, $plugin) = @$_;
+		for (my $i = 0; $i < @$mtab; $i++) {
+			my ($off, $plugin) = @{$mtab->[$i]};
 
 			if ($esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
@@ -183,7 +183,7 @@ sub main {
 				# Update MAST to point to esm file
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esm, length($esm)) or die "syswrite: $!";
-				printf STDERR ("Writing %s: %4d %s\n", $basename, $len, $esm) if ($verbose);
+				printf STDERR ("Writing %s: [%02d] %s\n", $basename, $i, $esm) if ($verbose);
 
 				push @qt, "$dirname/$esm";
 			} elsif ($esm_to_esp) {
@@ -202,7 +202,7 @@ sub main {
 				# Update MAST to point to esp file.
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esp, length($esp)) or die "syswrite: $!";
-				printf STDERR ("Writing %s: %4d %s\n", $basename, $len, $esp) if ($verbose);
+				printf STDERR ("Writing %s: [%02d] %s\n", $basename, $i, $esp) if ($verbose);
 
 				# The only esms which will be removed are those which
 				# have matching esp files and those which were resolved
@@ -219,6 +219,11 @@ sub main {
 
 	%seen = ();
 	foreach (grep !$seen{$_}++, @unlink) {
+		if ($blacklist && $blacklist_tab{basename($_)}) {
+			die "Assertion failed: attempt to unlink blacklisted file: $_";
+		}
+
+		-f $_ || next;
 		print STDERR "unlink $_\n" if ($verbose);
 		unlink($_) or die "unlink: $!";
 	}

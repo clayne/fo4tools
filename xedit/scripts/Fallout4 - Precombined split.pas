@@ -12,6 +12,7 @@ const
 	ConflictOnly = False;		// Not implemented
 	MergeIntoOverride = False;
 	CopyPerCellStatic = True;
+	CopyPerCellStaticAll = False;
 	PerElementMasters = True;
 	InitFileSuffix = 'precombine_gen';
 	PrecombineFileSuffix = 'precombine_merge';
@@ -28,6 +29,7 @@ var
 	// Experimental
 	rmap: array [0..2] of THashedStringList;
 	cmap: array [0..255] of THashedStringList;
+	keep_map: THashedStringList;
 
 function Initialize: integer;
 begin
@@ -52,6 +54,15 @@ begin
 	rmap[2].Sorted := True;
 	rmap[2].Duplicates := dupAccept;
 
+	keep_map := THashedStringList.create;
+	keep_map.Sorted := True;
+	keep_map.add('TES4');
+	keep_map.add('REFR');
+	keep_map.add('STAT');
+	keep_map.add('SCOL');
+	keep_map.add('MSWP');
+	keep_map.add('CELL');
+	keep_map.add('WRLD');
 end;
 
 function plugin_file_resolve_existing(pfile: TString): IInterface;
@@ -135,6 +146,67 @@ begin
 	Result := nil;
 end;
 
+procedure plugin_master_add(e: IInterface);
+var
+	plugin, tfile: IwbFile;
+	m, t, r: IInterface;
+	i, j, oc: integer;
+	efstr, tfstr, rfstr: string;
+	has_static: boolean;
+begin
+	plugin := GetFile(e);
+	efstr := GetFileName(e);
+	m := MasterOrSelf(e);
+	oc := OverrideCount(m);
+	has_static := false;
+
+	if Equals(e, m) then
+		Exit;
+
+	if Assigned(cell_refr_first(e)) then
+		has_static := true;
+
+	// Find this actual element and consider it the highest override so
+	// that additional overrides in the load order are ignored. This is
+	// done so that the masters added to the plugin represent masters
+	// which have been overridden from the perspective of the plugin.
+	for i := 0 to Pred(oc) do begin
+		t := OverrideByIndex(m, i);
+		if Equals(e, t) then break;
+
+		// If the overridden cell does not have any STAT or SCOL
+		// references then it should not be considered a master
+		// candidate because it will not affect precombines. Note:
+		// this is only checked if the parent cell does not have
+		// any statics of its own. If it does then the master
+		// will be added regardless to guard against generation
+		// of previs data not taking into account the override.
+//		if not has_static then begin
+			r := cell_refr_first(t);
+			if not Assigned(r) then continue;
+//		end;
+
+		tfstr := GetFileName(t);
+		if not HasMaster(plugin, tfstr) then begin
+			// Add masters of the master being added otherwise
+			// CK will emit these and totally screw up the
+			// formid indexes for references in plugins.
+			tfile := GetFile(t);
+			for j := 0 to Pred(MasterCount(tfile)) do begin
+				r := MasterByIndex(tfile, j);
+				rfstr := GetFileName(r);
+				if not HasMaster(plugin, rfstr) then begin
+					if Debug then AddMessage(Format('%s: Adding master: %s: %s', [efstr, rfstr, Name(t)]));
+					AddMasterIfMissing(plugin, rfstr);
+				end;
+			end;
+
+			if Debug then AddMessage(Format('%s: Adding master: %s: %s', [efstr, tfstr, Name(t)]));
+			AddMasterIfMissing(plugin, tfstr);
+		end;
+	end;
+end;
+
 function plugin_resolve(e, o, m: IInterface; mode: TString): IInterface;
 var
 	t, r, tfile, rfile, ofile, plugin: IInterface;
@@ -165,6 +237,7 @@ if false then begin
 				AddMasterIfMissing(plugin, tfstr);
 			end;
 end;
+
 
 			oc := OverrideCount(m);
 			for i := -1 to Pred(oc) do begin
@@ -355,6 +428,77 @@ begin
 	SetFormVCS2(r, GetFormVCS2(e));
 end;
 
+function cell_refr_all(e: IInterface): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j: integer;
+begin
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			b := BaseRecord(t);
+
+			if Signature(t) <> 'REFR' then
+				continue;
+			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
+				continue;
+
+			// ignore markers entirely
+			if elem_marker_check(b) then
+				continue;
+
+			AddMessage('t: ' + FullPath(t));
+exit;
+//			Result := t;
+//			Exit;
+		end;
+	end;
+end;
+
+function cell_refr_first(e: IInterface): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j: integer;
+begin
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			b := BaseRecord(t);
+
+			if (Signature(t) <> 'REFR') then
+				continue;
+			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
+				continue;
+
+			// ignore markers entirely
+			if elem_marker_check(b) then
+				continue;
+
+//			AddMessage('t: ' + FullPath(t));
+			Result := t;
+			Exit;
+		end;
+	end;
+end;
+
 procedure stat_refr_promote(plugin: IwbFile; e: IInterface);
 var
 	t, r, m: IInterface;
@@ -387,7 +531,7 @@ begin
 			if not Assigned(r) then continue;
 
 			if Debug then begin
-				AddMessage('copying REFR: ' + FullPath(r));
+//				AddMessage('copying REFR: ' + FullPath(r));
 			end;
 
 			elem_copy_deep_safe(plugin, r);
@@ -619,7 +763,7 @@ var
 	r: IInterface;
 begin
 	try
-		r := form_copy_safe(plugin, e, False);
+		r := form_copy_safe(plugin, e, True);
 
 		// temp: nuke xcri/xpri
 //		Remove(ElementBySignature(r, 'XCRI'));
@@ -710,7 +854,7 @@ if false then begin
 					end;
 end;
 
-					AddMessage('');
+					AddMessage(' ');
 				end;
 
 if false then begin
@@ -731,77 +875,6 @@ end;
 	end;
 
 	Result := True;
-end;
-
-function cell_refr_all(e: IInterface): IInterface;
-var
-	cg, rcg, r, t, b: IInterface;
-	i, j: integer;
-begin
-	cg := ChildGroup(e);
-	if not Assigned(cg) then
-		Exit;
-//	AddMessage('cg: ' + FullPath(cg));
-
-	for i := 0 to Pred(ElementCount(cg)) do begin
-		r := ElementByIndex(cg, i);
-
-//		AddMessage('r: ' + FullPath(r));
-
-		for j := 0 to Pred(ElementCount(r)) do begin
-			t := ElementByIndex(r, j);
-			b := BaseRecord(t);
-
-			if Signature(t) <> 'REFR' then
-				continue;
-			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
-				continue;
-
-			// ignore markers entirely
-			if elem_marker_check(b) then
-				continue;
-
-			AddMessage('t: ' + FullPath(t));
-exit;
-//			Result := t;
-//			Exit;
-		end;
-	end;
-end;
-
-function cell_refr_first(e: IInterface): IInterface;
-var
-	cg, rcg, r, t, b: IInterface;
-	i, j: integer;
-begin
-	cg := ChildGroup(e);
-	if not Assigned(cg) then
-		Exit;
-//	AddMessage('cg: ' + FullPath(cg));
-
-	for i := 0 to Pred(ElementCount(cg)) do begin
-		r := ElementByIndex(cg, i);
-
-//		AddMessage('r: ' + FullPath(r));
-
-		for j := 0 to Pred(ElementCount(r)) do begin
-			t := ElementByIndex(r, j);
-			b := BaseRecord(t);
-
-			if (Signature(t) <> 'REFR') then
-				continue;
-			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
-				continue;
-
-			// ignore markers entirely
-			if elem_marker_check(b) then
-				continue;
-
-//			AddMessage('t: ' + FullPath(t));
-			Result := t;
-			Exit;
-		end;
-	end;
 end;
 
 function group_desc(g: IInterface; s: string): Boolean;
@@ -922,7 +995,7 @@ begin
 		g := GroupBySignature(t, 'WRLD');
 		if Assigned(g) then begin
 			group_desc(g, nil);
-			AddMessage('');
+			AddMessage(' ');
 		end;
 	end;
 
@@ -930,6 +1003,30 @@ begin
 	sl[1].free;
 
 	Result := True;
+end;
+
+procedure plugin_clean(e: IInterface);
+var
+	s, fstr: string;
+begin
+	s := Signature(e);
+
+	if keep_map.indexof(s) < 0 then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		RemoveNode(e);
+	end else if (s = 'CELL') then begin
+		if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then begin
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+			RemoveNode(e);
+		end;
+	end else if (s = 'REFR') then begin
+		s := Signature(BaseRecord(e));
+		if (s <> 'STAT') and (s <> 'SCOL') then begin
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+			RemoveNode(e);
+		end;
+	end;
+
 end;
 
 function Process(e: IInterface): integer;
@@ -946,7 +1043,6 @@ var
 	flags: cardinal;
 begin
 
-
 //	mode := 'init_alt';
 	mode := 'init';
 //	mode := 'precombine';
@@ -954,6 +1050,24 @@ begin
 
 	if mode = 'init_alt' then begin
 		Result := plugin_init(mode);
+		Exit;
+	end;
+
+// Nuke anything not needed for precombines
+plugin_clean(e);
+
+	// Skip non-cells
+	if Signature(e) <> 'CELL' then
+		Exit;
+
+	// Skip persistent worldspace cells (which never have precombines/previs)
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $400) <> 0 then begin
+		Exit;
+	end;
+
+	if mode = 'init' then begin
+		plugin_master_add(e);
 		Exit;
 	end;
 
@@ -966,23 +1080,13 @@ begin
 
 	// skip if this is a plugin file generated by this script
 	if (Pos(InitFileSuffix, efile) <> 0) then begin
-		if Debug then AddMessage('Element file contains InitFileSuffix');
+		if Debug then AddMessage('Element file contains InitFileSuffix: ' + FullPath(e));
 		Exit;
 	end else if (Pos(PrecombineFileSuffix, efile) <> 0) then begin
-		if Debug then AddMessage('Element file contains PrecombineFileSuffix');
+		if Debug then AddMessage('Element file contains PrecombineFileSuffix: ' + FullPath(e));
 		Exit;
 	end else if (Pos(PrevisFileSuffix, efile) <> 0) then begin
-		if Debug then AddMessage('Element file contains PrevisFileSuffix');
-		Exit;
-	end;
-
-	// Skip non-cells
-	if Signature(e) <> 'CELL' then
-		Exit;
-
-	// Skip persistent worldspace cells (which never have precombines/previs)
-	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $400) <> 0 then begin
+		if Debug then AddMessage('Element file contains PrevisFileSuffix: ' + FullPath(e));
 		Exit;
 	end;
 
@@ -1018,7 +1122,7 @@ end;
 	if Debug then begin
 		for i := 0 to Pred(oc) do begin
 			t := OverrideByIndex(m, i);
-			AddMessage(Format('override[%d] == %s', [i, GetFileName(t)]));
+			AddMessage(Format('%s: override[%d] == %s', [GetFileName(e), i, GetFileName(t)]));
 		end;
 	end;
 
@@ -1145,13 +1249,15 @@ if false then begin
 end;
 
 	merge := (MergeIntoOverride and IsEditable(o));
+if false then begin
 	if Debug then begin
 		if merge then begin
-			AddMessage(Format('m == %s, o == %s, e == %s, oc == %d, merge == 1', [GetFileName(m), GetFileName(o), GetFileName(e), oc]));
+			AddMessage(Format('%s: m == %s, o == %s, oc == %d, merge == 1', [GetFileName(e), GetFileName(m), GetFileName(o), oc]));
 		end else begin
-			AddMessage(Format('m == %s, o == %s, e == %s, oc == %d, merge == 0', [GetFileName(m), GetFileName(o), GetFileName(e), oc]));
+			AddMessage(Format('%s: m == %s, o == %s, oc == %d, merge == 0', [GetFileName(e), GetFileName(m), GetFileName(o), oc]));
 		end;
 	end;
+end;
 
 	if merge then begin
 		plugin := GetFile(o);
@@ -1196,17 +1302,18 @@ var
 	s_out: array[0..255] of string;
 	rc, rct: integer;
 begin
-
-//	for i := 0 to 255 do begin
-//		plugin := plugin_map[i];
-//		if not Assigned(plugin) then Continue;
-//
-//		SortMasters(plugin);
-//		CleanMasters(plugin);
+//	if mode = 'init' then begin
+//		for i := 0 to 255 do begin
+//			plugin := plugin_map[i];
+//			if not Assigned(plugin) then Continue;
+//	
+//			SortMasters(plugin);
+//			CleanMasters(plugin);
+//		end;
 //	end;
 
 	for i := 0 to Pred(length(rmap)) do begin
-		AddMessage('');
+		AddMessage(' ');
 		if i = 0 then begin
 			AddMessage('FORWARD:');
 		end else if i = 1 then begin
@@ -1214,7 +1321,7 @@ begin
 		end else begin
 			AddMessage('COMBINED:');
 		end;
-		AddMessage('');
+		AddMessage(' ');
 
 		hl := rmap[i];
 		tl := TStringList.create;
@@ -1239,7 +1346,7 @@ begin
 
 		tl.free;
 
-		AddMessage('');
+		AddMessage(' ');
 		for j := 0 to Pred(FileCount) do begin
 			sl := sl_out[j];
 			sl_out[j] := nil;
@@ -1256,7 +1363,7 @@ begin
 					AddMessage(Format('[%d] rmap[%d]: %s :: %s (reccnt: %d)', [j, k, GetFileName(t), sl[k], RecordCount(t)]));
 				end;
 			end;
-			AddMessage('');
+			AddMessage(' ');
 
 			sl.free;
 		end;
@@ -1264,9 +1371,9 @@ begin
 		rmap[i].free;
 	end;
 
-	AddMessage('');
+	AddMessage(' ');
 	AddMessage('CROSS-COMBINED:');
-	AddMessage('');
+	AddMessage(' ');
 	k := 0;
 	for i := 0 to Pred(length(cmap)) do begin
 		hl := cmap[i];
@@ -1296,12 +1403,12 @@ begin
 
 			if rct >= 2000000 then AddMessage(Format('cluster[%d] cmap[%d][%d]: %s (%d)', [k,i,j,s,rc]));
 		end;
-		AddMessage('');
+		AddMessage(' ');
 
 		hl.free;
 		inc(k);
 	end;
-	AddMessage('');
+	AddMessage(' ');
 
 end;
 
