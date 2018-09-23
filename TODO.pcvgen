@@ -196,6 +196,26 @@ Figure out what's up with certain masters not being used and banging off the Suf
 
 ---
 
+Double check that cut down plugins (only static REFRs) generate the same precombines that a non-cutdown plugin produces. For testing purposes, ensure that no additional masters are added.
+
+---
+
+Figure out why CK breaks XCRI (or other) refs for plugins with >= 15 masters (seen with SOTS.esp.precombine_merge.all.01.all.esp) or when the generated plugin is slot 15 (16th) or above. It might actually be >= 13 masters, but haven't determined yet.
+
+---
+
+Figure out what causes CK to scramble the order of emitted masters in plugins it generates... timestamp?
+
+---
+
+Sort out the issue with sanitized esm filenames in esps (plenty__of__exploration.esm), etc.
+
+---
+
+SimSettlements.esm should have Unofficial Fallout 4 Patch.esp (.esm) but the precombine generated plugin does not. FOUND: master relocs aren't happening for .esm files because the check is for .esp files in ckgen.
+
+---
+
 BTI cluster mappings:
 
 cluster[36] cmap[79]: BTInteriors_Project.esp (2374334)

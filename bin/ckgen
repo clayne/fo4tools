@@ -14,13 +14,13 @@ for i in tmux rsync parallel; do
 done
 
 function plugin_parse() {
-	local tmp p t a s
+	local tmp _p _t _a _s
 
 	# Thankfully this "grammar" is unambiguous enough..
 	OIFS="$IFS"
 	IFS=":"
 	tmp=( ${1%%/[0-9]} )
-	p=$(basename "${tmp[0]}")
+	_p=$(basename "${tmp[0]}")
 	IFS="/:,"
 	tmp=( ${1/${tmp[0]}} )
 	IFS="$OIFS"
@@ -34,19 +34,20 @@ function plugin_parse() {
 		# plugin:ints (TYPE ints SHARDS)
 		# plugin/4 (TYPE AREA 4)
 		case "$i" in
-		filtered|clean) t="$i" ;;
-		all|main|ints|other) a="${a:+$a,}$i" ;;
-		[0-9]*) s="$i" ;;
+		filtered|clean) _t="$i" ;;
+		all|main|ints|other) _a="${_a:+$_a,}$i" ;;
+		[0-9]*) _s="$i" ;;
 		*) echo "Unknown option: $i" 1>&2; exit -1 ;;
 		esac
 	done
 
-	echo "'$p'" "'$t'" "'$a'" "'$s'"
+	# Bash really sucks for this type of thing
+	eval "$2=\"$_p\"; $3=\"$_t\"; $4=\"$_a\"; $5=\"$_s\""
 }
 
 TMUX=1
-START=1
 SHARDS=1
+SHARDS_START=1
 SHARDS_MAX=1
 CORES=$(awk '/cpu cores/ && !seen[$NF]++ { print $NF }' /proc/cpuinfo)
 THREADS=$(egrep -c '^processor[[:space:]]+' /proc/cpuinfo)
@@ -66,7 +67,7 @@ while getopts "j:s:S:t:A:PpamMg" opt; do
         case $opt in
 	j) JOBS="$OPTARG" ;;
 	s) SHARDS="$OPTARG" ;;
-	S) START="$OPTARG" ;;
+	S) SHARDS_START="$OPTARG" ;;
 	t) TMUX="$OPTARG" ;;
 	A) ARCHIVE="$OPTARG" ;;
 	p) PRESERVE_OUT=1 ;;
@@ -132,7 +133,7 @@ done
 
 PLUGIN=( "$@" )
 for plugin in "${PLUGIN[@]}"; do
-	eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
+	plugin_parse "$plugin" plugin t a s
 
 #	if [[ "$plugin" =~ [[:space:]] ]]; then
 #		echo "Plugins cannot have spaces in them (CK limitation): '$plugin'" 1>&2
@@ -162,7 +163,7 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 			# directory needs to be moved aside so CreationKit doesn't
 			# parse the loose files.
 			for plugin in "${PLUGIN[@]}"; do
-				eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
+				plugin_parse "$plugin" plugin t a s
 
 				# XXX: cleanup
 				(
@@ -222,8 +223,23 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	echo "Removing previous build data..." 1>&2
 	rm -rf "$BUILD" && mkdir -p "$BUILD" "$BUILD/tmp" || exit -1
 
+#	for plugin in "${PLUGIN[@]}"; do
+#		plugin_parse "$plugin" plugin t a s
+#
+#		[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
+#		[[ -n $t ]] || t=$TYPE
+#		[[ -n $s ]] || s=$SHARDS
+#
+#		for area in "${atmp[@]}"; do
+#			parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "$a" ::: $(seq -s ' ' $SHARDS_START $s) | sort -u
+#		done
+#	done
+#
+#	seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${PLUGIN[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $SHARDS_START $SHARDS_MAX) | sort -u | wc -l)
+#exit
+
 	echo "Cloning build directories (hardlinks)..." 1>&2
-	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${PLUGIN[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $START $SHARDS_MAX) | sort -u | wc -l)); do
+	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${PLUGIN[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $SHARDS_START $SHARDS_MAX) | sort -u | wc -l)); do
 	(
 		set -e
 		set -o pipefail
@@ -275,12 +291,12 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 
 		# Hardcopy plugins (orig)
 		if [[ -d "$SRC/Data/orig" ]]; then
-			rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
+			rsync -aS "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
 		fi
 
 		# Hardcopy plugins (modified)
 		if [[ -d "$SRC/Data/ckgen" ]]; then
-			rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
+			rsync -aS "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
 		fi
 
 		# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
@@ -401,22 +417,35 @@ ck_wrap() {
 
 	echo -e "$bdir\t$mode\t$type\t$plugin\t$area\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
-if false; then
 	# XXX: Figure out something better for this
 	if ((!manual)); then
-		if [[ -d "$bdir/$job/Data/orig/$area" ]]; then
-			cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig/$area"/*.es[mp]
-		elif [[ -d "$bdir/$job/Data/orig" ]]; then
-			cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig"/*.es[mp]
-		fi
-
-		if [[ -f "$bdir/$job/Data/ckgen/$area/$plugin" ]]; then
-			cp -p "$bdir/$job/Data/ckgen/$area/$plugin" "$bdir/$job/Data/$plugin"
-		elif [[ -f "$bdir/$job/Data/ckgen/$plugin" ]]; then
-			cp -p "$bdir/$job/Data/ckgen/$plugin" "$bdir/$job/Data/$plugin"
-		fi
-	fi
+if false; then
+		# Original plugins, can be useful in cases where masters should be
+		# pulled in but not all of their extended masters (i.e. ckgen style).
+		# The actual use case is rather specific in where a large amount of
+		# masters are involved and handle limits are being hit in CK, which
+		# prevents generation of any data.
+		for i in "$bdir/$job/Data/orig" "$bdir/$job/Data/orig/$area"; do
+			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -tr0 cp -pt "$bdir/$job/Data"
+		done
 fi
+
+		for i in "$bdir/$job/Data/ckgen" "$bdir/$job/Data/ckgen/$area"; do
+			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -tr0 cp -pt "$bdir/$job/Data"
+		done
+
+if false; then
+		# Modified plugins with cut down records, interiors only, full
+		# master requirements, etc.
+		for i in "$bdir/$job/Data/ckgen/$area/$plugin" "$bdir/$job/Data/ckgen/$plugin"; do
+			[[ -f "$i" ]] || continue
+
+			cp -pt "$bdir/$job/Data" "$i"
+			break
+		done
+fi
+
+	fi
 
 	if [[ "$plugin" =~ .esp ]]; then
 		PLUGIN_BASE="${plugin/.esp*/.esp}"
@@ -518,6 +547,7 @@ fi
 					sed -i -e "s#$__plugin#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 				done
 
+				# XXX: FIX ISSUE WITH SANITIZED ESMS
 				# If the plugin was copied to an esm, switch esm masters back to esp masters
 				if [[ -n "$plugin_esm" ]]; then
 					plugin-master-reloc -v --esm-to-esp "$bdir/$job/Data/CombinedObjects.esp"
@@ -786,26 +816,27 @@ export BUILD
 
 for mode in "${MODE[@]}"; do
 	for plugin in "${PLUGIN[@]}"; do
-		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
+		plugin_parse "$plugin" plugin t a s
 
 		[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
 		[[ -n $t ]] || t=$TYPE
 		[[ -n $s ]] || s=$SHARDS
 
 		for area in ${atmp[*]}; do
-			if [[ "$area" != "all" && "$mode" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
+#			if [[ "$area" != "all" && "$mode" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
+			if [[ "$mode" == "precombine" && "$t" == "clean" && $s -ne 1 ]]; then
 				echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
 				exit -1
-			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
-				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
-				s=1
+#			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
+#				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
+#				s=1
 			elif ((s > SHARDS_MAX)); then
 				s=$SHARDS_MAX
 			fi
 
 			# Use tabs for arg separation and escape-quote $plugin so that when parallel
 			# interprets this input line to call ck_wrap it doesn't consume quotes.
-			parallel -r -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$t\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
+			parallel -r -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$t\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $SHARDS_START $s)
 		done
 	done > "$BUILD/tmp/parallel.in"
 
@@ -829,7 +860,7 @@ for mode in "${MODE[@]}"; do
 	fi
 
 	for plugin in "${PLUGIN[@]}"; do
-		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
+		plugin_parse "$plugin" plugin t a s
 		[[ -d "$BUILD/$plugin" ]] || continue
 
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween

@@ -52,6 +52,7 @@ sub main {
 	my $blacklist = 1;
 	my $esp_only = 0;
 	my $esm_only = 0;
+	my $hex = 0;
 
 	local @ARGV = @_;
 	GetOptions(
@@ -66,6 +67,7 @@ sub main {
 		'esm|esp-to-esm+' => \$esp_to_esm,
 		'esp-only+' => \$esp_only,
 		'esm-only+' => \$esm_only,
+		'hex+' => \$hex,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
@@ -154,7 +156,7 @@ sub main {
 			next if ($esm_only && $mtab->[$i][1] !~ /\.esm$/);
 
 			if ($verbose) {
-				printf STDERR ("[%02d] %s\n", $i, $mtab->[$i][1]);
+				printf STDERR ($hex ? "[%02X] %s\n" : "[%02d] %s\n", $i, $mtab->[$i][1]);
 			} elsif (!$esp_to_esm && !$esm_to_esp) {
 				if (!$quick) {
 					printf STDOUT ("%s\t%s\n", $basename, $mtab->[$i][1]);
@@ -175,7 +177,13 @@ sub main {
 				# be substituted accordingly.
 
 				my $esp = $plugin;
-				next if ($esp =~ /\.esm/i);
+				if ($esp =~ /\.esm/i) {
+					# Possible to have an esm with an esp master. Pass
+					# it on to check just in case. Vanilla files will
+					# be ignored by the blacklist.
+					push @qt, "$dirname/$esp";
+					next;
+				}
 
 				my $esm = ($esp =~ s/\.esp$/\.esm/r);
 				clone("$dirname/$esp", "$dirname/$esm");
@@ -183,7 +191,8 @@ sub main {
 				# Update MAST to point to esm file
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esm, length($esm)) or die "syswrite: $!";
-				printf STDERR ("Writing %s: [%02d] %s\n", $basename, $i, $esm) if ($verbose);
+				printf STDERR ($hex ? "Writing %s: [%02X] %s\n" : "Writing %s: [%02d] %s\n",
+					$basename, $i, $esm) if ($verbose);
 
 				push @qt, "$dirname/$esm";
 			} elsif ($esm_to_esp) {
@@ -196,13 +205,17 @@ sub main {
 				my $esm = $plugin;
 				next if ($esm =~ /\.esp/i);
 
+				# If there is no matching esp file for the esm master being
+				# rewritten back to esp, then it never was an esp in the first
+				# place and should be completely ignored.
 				my $esp = ($esm =~ s/\.esm$/\.esp/r);
 				next if (! -f "$dirname/$esp"); # CRITICAL
 
 				# Update MAST to point to esp file.
 				seek($fd, $off, 0) or die "seek: $!";
 				my $len = syswrite($fd, $esp, length($esp)) or die "syswrite: $!";
-				printf STDERR ("Writing %s: [%02d] %s\n", $basename, $i, $esp) if ($verbose);
+				printf STDERR ($hex ? "Writing %s: [%02X] %s\n" : "Writing %s: [%02d] %s\n",
+					$basename, $i, $esp) if ($verbose);
 
 				# The only esms which will be removed are those which
 				# have matching esp files and those which were resolved
