@@ -14,23 +14,34 @@ for i in tmux rsync parallel; do
 done
 
 function plugin_parse() {
-	local t e a s
+	local tmp p t a s
 
+	# Thankfully this "grammar" is unambiguous enough..
 	OIFS="$IFS"
-	IFS="
-"
-	t=( ${1//[\/:]/ } )
-	e=${t[0]}
-	if [[ ${#t[*]} -gt 2 ]]; then
-		a=${t[1]}
-		s=${t[2]}
-	else
-		s=${t[1]}
-	fi
-
+	IFS=":"
+	tmp=( ${1%%/[0-9]} )
+	p=$(basename "${tmp[0]}")
+	IFS="/:,"
+	tmp=( ${1/${tmp[0]}} )
 	IFS="$OIFS"
 
-	echo "\"$e\"" "\"$a\"" "\"$s\""
+	for i in ${tmp[*]}; do
+		# plugin:clean:ints,other/2 (clean ints,other 2)
+		# plugin:clean:ints (clean ints SHARDS)
+		# plugin:clean/2 (clean all 2)
+		# plugin:ints/4 (TYPE ints 4)
+		# plugin:clean (clean AREA SHARDS)
+		# plugin:ints (TYPE ints SHARDS)
+		# plugin/4 (TYPE AREA 4)
+		case "$i" in
+		filtered|clean) t="$i" ;;
+		all|main|ints|other) a="${a:+$a,}$i" ;;
+		[0-9]*) s="$i" ;;
+		*) echo "Unknown option: $i" 1>&2; exit -1 ;;
+		esac
+	done
+
+	echo "'$p'" "'$t'" "'$a'" "'$s'"
 }
 
 TMUX=1
@@ -119,13 +130,9 @@ for mode in ${MODE[*]}; do
 	esac
 done
 
-PLUGIN=()
-for i in "$@"; do
-	PLUGIN+=( "$(basename \\"$i\\")" )
-done
-
+PLUGIN=( "$@" )
 for plugin in "${PLUGIN[@]}"; do
-	eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
+	eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
 
 #	if [[ "$plugin" =~ [[:space:]] ]]; then
 #		echo "Plugins cannot have spaces in them (CK limitation): '$plugin'" 1>&2
@@ -155,7 +162,7 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 			# directory needs to be moved aside so CreationKit doesn't
 			# parse the loose files.
 			for plugin in "${PLUGIN[@]}"; do
-				eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
+				eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
 
 				# XXX: cleanup
 				(
@@ -248,6 +255,8 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude input.scene.json \
 			--exclude CombinedObjects.esp \
 			--exclude PreVis.esp \
+			--exclude 'enbseries' \
+			--exclude 'auto_backup_executable' \
 			--exclude 'FO4Edit*' \
 			--exclude 'f4se*.dll' \
 			--exclude 'x3d*.dll' \
@@ -259,22 +268,22 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 #			--exclude "$SELF*" \
 
 		# Hardcopy CK ini files
-		rsync -aSH --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/ || exit -1
+		rsync -aS --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/ || exit -1
 
 		# Hardcopy plugins
-		rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data"/ "$BUILD/$i/Data"/ || exit -1
+		rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data"/ "$BUILD/$i/Data"/ || exit -1
 
 		# Hardcopy plugins (orig)
 		if [[ -d "$SRC/Data/orig" ]]; then
-			rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
+			rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
 		fi
 
 		# Hardcopy plugins (modified)
 		if [[ -d "$SRC/Data/ckgen" ]]; then
-			rsync -aSH --include '*.es[pm]' --exclude '*' "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
+			rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
 		fi
 
-		# Hardlink temporary archives (if any) into build-dir (this won't affect the originals)
+		# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
 		if [[ -d "$CACHE/Data" ]]; then
 			rsync -aSH --link-dest="$SRC/$CACHE/Data" "$SRC/$CACHE/Data"/ "$BUILD/$i/Data"/ || exit -1
 		fi
@@ -394,10 +403,16 @@ ck_wrap() {
 
 if false; then
 	# XXX: Figure out something better for this
-	if ((!manual)) && [[ -d "$bdir/$job/Data/orig" ]]; then
-		cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig"/*.es[mp]
+	if ((!manual)); then
+		if [[ -d "$bdir/$job/Data/orig/$area" ]]; then
+			cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig/$area"/*.es[mp]
+		elif [[ -d "$bdir/$job/Data/orig" ]]; then
+			cp -pt "$bdir/$job/Data" "$bdir/$job/Data/orig"/*.es[mp]
+		fi
 
-		if [[ -f "$bdir/$job/Data/ckgen/$plugin" ]]; then
+		if [[ -f "$bdir/$job/Data/ckgen/$area/$plugin" ]]; then
+			cp -p "$bdir/$job/Data/ckgen/$area/$plugin" "$bdir/$job/Data/$plugin"
+		elif [[ -f "$bdir/$job/Data/ckgen/$plugin" ]]; then
 			cp -p "$bdir/$job/Data/ckgen/$plugin" "$bdir/$job/Data/$plugin"
 		fi
 	fi
@@ -430,15 +445,17 @@ fi
 		plugin-master-reloc -v --copy-plugin-to-esm --esp-to-esm "$bdir/$job/Data/$plugin"
 
 		plugin_esm="${plugin/%.esp/.esm}"
+		plugin_base="${plugin_esm/%.es[mp]}"
 	fi
 
 	# XXX: Check for any alnum + [_-] character
-	# XXX: Check if localized, not changing the archive will result in a "Null Pointer" error
+	# XXX: Check if localized, not changing the archive will result in a "Null pointer" error
 	# XXX: from CK when it tries to access STRINGS/<plugin>.*
 	if [[ "$plugin" =~ [^A-Za-z0-9._-] ]]; then
 		[[ -n "$plugin_esm" ]] && __plugin="$plugin_esm" || __plugin="$plugin"
 
 		plugin_ck="${__plugin//[^A-Za-z0-9_.-]/_}"
+		plugin_base="${plugin_ck/%.es[mp]}"
 		ln -f "$bdir/$job/Data/$__plugin" "$bdir/$job/Data/$plugin_ck"
 	fi
 
@@ -479,7 +496,7 @@ fi
 						&& ! fgrep -q 'OUT OF HANDLE' "EditorWarnings.txt" \
 				);
 				then
-					echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
+					echo "SUCCESS (dumpneeded)" >> "$bdir/$job/EditorWarnings.txt"
 					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$job/EditorWarnings.dumpneeded.txt"
 
 					cat "$bdir/$job/dumpneededfiles.out" \
@@ -487,7 +504,11 @@ fi
 						| tr -d '[\r\0\031]' | tr '\\' '/' \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 				else
-					echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+						echo "FAILURE (handles)" >> "$bdir/$job/EditorWarnings.txt"
+					else
+						echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					fi
 					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
 				fi
 
@@ -505,6 +526,16 @@ fi
 				mkdir -p "$bdir/$plugin" || exit -1
 				mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
 				mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out" || true
+			fi
+
+			# XXX: This doesn't work with renamed/sanitized filenames. Fix it, preferably by doing away
+			# XXX: with the whole $plugin_base thing.
+			# If run in clean mode a shared geometry psg file will be produced that later can be
+			# compressed with CreationKit.exe -CompressPSG:<plugin_base>.
+			if [[ -f "$bdir/$job/Data/${plugin_base} - Geometry.psg" ]]; then
+				# XXX: Compress now or later?
+				mkdir -p "$bdir/$plugin" || exit -1
+				mv "$bdir/$job/Data/${plugin_base} - Geometry.psg" "$bdir/$plugin"
 			fi
 
 			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
@@ -528,7 +559,11 @@ fi
 				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
 			fi
 		else
-			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+				echo "FAILURE (handles)" >> "$bdir/$job/EditorWarnings.txt"
+			else
+				echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			fi
 			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
 		fi
 
@@ -576,7 +611,11 @@ fi
 						| tr -d '[\r\0\031]' | tr '\\' '/' \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 				else
-					echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+						echo "FAILURE (handles)" >> "$bdir/$job/EditorWarnings.txt"
+					else
+						echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+					fi
 					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
 				fi
 
@@ -617,7 +656,11 @@ fi
 				mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
 			fi
 		else
-			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+				echo "FAILURE (handles)" >> "$bdir/$job/EditorWarnings.txt"
+			else
+				echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			fi
 			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.error"
 		fi
 
@@ -648,7 +691,11 @@ fi
 				| tr -d '[\r\0\031]' | tr '\\' '/' \
 				> "$bdir/$job/dumpneededfiles.out.cleaned"
 		else
-			echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+				echo "FAILURE (handles)" >> "$bdir/$job/EditorWarnings.txt"
+			else
+				echo "FAILURE" >> "$bdir/$job/EditorWarnings.txt"
+			fi
 			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
 		fi
 
@@ -677,6 +724,12 @@ fi
 	# Nuke sanitized plugin file if it exists
 	if [[ -n "$plugin_ck" && -f "$bdir/$job/Data/$plugin_ck" ]]; then
 		rm -f "$bdir/$job/Data/$plugin_ck"
+	fi
+
+	# Copy plugin used for generation for reference purposes
+	if [[ -n "$plugin" && -f "$bdir/$job/Data/$plugin" ]]; then
+		mkdir -p "$bdir/$plugin"
+		cp -p "$bdir/$job/Data/$plugin" "$bdir/$plugin"
 	fi
 
 }
@@ -711,6 +764,8 @@ function ck_log_wrap() {
 				next;
 			if ($0 ~ /ROOTCELL/)
 				next;
+			if ($0 ~ /dumpneeded/)
+				next;
 		} else if (mode == "all") {
 			if ($0 ~ /gen.*for.*cell/)
 				next;
@@ -731,13 +786,14 @@ export BUILD
 
 for mode in "${MODE[@]}"; do
 	for plugin in "${PLUGIN[@]}"; do
-		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
+		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
 
 		[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
+		[[ -n $t ]] || t=$TYPE
 		[[ -n $s ]] || s=$SHARDS
 
 		for area in ${atmp[*]}; do
-			if [[ "$area" != "all" && "$mode" == "precombine" && "$type" == "clean" ]]; then
+			if [[ "$area" != "all" && "$mode" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
 				echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
 				exit -1
 			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
@@ -749,7 +805,7 @@ for mode in "${MODE[@]}"; do
 
 			# Use tabs for arg separation and escape-quote $plugin so that when parallel
 			# interprets this input line to call ck_wrap it doesn't consume quotes.
-			parallel -r -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$TYPE\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
+			parallel -r -j1 printf "'ck_wrap\t%s\t%s\t%s\t\"%s\"\t%s\t%s\t%s\n' \"$BUILD\" \"$mode\" \"$t\" \"$plugin\" \"{1}\" \"{2}\" \"$s\"" ::: $area ::: $(seq -s ' ' $START $s)
 		done
 	done > "$BUILD/tmp/parallel.in"
 
@@ -773,7 +829,7 @@ for mode in "${MODE[@]}"; do
 	fi
 
 	for plugin in "${PLUGIN[@]}"; do
-		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; a="${pp[1]}"; s="${pp[2]}"
+		eval pp=( $(plugin_parse "$plugin") ); plugin="${pp[0]}"; t="${pp[1]}"; a="${pp[2]}"; s="${pp[3]}"
 		[[ -d "$BUILD/$plugin" ]] || continue
 
 		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
@@ -798,18 +854,36 @@ for mode in "${MODE[@]}"; do
 		fi
 
 		if ls -d "$BUILD/$plugin/"*.esp &>/dev/null; then
-			echo "$plugin: Moving plugins..." 1>&2
+			echo "$plugin: Moving generated plugins..." 1>&2
 
 			mkdir -p "$OUT/$plugin/Data"
 			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.esp || true
 		fi
-			
+
+		if ls -d "$BUILD/$plugin/$plugin" &>/dev/null; then
+			echo "$plugin: Moving reference plugins..." 1>&2
+
+			mkdir -p "$OUT/$plugin"
+			mv -t "$OUT/$plugin" "$BUILD/$plugin/$plugin" || true
+		fi
 
 		if ls -d "$BUILD/$plugin/"*.needed*out &>/dev/null; then
 			echo "$plugin: Moving needed files output..." 1>&2
 
 			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.needed*out || true
+			mv -t "$OUT/$plugin" "$BUILD/$plugin/"*.needed*out || true
+		fi
+
+		if ls -d "$BUILD/$plugin"/EditorWarnings*.txt &>/dev/null; then
+			echo "$plugin: Moving editor warnings output..." 1>&2
+
+			mv -t "$OUT/$plugin" "$BUILD/$plugin"/EditorWarnings*.txt || true
+		fi
+
+		if ls -d "$BUILD/$plugin".*.error &>/dev/null; then
+			echo "$plugin: Moving error output..." 1>&2
+
+			mv -t "$OUT" "$BUILD/$plugin".*.error || true
 		fi
 
 		# XXX: hardlink plugins into Data?

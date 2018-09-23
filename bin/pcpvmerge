@@ -110,6 +110,11 @@ for mode in ${MODE[*]}; do
 
 	for esm in ${ESM[*]}; do
 		esm=$(basename $esm);
-		rsync -avSP --link-dest="$PWD/$CKGEN_OUT/$esm/Data" "$CKGEN_OUT/$esm/Data"/ "Data"/
+		rsync -avSP \
+			--include '*precombine_merge*.esp' \
+			--include '*previs_merge*.esp' \
+			--exclude '*' \
+			--link-dest="$PWD/$CKGEN_OUT/$esm/Data" \
+			"$CKGEN_OUT/$esm/Data"/ "Data"/
 	done
 done
