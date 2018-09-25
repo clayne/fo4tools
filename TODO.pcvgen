@@ -55,6 +55,8 @@ Loading too many records at once will result in:
 
 .rdata:00000001438525D0	00000042	C	OUT OF HANDLE ARRAY ENTRIES.  Null handle created for pointer %p.
 
+The only real solution to this is to generate (or cut down) plugins that have *only* CELLs which contain REFRs pointing to STAT or SCOL base objects. The entire goal is to reduce the amount of handles each plugin requires so that multiple plugins can be loaded at once without hitting the limit.
+
 ---
 
 * Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
@@ -72,7 +74,8 @@ DLCworkshop03.esm
 DLCNukaWorld.esm
 DLCUltraHighResolution.esm
 
-Note: It seems that CK will in some cases (particularly XPRI) create references with initial master load id offset from 08 forward as if every official master were loaded before it even if they weren't when generating the plugin from within CK. Update: actually this may not be true and I just forgot that I had initially loaded all 8 esms in my test.
+Note: It seems that CK will in some cases (particularly XPRI) create references with initial master load id offset from 08 forward as if every official master were loaded before it even if they weren't when generating the plugin from within CK. Update: actually this may not be true and I just forgot that I had initially loaded all 8 esms in my test. Update to update: Actually what seems to be going on here is that if a plugin passed to CK has a master that loads another master, it throws off the entire indexing of CK for the generated plugin. The only real workaround is to ensure the plugin used with CK (as a target to -generateprecombined or -generateprevisdata) has all masters as they would be in final form.
+
 ---
 
 Generating visibility for cells without precombined references results in non-combined visibility being generated. This is why some cells show updated vis timestamps and XPRI references but no XCRI data. This type of thing would occur in vanilla files due to -generateprevisdata operating on a larger or different set of cells then what -generateprecombined operated on.
@@ -101,7 +104,7 @@ Attempting to check in precombined or previs changes from CK whilst using a delo
 
 ---
 
-Check if -generateprecombined and -generateprevisdata react to cells with precombined references only (i.e. just clone only the cell records for cells the plugin does not alter in xedit). -generateprecombined probably reacts to statics associated with the cell, but validate if -generateprevisdata also does.
+Check if -generateprecombined and -generateprevisdata react to cells with precombined references only (i.e. just clone only the cell records for cells the plugin does not alter in xedit). -generateprecombined probably reacts to statics associated with the cell, but validate if -generateprevisdata also does. Update: generateprevisdata works the same way as generateprecombined. The good news here though is that only the presence of a REFR matters, i.e. it can be a simple override rather than a new REFR entirely.
 
 ---
 
@@ -109,7 +112,7 @@ Sort out all the localization/delocalization stuff. xEdit requires vanilla esms 
 
 ---
 
-ReportRequiredMasters is bugged in API description for xedit. Last 2 booleans are flipped.
+ReportRequiredMasters is bugged in API description for xedit. Last 2 booleans are flipped. <-- Verify this, or if it's a different function that had the issue.
 
 ---
 
@@ -133,6 +136,8 @@ DLCworkshop03.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial
 pcv-world-merged.esm/EditorWarnings.previs.main.01.txt:Running filtered for partial options is not supported
 clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $ grep -r ROOTCELL Fallout4.esm/
 clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (regrowth) $
+
+Update: it would appear that using anything but 'all' with 'clean' mode will result in that error and no psg will be generated.
 
 ---
 
@@ -174,7 +179,7 @@ E614 (DLCworkshop03 overlaps with Fallout4, but pcv-world-merged previs generati
 
 ---
 
-Ensure any patched CK exe's are done in temporary build dir
+Ensure any patched CK exe's are done in temporary build dirs
 
 ---
 
@@ -200,19 +205,96 @@ Double check that cut down plugins (only static REFRs) generate the same precomb
 
 ---
 
-Figure out why CK breaks XCRI (or other) refs for plugins with >= 15 masters (seen with SOTS.esp.precombine_merge.all.01.all.esp) or when the generated plugin is slot 15 (16th) or above. It might actually be >= 13 masters, but haven't determined yet.
-
----
-
 Figure out what causes CK to scramble the order of emitted masters in plugins it generates... timestamp?
 
 ---
+
+FIXED:
 
 Sort out the issue with sanitized esm filenames in esps (plenty__of__exploration.esm), etc.
 
 ---
 
+FIXED:
+
+Figure out why CK breaks XCRI (or other) refs for plugins with >= 15 masters (seen with SOTS.esp.precombine_merge.all.01.all.esp) or when the generated plugin is slot 15 (16th) or above. It might actually be >= 13 masters, but haven't determined yet.
+
 SimSettlements.esm should have Unofficial Fallout 4 Patch.esp (.esm) but the precombine generated plugin does not. FOUND: master relocs aren't happening for .esm files because the check is for .esp files in ckgen.
+
+---
+
+ck_wrap: Copy per area plugins rather than just generically copying reference plugin?
+
+---
+
+ck_wrap: Don't copy reference plugins on error?
+
+---
+
+ck_wrap: Test busted masters in plugins (grep logs)
+
+---
+
+ck_wrap: Test missing plugin files (grep logs)
+
+---
+
+ck_wrap: Test for maximum registered paths error (grep logs, note this doesn't actually seem critical):
+
+Number of registered paths has exceeded maximum
+
+---
+
+CDX (more accurately -BuildCDX) is 100% dependent on XCRI data in the plugin *and* the csg/psg file used for shared geometry:
+1. -BuildCDX on a plugin without appropriately updated XCRI data will produce:
+2. -BuildCDX on a plugin without a matching CSG or PSG file will produce:
+3. -BuildCDX on a plugin without matching precombined NIFS will produce:
+
+RENDERING:                              Failed to find static geometry id (0x83b0b913, 0x 583c712), generating dummy data.
+
+It also appears that a given CSG or PSG file only needs to be loaded before the point of -BuildCDX. This means a master of a plugin passed to -BuildCDX which loads it's own CSG/PSG data related to the plugin being built will still succeed. This implies that the game/CK loads this CSG/PSG data into an internal memory structure which is consulted by -BuildCDX along with cell XCRI data and physical precombined NIFs. On top of that, this all works with esp plugins, atleast with CK. e.g. this works:
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build/1 (modded_regrowth) $ plugin-master-reloc -v Data/3DNPC_FO4.esp.precombine_merge.all.01.esp
+Data/3DNPC_FO4.esp.precombine_merge.all.01.esp:
+[00] Fallout4.esm
+[01] 3DNPC_FO4.esp
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build/1 (modded_regrowth) $ ./CreationKit.exe -buildcdx:3DNPC_FO4.esp.precombine_merge.all.01.esp
+MemoryTraceWrite::MemoryTraceWrite
+Initialized small stack
+Set thread processor
+Set thread priority
+
+Handles during -BuildCDX:3DNPC_FO4.esp.precombine_merge.all.01.esp:
+
+ 4AA8: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\cdxtmp
+ 4B10: File  (RWD)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\materials
+ 4B14: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4.esp.precombine_merge.all.01.esp
+ 4B18: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\Fallout4.esm
+ 4B24: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4.esp
+ 4B28: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Main.ba2
+ 4B2C: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Textures.ba2
+ 4B30: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Geometry.psg
+ 4B34: File  (R--)   C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.modded_regrowth\ckgen.build\1\Data\3DNPC_FO4 - Geometry.csg
+
+Even using the intermediary CombinedObjects.esp doesn't matter, as long as it has a master which loads the requisite PSG (packed shared geometry) data (or CSG if compressed). Also, it doesn't matter if a CSG or PSG file is used, CK (and the game) will try to use both. CSG is merely a size optimization for PSG files after they've been generated (most likely zlib or lz4 compressed).
+
+---
+
+Track this down in IDA:
+
+"Running filtered for partial options is not supported"
+
+Fairly certain this is when any specific area other than 'all' is used with clean mode - as CK refuses to emit a PSG file with args like 'clean main' or 'clean main 1 4'.
+
+---
+
+CK patch notes:
+
+NukemToday at 7:53 PM
+yeah i'm waiting for ida to load
+.text 140347D42
+relative addr 347D42
 
 ---
 

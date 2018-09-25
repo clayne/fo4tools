@@ -16,7 +16,7 @@ local $Data::Dumper::Sortkeys = 1;
 our $VERSION = '$Id$';
 
 my $verbose = 0;
-my %blacklist_tab = map +($_ => 1), qw(
+my %protect_tab = map +($_ => 1), qw(
 	Fallout4.esm
 	DLCRobot.esm
 	DLCworkshop01.esm
@@ -27,7 +27,7 @@ my %blacklist_tab = map +($_ => 1), qw(
 	DLCUltraHighResolution.esm
 );
 
-sub clone {
+sub plugin_clone {
 	my ($src, $dst, $overwrite) = @_;
 
 	if (! -f $dst || $overwrite) {
@@ -40,70 +40,113 @@ sub clone {
 	}
 }
 
+sub plugin_sub {
+	my ($plugin, $sub_ext, @sub) = @_;
+	my $plugin_sub = $plugin;
+
+	# Specifically for extensions
+	if ($sub_ext) {
+		my ($from, $to) = @$sub_ext;
+		die "Problem with substitution data (ext)" unless ($from && $to);
+
+		# Remove any leading dots in passed in extensions if specified
+		$from =~ s/^\.//g;
+		$to =~ s/^\.//g;
+
+		$plugin_sub =~ s/\.$from$/\.$to/;
+	}
+
+	# Any generic substitution outside of extension
+	foreach (@sub) {
+		my ($from, $to) = split(':', $_, 2);
+		die "Problem with substitution data" unless ($from && $to);
+
+		$plugin_sub =~ s/$from/$to/;
+	}
+
+	die "Unequal substitution lengths" unless (length($plugin_sub) == length($plugin));
+
+	return $plugin_sub;
+}
+
 sub main {
 	my $ret;
 	my $help = 0;
 	my $quick = 0;
+	my $dry_run = 0;
 	my $esm_to_esp = 0;
 	my $esp_to_esm = 0;
 	my $copy_plugin_to_esm = 0;
 	my $copy_plugin_to_esp = 0;
 	my $unlink = 1;
-	my $blacklist = 1;
+	my $protect = 1;
 	my $esp_only = 0;
 	my $esm_only = 0;
+	my $complete = 0;
+	my $recurse = 0;
 	my $hex = 0;
+	my $sub_smart = 1;
+	my @sub;
 
 	local @ARGV = @_;
 	GetOptions(
                 'h|help' => \$help,
-		'quick|q+' => \$quick,
-		'verbose|v+' => \$verbose,
+		'q|quick+' => \$quick,
+		'v|verbose+' => \$verbose,
+		'n|dry-run+' => \$dry_run,
 		'unlink!' => \$unlink,
-		'blacklist!' => \$blacklist,
+		'protect!' => \$protect,
 		'copy-plugin-to-esm' => \$copy_plugin_to_esm,
 		'copy-plugin-to-esp' => \$copy_plugin_to_esp,
 		'esp|esm-to-esp+' => \$esm_to_esp,
 		'esm|esp-to-esm+' => \$esp_to_esm,
 		'esp-only+' => \$esp_only,
 		'esm-only+' => \$esm_only,
-		'hex+' => \$hex,
+		'c|complete+' => \$complete,
+		'r|recurse+' => \$recurse,
+		'S|smart-sub+' => \$sub_smart,
+		's|sub=s' => \@sub,
+		'H|hex+' => \$hex,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
-	my $head;
 	my %seen;
 	my @unlink;
+	my $mout = [];
 
 	# Defend against esm files mistakenly being used.
 	my @q = (@ARGV ?  @ARGV : '-');
 	while (local $_ = shift @q) {
-		my $mtab = [];
-		my ($dirname, $basename) = (dirname($_), basename($_));
+		my $mproc = [];
+		my ($dirname, $basename, $path) = (dirname($_), basename($_), $_);
 
 		next unless (!$seen{$basename}++);
-		next unless (!$blacklist || !$blacklist_tab{$basename});
+		next unless (!$protect || !$protect_tab{$basename});
 
 		if ($copy_plugin_to_esm) {
 			my $esp = $basename;
 			if ($esp =~ /\.esp/i) {
-				my $esm = ($esp =~ s/\.esp$/\.esm/r);
-				clone("$dirname/$esp", "$dirname/$esm");
+				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
+				plugin_clone("$dirname/$esp", "$dirname/$esm");
+
+				# Place the cloned plugin into the queue as a target for
+				# updating rather than the original plugin.
 				unshift @q, "$dirname/$esm";
 				next;
 			}
 		} elsif ($copy_plugin_to_esp) {
 			my $esm = $basename;
 			if ($esm =~ /\.esm/i) {
-				my $esp = ($esm =~ s/\.esm$/\.esp/r);
-				clone("$dirname/$esm", "$dirname/$esp");
+				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
+				plugin_clone("$dirname/$esm", "$dirname/$esp");
+
+				# Place the cloned plugin into the queue as a target for
+				# updating rather than the original plugin.
 				unshift @q, "$dirname/$esp";
 				next;
 			}
 		}
-
-		printf STDERR ("%s%s:\n", $head++ ? "\n" : "", $_) if ($verbose);
 
 		my $fd;
 		if ($_ eq '-') {
@@ -112,7 +155,7 @@ sub main {
 			$esp_to_esm = 0;
 			$unlink = 0;
 		} else {
-			open($fd, ($esm_to_esp || $esp_to_esm) ? '+<' : '<', $_) or die "open: $!:";
+			open($fd, ($esm_to_esp || $esp_to_esm) ? '+<' : '<', $_) or die "open: $!: $_";
 		}
 
 		my ($off, $len, $bsz, $buf) = (0, 0, 0);
@@ -144,30 +187,15 @@ sub main {
 				$bsz = $sz; my ($file) = unpack("a$ssz", substr($buf, $off, $bsz)); $off += $bsz;
 
 				print STDERR Dumper [$off_save,$file] if ($verbose > 1);
-				push @$mtab, [ $off_save, $file ];
+				push @$mproc, { offset => $off_save, master => $file, plugin => $basename };
 			} else {
 				$off += $sz;
 			}
 		}
 
 		my @qt;
-		for (my $i = 0; $i < @$mtab; $i++) {
-			next if ($esp_only && $mtab->[$i][1] !~ /\.esp$/);
-			next if ($esm_only && $mtab->[$i][1] !~ /\.esm$/);
-
-			if ($verbose) {
-				printf STDERR ($hex ? "[%02X] %s\n" : "[%02d] %s\n", $i, $mtab->[$i][1]);
-			} elsif (!$esp_to_esm && !$esm_to_esp) {
-				if (!$quick) {
-					printf STDOUT ("%s\t%s\n", $basename, $mtab->[$i][1]);
-				} else {
-					printf STDOUT ("%s\n", $mtab->[$i][1]);
-				}
-			}
-		}
-
-		for (my $i = 0; $i < @$mtab; $i++) {
-			my ($off, $plugin) = @{$mtab->[$i]};
+		for (my $i = 0; $i < @$mproc; $i++) {
+			my ($offset, $master) = map $mproc->[$i]{$_}, qw(offset master);
 
 			if ($esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
@@ -176,23 +204,26 @@ sub main {
 				# files to process so any of their parent esp masters will
 				# be substituted accordingly.
 
-				my $esp = $plugin;
+				my $esp = $master;
 				if ($esp =~ /\.esm/i) {
 					# Possible to have an esm with an esp master. Pass
 					# it on to check just in case. Vanilla files will
-					# be ignored by the blacklist.
+					# be ignored by the protect list.
 					push @qt, "$dirname/$esp";
 					next;
 				}
 
-				my $esm = ($esp =~ s/\.esp$/\.esm/r);
-				clone("$dirname/$esp", "$dirname/$esm");
+				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
+				plugin_clone("$dirname/$esp", "$dirname/$esm");
 
 				# Update MAST to point to esm file
-				seek($fd, $off, 0) or die "seek: $!";
-				my $len = syswrite($fd, $esm, length($esm)) or die "syswrite: $!";
-				printf STDERR ($hex ? "Writing %s: [%02X] %s\n" : "Writing %s: [%02d] %s\n",
-					$basename, $i, $esm) if ($verbose);
+				seek($fd, $offset, 0) or die "seek: $!";
+				my $len = !$dry_run
+					? (syswrite($fd, $esm, length($esm)) or die "syswrite: $!")
+					: length($esm);
+				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
+					$basename, $i, $esm, $dry_run ? ' (noop)' : '') if ($verbose);
+				$mproc->[$i]{'master'} = $esm;
 
 				push @qt, "$dirname/$esm";
 			} elsif ($esm_to_esp) {
@@ -202,43 +233,103 @@ sub main {
 				# to remove esms which were unlikely to be generated by this
 				# script.
 
-				my $esm = $plugin;
-				next if ($esm =~ /\.esp/i);
+				my $esm = $master;
+				if ($esm =~ /\.esp/i) {
+					# Possible to have an esp with an esm master. Pass
+					# it on to check just in case. Vanilla files will
+					# be ignored by the protect list.
+					push @qt, "$dirname/$esm";
+					next;
+				}
 
 				# If there is no matching esp file for the esm master being
 				# rewritten back to esp, then it never was an esp in the first
 				# place and should be completely ignored.
-				my $esp = ($esm =~ s/\.esm$/\.esp/r);
+				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
 				next if (! -f "$dirname/$esp"); # CRITICAL
 
 				# Update MAST to point to esp file.
-				seek($fd, $off, 0) or die "seek: $!";
-				my $len = syswrite($fd, $esp, length($esp)) or die "syswrite: $!";
-				printf STDERR ($hex ? "Writing %s: [%02X] %s\n" : "Writing %s: [%02d] %s\n",
-					$basename, $i, $esp) if ($verbose);
+				seek($fd, $offset, 0) or die "seek: $!";
+				my $len = !$dry_run
+					? (syswrite($fd, $esp, length($esp)) or die "syswrite: $!")
+					: length($esp);
+				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
+					$basename, $i, $esp, $dry_run ? ' (noop)' : '') if ($verbose);
+				$mproc->[$i]{'master'} = $esp;
 
 				# The only esms which will be removed are those which
 				# have matching esp files and those which were resolved
 				# from masters present in the arg list.
 				next if (! -f "$dirname/$esm");
 				push @unlink, "$dirname/$esm";
+
 				push @qt, "$dirname/$esm";
+			} else {
+				push @qt, ($dirname ne '.') ? "$dirname/$master" : $master;
 			}
 		}
 
-		unshift @q, @qt;
+		unshift @q, @qt if ($recurse);
 		close($fd);
+
+		push @$mout, { path => $_, dirname => $dirname, basename => $basename, mproc => $mproc };
 	}
 
-	%seen = ();
-	foreach (grep !$seen{$_}++, @unlink) {
-		if ($blacklist && $blacklist_tab{basename($_)}) {
-			die "Assertion failed: attempt to unlink blacklisted file: $_";
+	my %unlink = ();
+	foreach (grep !$unlink{$_}++, @unlink) {
+		if ($protect && $protect_tab{basename($_)}) {
+			die "Assertion failed: attempt to unlink protected file: $_";
 		}
 
 		-f $_ || next;
 		print STDERR "unlink $_\n" if ($verbose);
-		unlink($_) or die "unlink: $!";
+		if ($dry_run) {
+			print STDERR "unlink: $_\n";
+		} else {
+			unlink($_) or die "unlink: $!";
+		}
+	}
+
+	# Temp disabled
+	if (0 && $complete) {
+		print STDERR Dumper $mout;
+		my %seen;
+		my $mout_tmp;
+		foreach my $ent (@$mout) {
+			my ($path, $dirname, $basename, $mproc) = map $ent->{$_}, qw(path dirname basename mproc);
+			if (!$mout_tmp) {
+				$mout_tmp = { path => $path, dirname => $dirname, basename => $basename, mproc => [] };
+			}
+			push @{$mout_tmp->{'mproc'}}, grep !$seen{$_->{master}}++, map +{ %$_, plugin => $basename }, @$mproc;
+		}
+		print STDERR Dumper $mout_tmp;
+		$mout = [ $mout_tmp ];
+	}
+
+	my $head;
+	foreach my $ent (@$mout) {
+		my ($path, $dirname, $basename, $mproc) = map $ent->{$_}, qw(path dirname basename mproc);
+		next if ($unlink{$path});
+
+		printf STDERR ("%s%s:\n", $head++ ? "\n" : "", $path) if ($verbose);
+
+		for (my $i = 0; $i < @$mproc; $i++) {
+			my ($offset, $master, $plugin) = map $mproc->[$i]{$_}, qw(offset master plugin);
+
+			next if ($esp_only && $master !~ /\.esp$/);
+			next if ($esm_only && $master !~ /\.esm$/);
+
+			if ($verbose) {
+				printf STDERR ($hex ? "[%02X] %s%s\n" : "[%02d] %s%s\n",
+					$i, $master, $plugin ne $basename ? " ($plugin)" : "");
+			} elsif (!$esp_to_esm && !$esm_to_esp) {
+				if (!$quick) {
+					printf STDOUT ("%s\t%s\n", $path, $master);
+				} else {
+					printf STDOUT ("%s\n", $master);
+				}
+			}
+		}
 	}
 
 	return 1;
