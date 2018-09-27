@@ -248,9 +248,13 @@ ck_wrap: Don't copy reference plugins on error?
 
 ck_wrap: Test busted masters in plugins (grep logs)
 
+Unable to find masterfile: WelcometoGoodneighbor.zzz
+
 ---
 
 ck_wrap: Test missing plugin files (grep logs)
+
+4 MASTERFILE:                              Could not get file pointer for BOGUS_BTInteriors_Project.esm, aborting automated process.
 
 ---
 
