@@ -49,6 +49,19 @@ bWarnOnUserVersionDifferences:General
 
 ---
 
+What are these strings about?
+
+Double-check your coordinates.  You don't really want to generate that many cells.
+Generated visibility for requested cells
+You will be asked to select a plain-text file containing a list of (x,y) coordinates of cells to generate vis for.
+Select file with list of cells to generate.
+Generate for the following cells?
+Generate?
+
+UPDATE: Entirely about World LOD generation. The use of 'vis' is misfortunate.
+
+---
+
 Critical CK issue:
 
 Loading too many records at once will result in:
@@ -59,7 +72,9 @@ The only real solution to this is to generate (or cut down) plugins that have *o
 
 ---
 
-* Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
+Figure out what to do with each master's Vis files that aren't part of the Commonwealth. Surely there will be worldspace mods outside of the Commonwealth, so it shouldn't just be focused only on that, but how to handle generated files that aren't actually different than the vanilla files? Precombines are hashed (somehow) so they *should* be safe to detect for uniqueness. UVDs are per cell and not hashed, however they affect a 3x3 grid of cells and if any of the cells sharing the same RVIS key are altered from vanilla then the newly generated UVD file must be used.
+
+Cross check all references in XPRI data out there to determine what to keep beyond static REFRs.
 
 ---
 
@@ -192,7 +207,7 @@ That ref doesn't exist anywhere.
 
 ---
 
--generatescol by default for every plugin passed in?
+-generatestaticcollections:<esm> x64 by default for every plugin passed in? Note: MUST be an esm file.
 
 ---
 
@@ -243,6 +258,10 @@ ck_wrap: Test for maximum registered paths error (grep logs, note this doesn't a
 
 Number of registered paths has exceeded maximum
 
+Also, this is related to -BuildCDX and "Failed to find static geometry id" as the BuildCDX steps sees all the loose files and attempts to use them all to biuld the CDX file. In the case of Fallout4.esm it's particularly a problem.
+
+Experiment with loose PreCombines (such as the 124k files from Fallout4.esm) and the various ini options to see if any of them actually make a difference with the registered path maximum.
+
 ---
 
 CDX (more accurately -BuildCDX) is 100% dependent on XCRI data in the plugin *and* the csg/psg file used for shared geometry:
@@ -279,6 +298,8 @@ Handles during -BuildCDX:3DNPC_FO4.esp.precombine_merge.all.01.esp:
 
 Even using the intermediary CombinedObjects.esp doesn't matter, as long as it has a master which loads the requisite PSG (packed shared geometry) data (or CSG if compressed). Also, it doesn't matter if a CSG or PSG file is used, CK (and the game) will try to use both. CSG is merely a size optimization for PSG files after they've been generated (most likely zlib or lz4 compressed).
 
+Also, -BuildCDX might want to be done after everything has been generated (PC+PV) as the output differs based on the contents of the esp or esm.
+
 ---
 
 Track this down in IDA:
@@ -295,6 +316,114 @@ NukemToday at 7:53 PM
 yeah i'm waiting for ida to load
 .text 140347D42
 relative addr 347D42
+
+---
+
+[00:00] Start: Applying script "xpri_type_stats"
+ \ [00] Fallout4.esm \ [56] GRUP Top "WRLD" \ [1] GRUP World Children of Commonwealth "Commonwealth" [WRLD:0000003C] \ [7] GRUP Exterior Cell Block -1, 0 \ [12] GRUP Exterior Cell Sub-Block -4, 3 \ [10] [CELL:0000E30D] (in Commonwealth "Commonwealth" [WRLD:0000003C] at 26,-25) \ [11] XPRI - Physics References
+type_tab:
+PHZD 7545
+PMIS 37169
+REFR 125024
+type_base_tab:
+ACTI 4111
+CONT 30444
+FLOR 6516
+FURN 28157
+HAZD 7195
+MSTT 36801
+PROJ 5418
+SCOL 4983
+STAT 45250
+TACT 352
+TERM 511
+[01:53] Done: Applying script "xpri_type_stats", Processed Records: 3001891, Elapsed Time: 01:53
+
+STATS:
+ 
+CELL type_tab
+LAND 45493
+REFR 2496354
+NAVM 16629
+ACHR 17044
+PGRE 610
+PHZD 2800
+PMIS 2
+CELL type_base_tab
+STAT 1821245
+SCOL 68251
+ACTI 38364
+NPC_ 17044
+MSTT 91896
+FURN 32030
+LIGH 193859
+MISC 93895
+CONT 28524
+ASPC 1579
+SOUN 5778
+IDLM 16486
+DOOR 10259
+BNDS 11867
+TXST 49239
+NOTE 290
+ALCH 16237
+TERM 1289
+WEAP 1631
+AMMO 1110
+KEYM 144
+BOOK 773
+FLOR 9491
+TACT 317
+PROJ 612
+HAZD 2800
+ARMO 1788
+ARTO 1
+ADDN 3
+ 
+XPRI type_tab
+REFR 170209
+NAVM 14
+ACHR 6
+PHZD 1211
+PMIS 1
+INFO 32
+STAT 5
+RFGP 8
+MSWP 1
+LIGH 1
+DIAL 47
+SCEN 1
+CELL 4
+OMOD 1
+QUST 1
+XPRI type_base_tab
+STAT 56325
+SCOL 2841
+ACTI 4106
+NPC_ 6
+MSTT 50495
+FURN 23169
+LIGH 9
+MISC 13
+CONT 30450
+SOUN 1
+IDLM 4
+DOOR 4
+BNDS 5
+TXST 25
+ALCH 3
+TERM 738
+FLOR 1725
+TACT 296
+PROJ 1
+HAZD 1211
+ 
+XCRI type_tab
+REFR 2691174
+XCRI type_base_tab
+STAT 2633211
+SCOL 57876
+ACTI 79
 
 ---
 

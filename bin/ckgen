@@ -241,10 +241,22 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 #exit
 
 	echo "Cloning build directories (hardlinks)..." 1>&2
+	rm -f "$BUILD/tmp/clone.error"
 	for i in $(seq 1 $(parallel --seqreplace _ "echo \$((_ % $JOBS))" ::: "${PLUGIN[@]}" ::: "${AREA[@]}" ::: $(seq -s ' ' $SHARDS_START $SHARDS_MAX) | sort -u | wc -l)); do
 	(
 		set -e
 		set -o pipefail
+		trap "touch '$BUILD/tmp/clone.error'" ERR
+
+		case "$mode" in
+		precombine)
+			EXCLUDE_AUX=(
+				"--exclude '*.cdx'" \
+				"--exclude '*.psg'" \
+				"--exclude '*.csg'" \
+			)
+			;;
+		esac
 
 		# Hardlink base directory contents to per-build directories
 		rsync -aSH \
@@ -275,9 +287,6 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude PreVis.esp \
 			--exclude 'CreationKit*.ini' \
 			--exclude '*.es[pm]' \
-			--exclude '*.psg' \
-			--exclude '*.csg' \
-			--exclude '*.cdx' \
 			--exclude 'enbseries' \
 			--exclude 'auto_backup_executable' \
 			--exclude 'FO4Edit*' \
@@ -285,29 +294,29 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 			--exclude 'x3d*.dll' \
 			--exclude 'd3d*.dll' \
 			--exclude 'la_d3d*.dll' \
-			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/ \
-			|| exit -1
+			${EXCLUDE_AUX[*]} \
+			--link-dest="$SRC" "$SRC"/ "$BUILD/$i"/
 #			--exclude "$SELF*" \
 
 		# Hardcopy CK ini files
-		rsync -aS --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/ || exit -1
+		rsync -aS --include 'CreationKit*.ini' --exclude '*' "$SRC"/ "$BUILD/$i"/
 
 		# Hardcopy plugins
-		rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data"/ "$BUILD/$i/Data"/ || exit -1
+		rsync -aS --include '*.es[pm]' --exclude '*' "$SRC/Data"/ "$BUILD/$i/Data"/
 
 		# Hardcopy plugins (orig)
 		if [[ -d "$SRC/Data/orig" ]]; then
-			rsync -aS "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/ || exit -1
+			rsync -aS "$SRC/Data/orig"/ "$BUILD/$i/Data/orig"/
 		fi
 
 		# Hardcopy plugins (modified)
 		if [[ -d "$SRC/Data/ckgen" ]]; then
-			rsync -aS "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/ || exit -1
+			rsync -aS "$SRC/Data/ckgen"/ "$BUILD/$i/Data/ckgen"/
 		fi
 
 		# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
 		if [[ -d "$CACHE/Data" ]]; then
-			rsync -aSH --link-dest="$SRC/$CACHE/Data" "$SRC/$CACHE/Data"/ "$BUILD/$i/Data"/ || exit -1
+			rsync -aSH --link-dest="$SRC/$CACHE/Data" "$SRC/$CACHE/Data"/ "$BUILD/$i/Data"/
 		fi
 
 		# XXX: Update comment (it's the presence of share dirs in the ini that make CK aware of VC)
@@ -392,7 +401,8 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 		done
 	) &
 	done; wait
-	# XXX: check child status?
+
+	[[ ! -f "$BUILD/tmp/clone.error" ]] || exit -1
 fi
 
 if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
@@ -932,9 +942,9 @@ for mode in "${MODE[@]}"; do
 	done > "$BUILD/tmp/parallel.in"
 
 	if ((MANUAL)); then
-		PFLAGS="--res $BUILD/tmp --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
+		PFLAGS="--res $BUILD/tmp --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
 	else
-		PFLAGS="--res $BUILD/tmp --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
+		PFLAGS="--res $BUILD/tmp --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
 	fi
 
 	# Final command to execute after parallel finishes
@@ -942,13 +952,17 @@ for mode in "${MODE[@]}"; do
 
 	# Note: final 'read' commands are to prevent tmux from closing each sub-window
 	if ((TMUX)); then
+		# tmux doesn't emit the exit status of child commands as part of it's own exit status
+		rm -f "$BUILD/tmp/parallel.error"
 		tmux new \
 			"ck_log_wrap cell $JOBS" ';' \
 			split -p 40 \
 			"ck_log_wrap all $JOBS" ';' \
 			split -p 50 \
-			"parallel $PFLAGS '{} {%} $MANUAL' < '$BUILD/tmp/parallel.in'; $PAUSE; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill" ';' \
-			set-option status off
+			"parallel $PFLAGS '{} {%} $MANUAL' < '$BUILD/tmp/parallel.in'; [[ \$? -ne 255 ]] && $PAUSE || touch '$BUILD/tmp/parallel.error'; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill" ';' \
+			set-option status off \
+			&& [[ ! -f "$BUILD/tmp/parallel.error" ]] \
+			|| exit -1
 	else
 		parallel $PFLAGS "{} {%} $MANUAL" < "$BUILD/tmp/parallel.in" || exit -1
 	fi
