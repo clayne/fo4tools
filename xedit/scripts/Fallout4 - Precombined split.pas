@@ -661,16 +661,9 @@ var
 	s: string;
 	flags: cardinal;
 begin
-	if Signature(e) <> 'CELL' then
+	// Non-persistent exterior cells only
+	if not cell_filter(e, false, false, false, false) then
 		Exit;
-	if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then
-		Exit;
-
-	// Skip persistent worldspace cells (which never have precombines/previs)
-	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $400) <> 0 then begin
-		Exit;
-	end;
 
 //	AddMessage('check: ' + FullPath(e));
 
@@ -792,6 +785,40 @@ begin
 	end;
 
 	Result := tl;
+end;
+
+function cell_filter(e: IInterface; interior_allow, interior_only, persistent_allow, persistent_only: boolean): boolean;
+var
+	flags: cardinal;
+	is_interior, is_persistent: boolean;
+begin
+	// Skip non-cells
+	if Signature(e) <> 'CELL' then begin
+		Result := false;
+		Exit;
+	end;
+
+	is_interior := (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1');
+	if not is_interior and interior_only then begin
+		Result := false;
+		Exit;
+	end else if is_interior and not interior_allow then begin
+		Result := false;
+		Exit;
+	end;
+
+	// Skip persistent worldspace cells (which never have precombines/previs)
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	is_persistent := ((flags and $400) <> 0);
+	if not is_persistent and persistent_only then begin
+		Result := false;
+		Exit;
+	end else if is_persistent and not persistent_allow then begin
+		Result := false;
+		Exit;
+	end;
+
+	Result := true;
 end;
 
 procedure stat_refr_promote(plugin: IwbFile; e: IInterface);
@@ -1300,7 +1327,7 @@ begin
 	Result := True;
 end;
 
-procedure plugin_clean(e: IInterface);
+procedure plugin_clean(e: IInterface; interior_allow, interior_only: boolean);
 var
 	s, fstr: string;
 	remove: boolean;
@@ -1318,10 +1345,10 @@ begin
 			remove := true;
 		end;
 	end else if (s = 'CELL') then begin
-//		if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then begin
-//			remove := true;
-//		end else
-		if not Assigned(cell_refr_stat_first(e)) then begin
+		// Non-persistent cells only
+		if not cell_filter(e, interior_allow, interior_only, false, false) then begin
+			remove := true;
+		end else if not Assigned(cell_refr_stat_first(e)) then begin
 			remove := true;
 		end;
 	end;
@@ -1347,17 +1374,9 @@ var
 begin
 
 	// XXX: REMOVE
-	// Skip non-cells
-	if Signature(e) <> 'CELL' then
+	// Non-persistent exterior cells only
+	if not cell_filter(e, false, false, false, false) then
 		Exit;
-	if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then
-		Exit;
-
-	// Skip persistent worldspace cells (which never have precombines/previs)
-	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $400) <> 0 then begin
-		Exit;
-	end;
 
 	plugin := GetFile(e);
 	tl := cell_rvis_cell_grid(e);
@@ -1421,17 +1440,11 @@ Result := False; Exit;
 
 // Nuke anything not needed for precombines
 // XXX: test differences for cleaned vs uncleaned, don t add masters
-plugin_clean(e);
+plugin_clean(e, false, false);
 
-	// Skip non-cells
-	if Signature(e) <> 'CELL' then
+	// Non-persistent cells only
+	if not cell_filter(e, true, false, false, false) then
 		Exit;
-
-	// Skip persistent worldspace cells (which never have precombines/previs)
-	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $400) <> 0 then begin
-		Exit;
-	end;
 
 	if mode = 'init' then begin
 		plugin_master_add(e);
