@@ -1,6 +1,8 @@
 {
 	1. Split precombines into separate plugins based on their master.
 	2. Recombine precombine/previs of loaded plugins into a final plugin.
+
+	Hotkey: Ctrl+Shift+P
 }
 
 unit FO4_Precombined_Split;
@@ -26,12 +28,16 @@ var
 	pc_sig_tab: array [0..1] of TString;
 	pv_sig_tab: array [0..2] of TString;
 
+	cell_cache: THashedStringList;
+
 	// Experimental
 	rmap: array [0..2] of THashedStringList;
 	cmap: array [0..255] of THashedStringList;
 	keep_map: THashedStringList;
 
 function Initialize: integer;
+var
+	i: integer;
 begin
 	// Precombine specific signatres
 	pc_sig_tab[0] := 'XCRI';
@@ -41,6 +47,10 @@ begin
 	pv_sig_tab[0] := 'XPRI';
 	pv_sig_tab[1] := 'RVIS';
 	pv_sig_tab[2] := 'VISI';
+
+	cell_cache := THashedStringList.create;
+	cell_cache.Sorted := True;
+	cell_cache.Duplicates := dupIgnore;
 
 	rmap[0] := THashedStringList.create;
 	rmap[0].Sorted := True;
@@ -61,6 +71,7 @@ begin
 	keep_map.add('STAT');
 	keep_map.add('SCOL');
 	keep_map.add('MSWP');
+	keep_map.add('LAYR');
 	keep_map.add('CELL');
 	keep_map.add('WRLD');
 end;
@@ -163,13 +174,15 @@ begin
 	if Equals(e, m) then
 		Exit;
 
-	if Assigned(cell_refr_first(e)) then
+	// Check if this cell has any static references at all.
+	if Assigned(cell_refr_stat_first(e)) then
 		has_static := true;
 
 	// Find this actual element and consider it the highest override so
 	// that additional overrides in the load order are ignored. This is
 	// done so that the masters added to the plugin represent masters
-	// which have been overridden from the perspective of the plugin.
+	// which have been overridden only from the perspective of the
+	// plugin being modified.
 	for i := 0 to Pred(oc) do begin
 		t := OverrideByIndex(m, i);
 		if Equals(e, t) then break;
@@ -181,8 +194,13 @@ begin
 		// any statics of its own. If it does then the master
 		// will be added regardless to guard against generation
 		// of previs data not taking into account the override.
+		//
+		// XXX: Consider cells which might not directly overlap
+		// XXX: but would overlap with 3x3 previs.
+		//
+		// XXX: Also figure out how to use has_static or not.
 //		if not has_static then begin
-			r := cell_refr_first(t);
+			r := cell_refr_stat_first(t);
 			if not Assigned(r) then continue;
 //		end;
 
@@ -251,6 +269,7 @@ end;
 				tfstr := GetFileName(t);
 
 if false then begin
+				// Masters of master
 				for j := 0 to Pred(MasterCount(tfile)) do begin
 					r := MasterByIndex(tfile, j);
 					rfstr := GetFileName(r);
@@ -428,7 +447,7 @@ begin
 	SetFormVCS2(r, GetFormVCS2(e));
 end;
 
-function cell_refr_all(e: IInterface): IInterface;
+function cell_refr_stat_all(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
@@ -464,7 +483,7 @@ exit;
 	end;
 end;
 
-function cell_refr_first(e: IInterface): IInterface;
+function cell_refr_stat_first(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
@@ -499,6 +518,282 @@ begin
 	end;
 end;
 
+function cell_resolve_world(world_str: string): IInterface;
+var
+	plugin, wg, w: IInterface;
+	i, j: integer;
+begin
+	// Plugins
+	for i := 0 to Pred(FileCount) do begin
+		plugin := FileByIndex(i);
+
+		wg := GroupBySignature(plugin, 'WRLD');
+		if not Assigned(wg) then continue;
+
+		// Worldspaces
+		for j := 0 to Pred(ElementCount(wg)) do begin
+			w := ElementByIndex(wg, j);
+			if GetElementEditValues(w, 'EDID') <> world_str then continue;
+
+			Result := w;
+			Exit;
+		end;
+	end;
+end;
+
+function cell_group_coord_check(g: IInterface; x, y: integer): Boolean;
+var
+	gl: cardinal;
+	gx, gy: word;
+begin
+	// Extract sub-block x,y from group label (y,x on disk)
+	gl := GroupLabel(g);
+	gx := Word((gl and $ffff0000) shr 16);
+	gy := Word(gl and $0000ffff);
+
+	Result := (gx = x) and (gy = y);
+end;
+
+function cell_resolve(world_str: string; x, y: integer): IInterface;
+var
+	plugin, wg, bg, sg, w, c, t: IInterface;
+	cxy: TwbGridCell;
+	idx, i, j: integer;
+	bx, by, sbx, sby: integer;
+	key: string;
+begin
+	// Check cell cache first and return early if found
+	key := Format('%s,%d,%d', [ world_str, x, y ]);
+	idx := cell_cache.indexOf(key);
+	if not idx < 0 then begin
+		Result := ObjectToElement(cell_cache.Objects[idx]);
+		Exit;
+	end;
+
+	// Resolve x,y to block/sub-block
+	bx := x div 32; if (x < 0) and (x mod 32 <> 0) then dec(bx);
+	by := y div 32; if (y < 0) and (y mod 32 <> 0) then dec(by);
+
+	sbx := x div 8; if (x < 0) and (x mod 8 <> 0) then dec(sbx);
+	sby := y div 8; if (y < 0) and (y mod 8 <> 0) then dec(sby);
+
+//	AddMessage(Format('xy: %d,%d | bxy: %d,%d | sbxy: %d,%d', [x,y,bx,by,sbx,sby]));
+
+	// Plugins
+	for i := 0 to Pred(FileCount) do begin
+		plugin := FileByIndex(i);
+
+		wg := GroupBySignature(plugin, 'WRLD');
+		if not Assigned(wg) then continue;
+
+		// Worldspaces
+		w := nil; for j := 0 to Pred(ElementCount(wg)) do begin
+			t := ElementByIndex(wg, j);
+			if GetElementEditValues(t, 'EDID') = world_str then begin
+				w := t;
+				break;
+			end;
+		end;
+		if not Assigned(w) then continue;
+
+		// World children
+		wg := ChildGroup(w);
+		bg := nil; for j := 0 to Pred(ElementCount(wg)) do begin
+			// Blocks
+			t := ElementByIndex(wg, j);
+
+			// Exterior Cell Blocks only (ignore persistent worldspace cells)
+			if GroupType(t) <> 4 then continue;
+
+			// Check if the cell is within this block.
+			if cell_group_coord_check(t, bx, by) then begin
+				bg := t;
+				break;
+			end;
+		end;
+		if not Assigned(bg) then continue;
+
+		sg := nil; for j := 0 to Pred(ElementCount(bg)) do begin
+			// Sub-blocks
+			t := ElementByIndex(bg, j);
+
+			// Check if the cell is within this block.
+			if cell_group_coord_check(t, sbx, sby) then begin
+				sg := t;
+				break;
+			end;
+		end;
+		if not Assigned(sg) then continue;
+
+		c := nil; for j := 0 to Pred(ElementCount(sg)) do begin
+			// Cells
+			t := ElementByIndex(sg, j);
+
+			// Ignore GRUPs (children of cells)
+			if Signature(t) <> 'CELL' then continue;
+
+			// Get coordinates of cell and cache it
+			cxy := GetGridCell(t);
+			key := Format('%s,%d,%d', [ world_str, cxy.x, cxy.y ]);
+			cell_cache.addObject(key, t);
+
+			if (cxy.x = x) and (cxy.y = y) then begin
+				c := t;
+				break;
+			end;
+		end;
+		if not Assigned(c) then continue;
+
+		Result := c;
+		Exit;
+	end;
+end;
+
+function cell_rvis_cell(e: IInterface): IInterface;
+const
+	VIS_WIDTH = 3;
+var
+	r, t, w: IInterface;
+	rxy: TwbGridCell;
+	cxy: array[0..1] of TwbGridCell;
+	xy: array[0..1,0..1] of integer;
+	m, i: integer;
+	s: string;
+	flags: cardinal;
+begin
+	if Signature(e) <> 'CELL' then
+		Exit;
+	if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then
+		Exit;
+
+	// Skip persistent worldspace cells (which never have precombines/previs)
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $400) <> 0 then begin
+		Exit;
+	end;
+
+//	AddMessage('check: ' + FullPath(e));
+
+	r := ElementBySignature(e, 'RVIS');
+	if Assigned(r) then begin
+		r := LinksTo(r);
+		if Signature(r) <> 'CELL' then
+			Exit;
+
+//		AddMessage('resolved: ' + FullPath(r));
+
+		Result := r;
+		Exit;
+	end;
+
+	// No RVIS element found, attempt to calculate the
+	// 3x3 grid with RVIS cell at center and no overlap.
+	// For coordinates that are only 1 away from the RVIS
+	// center, consider it inside of that vis grid. If more
+	// than 2 away, it must be within an adjacent vis grid.
+	//
+	// +---+---+---+---+---+---+
+	// |2,4|3,4|4,4|5,4|6,4|7,4|
+	// +---/---\---+---/---\---+
+	// |2,3|3,3|4,3|5,3|6,3|7,3|
+	// +---\---/---+---\---/---+
+	// |2,2|3,2|4,2|5,2|6,2|7,2|
+	// +---+---+---+---+---+---+
+	//
+	// In the above, 3,3 and 6,3 are RVIS cells whereas
+	// 4,3 and 5,3 are part of each 3v3 grid respectively.
+
+	cxy[0] := GetGridCell(e);
+	xy[0,0] := cxy[0].x;
+	xy[1,0] := cxy[0].y;
+
+	for i := 0 to Pred(length(cxy)) do begin
+		m := abs(xy[i,0]) mod VIS_WIDTH;
+		if m = 0 then begin
+			xy[i,1] := xy[i,0];
+		end else if m <= VIS_WIDTH div 2 then begin
+			// within the same vis grid (e.g. vis: -24,-3, xy: -25,-4)
+			if xy[i,0] < 0 then begin
+				xy[i,1] := xy[i,0] + m;
+			end else begin
+				xy[i,1] := xy[i,0] - m;
+			end;
+		end else begin
+			// within an adjacent vis grid (e.g. vis: -24,-3, xy: -26,-2)
+			if xy[i,0] < 0 then begin
+				xy[i,1] := xy[i,0] - (VIS_WIDTH - m);
+			end else begin
+				xy[i,1] := xy[i,0] + (VIS_WIDTH - m);
+			end;
+		end;
+	end;
+
+	cxy[1].x := xy[0,1];
+	cxy[1].y := xy[1,1];
+
+	// Cross check calculated value against coordinates of RVIS value if present
+	if Assigned(r) then begin
+		rxy := GetGridCell(r);
+		if (rxy.x <> cxy[1].x) or (rxy.y <> cxy[1].y) then begin
+			AddMessage('Computed coordinates do not match RVIS');
+			AddMessage(FullPath(e));
+			AddMessage(FullPath(r));
+			AddMessage(Format('cxy[0]: %d,%d | cxy[1]: %d,%d | rxy: %d,%d | xm: %d, ym: %d',
+				[cxy[0].x, cxy[0].y, cxy[1].x, cxy[1].y, rxy.x, rxy.y, cxy[0].x mod 3, cxy[0].y mod 3]));
+			Exit;
+		end;
+	end;
+
+	// Resolve cell by coordinates relative to worldspace
+	t := ElementByPath(e, 'Worldspace');
+	w := LinksTo(t);
+	s := GetElementEditValues(w, 'EDID');
+	r := cell_resolve(s, cxy[1].x, cxy[1].y);
+
+	if Assigned(r) then begin
+//		AddMessage('resolved (calculated): ' + FullPath(r));
+	end else begin
+//		AddMessage('Unable to resolve RVIS cell: ' + FullPath(e));
+	end;
+
+	Result := r;
+end;
+
+function cell_rvis_cell_grid(e: IInterface): TList;
+var
+	tl: TList;
+	r, t, w: IInterface;
+	cxy: TwbGridCell;
+	i, j: integer;
+	x, y: integer;
+	s: string;
+	flags: cardinal;
+begin
+	r := cell_rvis_cell(e);
+	if not Assigned(r) then begin
+		Exit;
+	end;
+
+	t := ElementByPath(e, 'Worldspace');
+	w := LinksTo(t);
+	s := GetElementEditValues(w, 'EDID');
+
+	tl := TList.create;
+	cxy := GetGridCell(r);
+	for i := -1 to 1 do begin
+		for j := -1 to 1 do begin
+			x := cxy.x + i;
+			y := cxy.y + j;
+
+			t := cell_resolve(s, x, y);
+//			AddMessage(Format('xy(%d,%d): %d,%d :: %s', [cxy.x,cxy.y,x,y,FullPath(t)]));
+			tl.add(t);
+		end;
+	end;
+
+	Result := tl;
+end;
+
 procedure stat_refr_promote(plugin: IwbFile; e: IInterface);
 var
 	t, r, m: IInterface;
@@ -527,7 +822,7 @@ begin
 			if Equals(t, e) then
 				continue;
 
-			r := cell_refr_first(t);
+			r := cell_refr_stat_first(t);
 			if not Assigned(r) then continue;
 
 			if Debug then begin
@@ -1008,25 +1303,33 @@ end;
 procedure plugin_clean(e: IInterface);
 var
 	s, fstr: string;
+	remove: boolean;
 begin
+	remove := false;
 	s := Signature(e);
 
 	if keep_map.indexof(s) < 0 then begin
-		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-		RemoveNode(e);
-	end else if (s = 'CELL') then begin
-		if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			RemoveNode(e);
-		end;
+		remove := true;
 	end else if (s = 'REFR') then begin
 		s := Signature(BaseRecord(e));
+
+		// XXX: Things other than STAT or SCOL will affect XPRI data!
 		if (s <> 'STAT') and (s <> 'SCOL') then begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			RemoveNode(e);
+			remove := true;
+		end;
+	end else if (s = 'CELL') then begin
+//		if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then begin
+//			remove := true;
+//		end else
+		if not Assigned(cell_refr_stat_first(e)) then begin
+			remove := true;
 		end;
 	end;
 
+	if remove then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		RemoveNode(e);
+	end;
 end;
 
 function Process(e: IInterface): integer;
@@ -1035,13 +1338,76 @@ var
 	f, s, cs, mode: TString;
 	efile, tfile, key, nv: string;
 	idx, i, j, oc, oc_sub: integer;
-	hsl: THashedStringList;
-	sl: TStringList;
+	tl: TList;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
 	xy : TwbGridCell;
 	flags: cardinal;
+	out: boolean;
 begin
+
+	// XXX: REMOVE
+	// Skip non-cells
+	if Signature(e) <> 'CELL' then
+		Exit;
+	if (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1') then
+		Exit;
+
+	// Skip persistent worldspace cells (which never have precombines/previs)
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $400) <> 0 then begin
+		Exit;
+	end;
+
+	plugin := GetFile(e);
+	tl := cell_rvis_cell_grid(e);
+	if not Assigned(tl) then begin
+		AddMessage('tl nil: ' + FullPath(e));
+		Exit;
+	end else if tl.count = 0 then begin
+		AddMessage('tl.count = 0: ' + FullPath(e));
+	end;
+
+	out := false;
+	for i := 0 to Pred(tl.count) do begin
+		t := ObjectToElement(tl[i]);
+		m := MasterOrSelf(t);
+		for j := -1 to Pred(OverrideCount(m)) do begin
+			if j < 0 then begin
+				r := m;
+			end else begin
+				r := OverrideByIndex(m, j);
+			end;
+
+			// Do not go past the current plugin for this element
+			f := GetFileName(r);
+//AddMessage(Format('plugin:%d, r:%d :: %s', [GetLoadOrder(plugin), GetLoadOrder(GetFile(r)),FullPath(r)]));
+			if GetLoadOrder(GetFile(r)) >= GetLoadOrder(plugin) then
+				break;
+
+			// Account for more than just stat objects as previs
+			// takes other things into account for physics.
+			if not Assigned(cell_refr_stat_first(r)) then
+				continue;
+
+			// Check for masters that would be added but are not
+			// present in the plugin to indicate what would be
+			// added. Try this with and without STAT only.
+
+			if not HasMaster(plugin, f) then begin
+				AddMessage(Format('[%d][%d] %s would need master: %s (%s :: %s)', [i,j+1,GetFileName(plugin),f,Name(e),Name(r)]));
+				out := true;
+			end;
+
+//			AddMessage(Format('[%d][%d] %s', [i,j+1,FullPath(r)]));
+		end;
+//		AddMessage(' ');
+	end;
+	if (out) then AddMessage(' ');
+//	AddMessage(' ');
+	tl.free;
+
+Result := False; Exit;
 
 //	mode := 'init_alt';
 	mode := 'init';
@@ -1054,6 +1420,7 @@ begin
 	end;
 
 // Nuke anything not needed for precombines
+// XXX: test differences for cleaned vs uncleaned, don t add masters
 plugin_clean(e);
 
 	// Skip non-cells
@@ -1131,7 +1498,7 @@ end;
 	if mode = 'init' then begin
 		oc_sub := 0;
 	end else begin
-		oc_sub := 1;	
+		oc_sub := 1;
 	end;
 
 	// | [0] master | [1] override | [2] *override* | [3] element | ...
@@ -1190,11 +1557,11 @@ if false then begin
 		end;
 
 		// XXX: Figure out what to do about statics in t or e or both t and e?
-		if not Assigned(cell_refr_first(t)) then begin
+		if not Assigned(cell_refr_stat_first(t)) then begin
 //			AddMessage('no stat refr(t): ' + FullPath(t));
 			continue;
 		end;
-		if not Assigned(cell_refr_first(e)) then begin
+		if not Assigned(cell_refr_stat_first(e)) then begin
 //			AddMessage('no stat refr(e): ' + FullPath(e));
 			continue;
 		end;
@@ -1242,7 +1609,7 @@ end;
 if false then begin
 	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
 //	g := ChildGroup(o);
-//	cell_refr_all(o);
+//	cell_refr_stat_all(o);
 
 	Result := True;
 	Exit;
@@ -1306,12 +1673,13 @@ begin
 //		for i := 0 to 255 do begin
 //			plugin := plugin_map[i];
 //			if not Assigned(plugin) then Continue;
-//	
+//
 //			SortMasters(plugin);
 //			CleanMasters(plugin);
 //		end;
 //	end;
 
+if false then begin
 	for i := 0 to Pred(length(rmap)) do begin
 		AddMessage(' ');
 		if i = 0 then begin
@@ -1409,6 +1777,9 @@ begin
 		inc(k);
 	end;
 	AddMessage(' ');
+end;
+
+	cell_cache.free;
 
 end;
 
