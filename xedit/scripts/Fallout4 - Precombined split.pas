@@ -174,6 +174,10 @@ begin
 	if Equals(e, m) then
 		Exit;
 
+	// Non-persistent cells only
+	if not cell_filter(e, true, false, false, false) then
+		Exit;
+
 	// Check if this cell has any static references at all.
 	if Assigned(cell_refr_stat_first(e)) then
 		has_static := true;
@@ -792,31 +796,25 @@ var
 	flags: cardinal;
 	is_interior, is_persistent: boolean;
 begin
+	Result := false;
+
 	// Skip non-cells
-	if Signature(e) <> 'CELL' then begin
-		Result := false;
+	if Signature(e) <> 'CELL' then
 		Exit;
-	end;
 
 	is_interior := (GetElementEditValues(e, 'DATA\Is Interior Cell') = '1');
-	if not is_interior and interior_only then begin
-		Result := false;
+	if not is_interior and interior_only then
 		Exit;
-	end else if is_interior and not interior_allow then begin
-		Result := false;
+	if is_interior and not interior_allow then
 		Exit;
-	end;
 
 	// Skip persistent worldspace cells (which never have precombines/previs)
 	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
 	is_persistent := ((flags and $400) <> 0);
-	if not is_persistent and persistent_only then begin
-		Result := false;
+	if not is_persistent and persistent_only then
 		Exit;
-	end else if is_persistent and not persistent_allow then begin
-		Result := false;
+	if is_persistent and not persistent_allow then
 		Exit;
-	end;
 
 	Result := true;
 end;
@@ -1259,6 +1257,7 @@ begin
 		if Pos('.Hardcoded.', tfile) <> 0 then
 			continue;
 
+		// Check if references should be built for plugin
 		if ContainerStates(t) and (1 shl csRefsBuild) = 0 then begin
 			// Special hack for the main master
 			if tfile = 'Fallout4.esm' then begin
@@ -1359,21 +1358,14 @@ begin
 	end;
 end;
 
-function Process(e: IInterface): integer;
+procedure plugin_rvis_proc(e: IInterface);
 var
-	o, m, t, r, g, plugin: IInterface;
-	f, s, cs, mode: TString;
-	efile, tfile, key, nv: string;
-	idx, i, j, oc, oc_sub: integer;
 	tl: TList;
-	ts, pcmb_max, visi_max: integer;
-	merge: boolean;
-	xy : TwbGridCell;
-	flags: cardinal;
+	m, t, r, plugin: IInterface;
+	i, j: integer;
+	f: string;
 	out: boolean;
 begin
-
-	// XXX: REMOVE
 	// Non-persistent exterior cells only
 	if not cell_filter(e, false, false, false, false) then
 		Exit;
@@ -1425,31 +1417,50 @@ begin
 	if (out) then AddMessage(' ');
 //	AddMessage(' ');
 	tl.free;
+end;
 
-Result := False; Exit;
-
+function Process(e: IInterface): integer;
+var
+	o, m, t, r, g, plugin: IInterface;
+	f, s, cs, mode: TString;
+	efile, tfile, key, nv: string;
+	idx, i, j, oc, oc_sub: integer;
+	ts, pcmb_max, visi_max: integer;
+	merge: boolean;
+	xy : TwbGridCell;
+begin
+//	mode := 'init_clean';
 //	mode := 'init_alt';
-	mode := 'init';
+//	mode := 'init';
 //	mode := 'precombine';
 //	mode := 'previs';
+	mode := 'rvis_proc';
+
+	if mode = 'init_clean' then begin
+		// Nuke anything not needed for precombines (or previs)
+		// XXX: test differences for cleaned vs uncleaned, do not add masters
+		Result := plugin_clean(e, false, false);
+		Exit;
+	end;
 
 	if mode = 'init_alt' then begin
 		Result := plugin_init(mode);
 		Exit;
 	end;
 
-// Nuke anything not needed for precombines
-// XXX: test differences for cleaned vs uncleaned, don t add masters
-plugin_clean(e, false, false);
+	if mode = 'rvis_proc' then begin
+		Result := plugin_rvis_proc(e);
+		Exit;
+	end;
+
+	if mode = 'init' then begin
+		Result := plugin_master_add(e);
+		Exit;
+	end;
 
 	// Non-persistent cells only
 	if not cell_filter(e, true, false, false, false) then
 		Exit;
-
-	if mode = 'init' then begin
-		plugin_master_add(e);
-		Exit;
-	end;
 
 	// operate on the last override
 //	e := WinningOverride(e);
@@ -1506,8 +1517,10 @@ end;
 		end;
 	end;
 
+	// XXX: Reexamine if this is still needed
 	// When in precombine or previs mode, Ensure winning override is not
 	// the same as the override used for copying authoritative XPRI data.
+	// In other words, ignore the plugins created by the script itself.
 	if mode = 'init' then begin
 		oc_sub := 0;
 	end else begin
@@ -1523,6 +1536,10 @@ end;
 		t := OverrideByIndex(m, i);
 		s := GetFileName(t);
 
+		// For overrides which have mixed timestamps for the same cell
+		// attempt to figure out the most recent one. This sometimes
+		// happens when generating so-called sharded data for the same
+		// plugin when using CKs command line options.
 		if (mode = 'precombine') and ElementExists(t, 'PCMB') then begin
 			nv := GetElementEditValues(t, 'PCMB');
 			if Assigned(nv) and length(nv) >= 5 then
