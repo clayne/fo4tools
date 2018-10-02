@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 
 set -e
 #set -o pipefail
@@ -200,10 +200,10 @@ function ck_clone() {
 	# Hardcopy plugins
 	rsync -aS --include '*.es[pm]' --exclude '*' "$src/Data"/ "$build/$job/Data"/
 
-#	# Hardcopy plugins (modified)
-#	if [[ -d "$src/Data/ckgen" ]]; then
-#		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
-#	fi
+	# Hardcopy plugins (modified)
+	if [[ -d "$src/Data/ckgen" ]]; then
+		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
+	fi
 
 	# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
 	if [[ -d "$cache/Data" ]]; then
@@ -214,7 +214,7 @@ function ck_clone() {
 	# Nuke version control directory to prevent CK from prompting that VC is disabled and
 	# move any esms into place as they should be considered the most up to date.
 	if [[ -d "$build/$job/Data/Merging" ]]; then
-		find "$build/$job/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -tr0 mv -t "$build/$job/Data"
+		find "$build/$job/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -r0 mv -t "$build/$job/Data"
 		rm -rf "$build/$job/Data/Merging"
 	fi
 
@@ -267,26 +267,16 @@ if false; then
 		# masters are involved and handle limits are being hit in CK, which
 		# prevents generation of any data.
 		for i in "$bdir/$job/Data/orig" "$bdir/$job/Data/orig/$area"; do
-			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
+			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -r0 cp --remove-destination -pt "$bdir/$job/Data"
 		done
 fi
 
 if true; then
 		for i in "$bdir/$job/Data/ckgen"{,"/$plugin","/$area","/$area/$plugin"}; do
-			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
+			[[ -d "$i" ]] && find "$i" -maxdepth 1 -mindepth 1 -type f -print0 | xargs -r0 cp --remove-destination -pt "$bdir/$job/Data"
 		done
 fi
 
-if false; then
-		# Modified plugins with cut down records, interiors only, full
-		# master requirements, etc.
-		for i in "$bdir/$job/Data/ckgen/$area/$plugin" "$bdir/$job/Data/ckgen/$plugin"; do
-			[[ -f "$i" ]] || continue
-
-			cp --remove-destination -pt "$bdir/$job/Data" "$i"
-			break
-		done
-fi
 		if [[ "$plugin" =~ .esp ]]; then
 			FILE_BASE="${plugin/.esp*/.esp}.${mode}_merge"
 		else
@@ -1068,9 +1058,7 @@ fi
 
 if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	echo "Removing previous build data..." 1>&2
-	[[ -n "$BUILD" ]] \
-		&& find "$BUILD" -mindepth 1 -maxdepth 1 -type d \! -name '[0-9]*' -print0 | xargs -r0 rm -rf \
-		|| exit -1
+	rm -rf "$BUILD" && mkdir -p "$BUILD" || exit -1
 fi
 
 if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
