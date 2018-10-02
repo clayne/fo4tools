@@ -85,6 +85,7 @@ sub main {
 	my $complete = 0;
 	my $recurse = 0;
 	my $hex = 0;
+	my $overwrite = 0;
 	my $sub_smart = 1;
 	my @sub;
 
@@ -102,6 +103,7 @@ sub main {
 		'esm|esp-to-esm+' => \$esp_to_esm,
 		'esp-only+' => \$esp_only,
 		'esm-only+' => \$esm_only,
+		'f|overwrite+' => \$overwrite,
 		'c|complete+' => \$complete,
 		'r|recurse+' => \$recurse,
 		'S|smart-sub+' => \$sub_smart,
@@ -128,7 +130,7 @@ sub main {
 			my $esp = $basename;
 			if ($esp =~ /\.esp/i) {
 				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
-				plugin_clone("$dirname/$esp", "$dirname/$esm");
+				plugin_clone("$dirname/$esp", "$dirname/$esm", $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
@@ -139,7 +141,7 @@ sub main {
 			my $esm = $basename;
 			if ($esm =~ /\.esm/i) {
 				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
-				plugin_clone("$dirname/$esm", "$dirname/$esp");
+				plugin_clone("$dirname/$esm", "$dirname/$esp", $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
@@ -214,7 +216,7 @@ sub main {
 				}
 
 				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
-				plugin_clone("$dirname/$esp", "$dirname/$esm");
+				plugin_clone("$dirname/$esp", "$dirname/$esm", $overwrite);
 
 				# Update MAST to point to esm file
 				seek($fd, $offset, 0) or die "seek: $!";

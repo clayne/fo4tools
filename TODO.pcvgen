@@ -209,6 +209,10 @@ That ref doesn't exist anywhere.
 
 -generatestaticcollections:<esm> x64 by default for every plugin passed in? Note: MUST be an esm file.
 
+Need to determine how this affects other plugins being generated for, i.e. if plugin1 has master2 and master2 has SCOLs will plugin1 need the actual NIFs from master2 when generating precombined data? It would be great if precombined data doesn't need any generated SCOL NIFs but I doubt that's the case. The main concern with all of this is with archive files and embedded .esp plugin names which are hard to deal with when it comes to the temporary esp->esm game.
+
+This sucks but a foolproof way of handling the renamed plugins + SCOL problem is to repackage the archives with renamed dirs and if extra paranoid regenerated SCOLs.
+
 ---
 
 Only promote overridden masters if they have stat or scol refrs
@@ -328,110 +332,80 @@ relative addr 347D42
 
 ---
 
-[00:00] Start: Applying script "xpri_type_stats"
- \ [00] Fallout4.esm \ [56] GRUP Top "WRLD" \ [1] GRUP World Children of Commonwealth "Commonwealth" [WRLD:0000003C] \ [7] GRUP Exterior Cell Block -1, 0 \ [12] GRUP Exterior Cell Sub-Block -4, 3 \ [10] [CELL:0000E30D] (in Commonwealth "Commonwealth" [WRLD:0000003C] at 26,-25) \ [11] XPRI - Physics References
-type_tab:
-PHZD 7545
-PMIS 37169
-REFR 125024
-type_base_tab:
-ACTI 4111
-CONT 30444
-FLOR 6516
-FURN 28157
-HAZD 7195
-MSTT 36801
-PROJ 5418
-SCOL 4983
-STAT 45250
-TACT 352
-TERM 511
-[01:53] Done: Applying script "xpri_type_stats", Processed Records: 3001891, Elapsed Time: 01:53
+[00:00] Start: Applying script "Fallout4 - Cell Stats"
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlFeralGhoulGlowingOneLegendary01 [ACHR:27088216] (places LvlFeralGhoulGlowingOneLegendary [NPC_:00165576] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlSynthBoss02 [ACHR:270C7622] (places LvlSynthBoss "Synth Leader" [NPC_:00075342] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
+Error: record ACHR contains unexpected (or out of order) subrecord XATP 50544158
+Errors were found in: DWUKLexingtonMedTekLabs01_LvlFeralGhoulGlowingOneLegendary04 [ACHR:27088213] (places LvlFeralGhoulGlowingOneLegendary [NPC_:00165576] in GRUP Cell Persistent Children of DWUKLexingtonMedTekLabs01 "Med-Tek Labs" [CELL:270326AE])
+Contained subrecords: EDID NAME XLCM XATP DATA 
 
 STATS:
- 
+
 CELL type_tab
-LAND 45493
-REFR 2496354
-NAVM 16629
-ACHR 17044
-PGRE 610
-PHZD 2800
+LAND 44355
+REFR 2472726
+NAVM 15790
+ACHR 16725
+PGRE 594
+PHZD 2792
 PMIS 2
 CELL type_base_tab
-STAT 1821245
-SCOL 68251
-ACTI 38364
-NPC_ 17044
-MSTT 91896
-FURN 32030
-LIGH 193859
-MISC 93895
-CONT 28524
-ASPC 1579
-SOUN 5778
-IDLM 16486
-DOOR 10259
-BNDS 11867
-TXST 49239
-NOTE 290
-ALCH 16237
-TERM 1289
-WEAP 1631
-AMMO 1110
-KEYM 144
-BOOK 773
-FLOR 9491
-TACT 317
-PROJ 612
-HAZD 2800
-ARMO 1788
+STAT 1803659
+SCOL 66199
+ACTI 38198
+NPC_ 16725
+MSTT 91219
+FURN 31852
+LIGH 193384
+MISC 92981
+CONT 28318
+ASPC 1573
+SOUN 5676
+IDLM 16376
+DOOR 10145
+BNDS 11800
+TXST 48876
+NOTE 279
+ALCH 16125
+TERM 1274
+WEAP 1616
+AMMO 1093
+KEYM 139
+BOOK 754
+FLOR 9105
+TACT 312
+PROJ 596
+HAZD 2792
+ARMO 1761
 ARTO 1
 ADDN 3
- 
+
 XPRI type_tab
-REFR 170209
-NAVM 14
-ACHR 6
-PHZD 1211
+REFR 168529
+PHZD 1208
 PMIS 1
-INFO 32
-STAT 5
-RFGP 8
-MSWP 1
-LIGH 1
-DIAL 47
-SCEN 1
-CELL 4
-OMOD 1
-QUST 1
 XPRI type_base_tab
-STAT 56325
-SCOL 2841
-ACTI 4106
-NPC_ 6
-MSTT 50495
-FURN 23169
-LIGH 9
-MISC 13
-CONT 30450
-SOUN 1
-IDLM 4
-DOOR 4
-BNDS 5
-TXST 25
-ALCH 3
+STAT 54960
+SCOL 2773
+ACTI 4101
+MSTT 50346
+FURN 23155
+CONT 30441
 TERM 738
-FLOR 1725
+FLOR 1719
 TACT 296
 PROJ 1
-HAZD 1211
- 
+HAZD 1208
+
 XCRI type_tab
-REFR 2691174
+REFR 2689908
 XCRI type_base_tab
-STAT 2633211
-SCOL 57876
+STAT 2632022
+SCOL 57799
 ACTI 79
 
 ---

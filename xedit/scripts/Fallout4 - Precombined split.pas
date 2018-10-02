@@ -27,13 +27,17 @@ var
 	plugin_map: array [0..255] of IInterface;
 	pc_sig_tab: array [0..1] of TString;
 	pv_sig_tab: array [0..2] of TString;
+	pc_keep_map: THashedStringList;
+	pv_keep_map: THashedStringList;
+	pc_refr_keep_map: THashedStringList;
+	pv_refr_keep_map: THashedStringList;
 
 	cell_cache: THashedStringList;
+	cell_queue: Tlist;
 
 	// Experimental
 	rmap: array [0..2] of THashedStringList;
 	cmap: array [0..255] of THashedStringList;
-	keep_map: THashedStringList;
 
 function Initialize: integer;
 var
@@ -48,9 +52,38 @@ begin
 	pv_sig_tab[1] := 'RVIS';
 	pv_sig_tab[2] := 'VISI';
 
+	pc_keep_map := THashedStringList.create;
+	pc_keep_map.Sorted := True;
+	pc_keep_map.add('CELL');
+	pc_keep_map.add('LAYR');
+	pc_keep_map.add('MSWP');
+	pc_keep_map.add('REFR');
+	pc_keep_map.add('SCOL');
+	pc_keep_map.add('STAT');
+	pc_keep_map.add('TES4');
+	pc_keep_map.add('WRLD');
+
+	pv_keep_map := THashedStringList.create;
+	pv_keep_map.Sorted := True;
+	pv_keep_map.add('ACTI');
+	pv_keep_map.add('CONT');
+	pv_keep_map.add('FLOR');
+	pv_keep_map.add('FURN');
+	pv_keep_map.add('HAZD');
+	pv_keep_map.add('MSTT');
+	pv_keep_map.add('PHZD');
+	pv_keep_map.add('PMIS');
+	pv_keep_map.add('PROJ');
+	pv_keep_map.add('SCOL');
+	pv_keep_map.add('STAT');
+	pv_keep_map.add('TACT');
+	pv_keep_map.add('TERM');
+
 	cell_cache := THashedStringList.create;
 	cell_cache.Sorted := True;
 	cell_cache.Duplicates := dupIgnore;
+
+	cell_queue := TList.create;
 
 	rmap[0] := THashedStringList.create;
 	rmap[0].Sorted := True;
@@ -64,16 +97,52 @@ begin
 	rmap[2].Sorted := True;
 	rmap[2].Duplicates := dupAccept;
 
-	keep_map := THashedStringList.create;
-	keep_map.Sorted := True;
-	keep_map.add('TES4');
-	keep_map.add('REFR');
-	keep_map.add('STAT');
-	keep_map.add('SCOL');
-	keep_map.add('MSWP');
-	keep_map.add('LAYR');
-	keep_map.add('CELL');
-	keep_map.add('WRLD');
+end;
+
+procedure plugin_master_add(plugin: IwbFile; e: IInterface; parents: boolean);
+var
+	efile, mfile: IwbFile;
+	efstr, mfstr: string;
+	i: integer;
+	sl: THashedStringList;
+	tl: TList;
+begin
+	sl := THashedStringList.create;
+	tl := TList.create;
+
+	tl.add(GetFile(e));
+	while tl.count <> 0 do begin
+		efile := ObjectToElement(tl[0]);
+		tl.delete(0);
+
+		efstr := GetFileName(efile);
+		if sl.indexOf(efstr) < 0 then begin
+			sl.add(efstr);
+		end else begin
+			continue;
+		end;
+
+		if parents then begin
+			// Add masters of the master being added otherwise
+			// CK will emit these after all plugins have been
+			// loaded and totally screw up the formid indexes.
+			for i := 0 to Pred(MasterCount(efile)) do begin
+				mfile := MasterByIndex(efile, i);
+				mfstr := GetFileName(mfile);
+
+				tl.add(mfile);
+			end;
+		end;
+
+//		if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
+		if not HasMaster(plugin, efstr) then begin
+			if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
+			AddMasterIfMissing(plugin, efstr);
+		end;
+	end;
+
+	tl.free;
+	sl.free;
 end;
 
 function plugin_file_resolve_existing(pfile: TString): IInterface;
@@ -157,7 +226,7 @@ begin
 	Result := nil;
 end;
 
-procedure plugin_master_add(e: IInterface);
+procedure plugin_cell_stat_master_add(e: IInterface);
 var
 	plugin, tfile: IwbFile;
 	m, t, r: IInterface;
@@ -179,8 +248,9 @@ begin
 		Exit;
 
 	// Check if this cell has any static references at all.
-	if Assigned(cell_refr_stat_first(e)) then
-		has_static := true;
+	if not Assigned(cell_refr_rvis_first(e)) then
+		Exit;
+//		has_static := true;
 
 	// Find this actual element and consider it the highest override so
 	// that additional overrides in the load order are ignored. This is
@@ -204,28 +274,11 @@ begin
 		//
 		// XXX: Also figure out how to use has_static or not.
 //		if not has_static then begin
-			r := cell_refr_stat_first(t);
+			r := cell_refr_rvis_first(t);
 			if not Assigned(r) then continue;
 //		end;
 
-		tfstr := GetFileName(t);
-		if not HasMaster(plugin, tfstr) then begin
-			// Add masters of the master being added otherwise
-			// CK will emit these and totally screw up the
-			// formid indexes for references in plugins.
-			tfile := GetFile(t);
-			for j := 0 to Pred(MasterCount(tfile)) do begin
-				r := MasterByIndex(tfile, j);
-				rfstr := GetFileName(r);
-				if not HasMaster(plugin, rfstr) then begin
-					if Debug then AddMessage(Format('%s: Adding master: %s: %s', [efstr, rfstr, Name(t)]));
-					AddMasterIfMissing(plugin, rfstr);
-				end;
-			end;
-
-			if Debug then AddMessage(Format('%s: Adding master: %s: %s', [efstr, tfstr, Name(t)]));
-			AddMasterIfMissing(plugin, tfstr);
-		end;
+		plugin_master_add(plugin, t, true);
 	end;
 end;
 
@@ -347,6 +400,13 @@ begin
 		elem_masters_add(plugin, e);
 
 	Result := wbCopyElementToFile(e, plugin, False, True);
+end;
+
+function ts_to_int(ts: string): integer;
+begin
+	Result := 0;
+	if Assigned(ts) and length(ts) >= 5 then
+		Result := StrToInt('$' + ts[4] + ts[5] + ts[1] + ts[2]);
 end;
 
 procedure elem_masters_add(plugin: IwbFile; e: IInterface);
@@ -487,6 +547,46 @@ exit;
 	end;
 end;
 
+function cell_refr_rvis_first(e: IInterface): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j: integer;
+	s: string;
+begin
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			s := Signature(t);
+
+			if s <> 'REFR' then
+				continue;
+
+			b := BaseRecord(t);
+			s := Signature(b);
+
+			if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
+				continue;
+
+			// ignore markers entirely
+			if elem_marker_check(b) then
+				continue;
+
+//			AddMessage('t: ' + FullPath(t));
+			Result := t;
+			Exit;
+		end;
+	end;
+end;
+
 function cell_refr_stat_first(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
@@ -504,11 +604,15 @@ begin
 
 		for j := 0 to Pred(ElementCount(r)) do begin
 			t := ElementByIndex(r, j);
-			b := BaseRecord(t);
+			s := Signature(t);
 
-			if (Signature(t) <> 'REFR') then
+			if s <> 'REFR' then
 				continue;
-			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
+
+			b := BaseRecord(t);
+			s := Signature(b);
+
+			if pc_keep_map.indexof(s) < 0 then
 				continue;
 
 			// ignore markers entirely
@@ -648,6 +752,7 @@ begin
 		end;
 		if not Assigned(c) then continue;
 
+		// The resolved cell
 		Result := c;
 		Exit;
 	end;
@@ -742,9 +847,7 @@ begin
 	end;
 
 	// Resolve cell by coordinates relative to worldspace
-	t := ElementByPath(e, 'Worldspace');
-	w := LinksTo(t);
-	s := GetElementEditValues(w, 'EDID');
+	s := cell_world_edid(e);
 	r := cell_resolve(s, cxy[1].x, cxy[1].y);
 
 	if Assigned(r) then begin
@@ -754,6 +857,24 @@ begin
 	end;
 
 	Result := r;
+end;
+
+function cell_world_edid(e: IInterface): string;
+var
+	t, w: IInterface;
+	s: string;
+begin
+	t := ElementByPath(e, 'Worldspace');
+	w := LinksTo(t);
+
+	if (not Assigned(w)) or (Signature(w) <> 'WRLD') then begin
+		// Workaround for a bug in xedit that corrupts the worldspace
+		// value on master change.
+		w := ChildrenOf(GetContainer(GetContainer(GetContainer(e))));
+		AddMessage('cell_world_edid (workaround): w: ' + FullPath(w));
+	end;
+
+	Result := GetElementEditValues(w, 'EDID');
 end;
 
 function cell_rvis_cell_grid(e: IInterface): TList;
@@ -771,20 +892,31 @@ begin
 		Exit;
 	end;
 
-	t := ElementByPath(e, 'Worldspace');
-	w := LinksTo(t);
-	s := GetElementEditValues(w, 'EDID');
-
+	// Add the RVIS cell to the front of the list
+	// so that it can be referenced by index 0.
 	tl := TList.create;
+	tl.add(r);
+
+	s := cell_world_edid(r);
+
+	// Get the coordinates of the RVIS cell and find all
+	// adjacent cells in the grid.
 	cxy := GetGridCell(r);
 	for i := -1 to 1 do begin
 		for j := -1 to 1 do begin
 			x := cxy.x + i;
 			y := cxy.y + j;
-
 			t := cell_resolve(s, x, y);
-//			AddMessage(Format('xy(%d,%d): %d,%d :: %s', [cxy.x,cxy.y,x,y,FullPath(t)]));
-			tl.add(t);
+			if not Assigned(t) then begin
+//				AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,'NULL']));
+			end else begin
+//				AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,FullPath(t)]));
+
+				// Since the RVIS cell already occupies the first slot
+				// ignore the relative 0,0 offset.
+				if (i <> 0) or (j <> 0) then
+					tl.add(t);
+			end;
 		end;
 	end;
 
@@ -1326,29 +1458,41 @@ begin
 	Result := True;
 end;
 
-procedure plugin_clean(e: IInterface; interior_allow, interior_only: boolean);
+procedure plugin_clean(e: IInterface; interior_allow, interior_only, other_allow, other_only: boolean);
 var
-	s, fstr: string;
+	s, gl, fstr: string;
 	remove: boolean;
 begin
 	remove := false;
 	s := Signature(e);
+//	if (s = 'REFR') then
+//		s := Signature(BaseRecord(e));
 
-	if keep_map.indexof(s) < 0 then begin
-		remove := true;
-	end else if (s = 'REFR') then begin
+//	if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
+//		remove := true;
+	if (s = 'REFR') then begin
 		s := Signature(BaseRecord(e));
 
-		// XXX: Things other than STAT or SCOL will affect XPRI data!
-		if (s <> 'STAT') and (s <> 'SCOL') then begin
+		if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
+			remove := true;
+		end;
+	end else if (s = 'WRLD') then begin
+		if not other_allow and (GetElementEditValues(e, 'EDID') <> 'Commonwealth') then begin
+			remove := true;
+		end else if other_only and (GetElementEditValues(e, 'EDID') = 'Commonwealth') then begin
 			remove := true;
 		end;
 	end else if (s = 'CELL') then begin
 		// Non-persistent cells only
 		if not cell_filter(e, interior_allow, interior_only, false, false) then begin
 			remove := true;
-		end else if not Assigned(cell_refr_stat_first(e)) then begin
+		end else if not Assigned(cell_refr_rvis_first(e)) then begin
 			remove := true;
+//		end else if not Assigned(cell_refr_stat_first(e)) then begin
+//			remove := true;
+		end else begin
+			// Add cell for processing of masters (and possibly rvis cells) later
+			cell_queue.add(e);
 		end;
 	end;
 
@@ -1358,11 +1502,12 @@ begin
 	end;
 end;
 
-procedure plugin_rvis_proc(e: IInterface);
+procedure plugin_cell_rvis_master_add(e: IInterface);
 var
 	tl: TList;
-	m, t, r, plugin: IInterface;
-	i, j: integer;
+	m, t, r, rvis, plugin: IInterface;
+	cxy: TwbGridCell;
+	rvx, rvy, i, j: integer;
 	f: string;
 	out: boolean;
 begin
@@ -1373,11 +1518,17 @@ begin
 	plugin := GetFile(e);
 	tl := cell_rvis_cell_grid(e);
 	if not Assigned(tl) then begin
-		AddMessage('tl nil: ' + FullPath(e));
+//		AddMessage('tl nil: ' + FullPath(e));
 		Exit;
 	end else if tl.count = 0 then begin
 		AddMessage('tl.count = 0: ' + FullPath(e));
 	end;
+
+	// RVIS cell is always at the head of the list
+	rvis := ObjectToElement(tl[0]);
+	cxy := GetGridCell(rvis);
+	rvx := cxy.x;
+	rvy := cxy.y;
 
 	out := false;
 	for i := 0 to Pred(tl.count) do begin
@@ -1398,24 +1549,26 @@ begin
 
 			// Account for more than just stat objects as previs
 			// takes other things into account for physics.
-			if not Assigned(cell_refr_stat_first(r)) then
+			if not Assigned(cell_refr_rvis_first(r)) then
 				continue;
 
 			// Check for masters that would be added but are not
 			// present in the plugin to indicate what would be
 			// added. Try this with and without STAT only.
-
 			if not HasMaster(plugin, f) then begin
-				AddMessage(Format('[%d][%d] %s would need master: %s (%s :: %s)', [i,j+1,GetFileName(plugin),f,Name(e),Name(r)]));
+				AddMessage(Format('VIS: [%d][%d] %s needs master: %s (rvis: %d,%d :: e: %s :: r: %s)', [i,j+1,GetFileName(plugin),f,rvx,rvy,Name(e),Name(r)]));
 				out := true;
 			end;
+			plugin_master_add(plugin, r, true);
 
 //			AddMessage(Format('[%d][%d] %s', [i,j+1,FullPath(r)]));
 		end;
 //		AddMessage(' ');
 	end;
+
 	if (out) then AddMessage(' ');
 //	AddMessage(' ');
+
 	tl.free;
 end;
 
@@ -1423,23 +1576,29 @@ function Process(e: IInterface): integer;
 var
 	o, m, t, r, g, plugin: IInterface;
 	f, s, cs, mode: TString;
-	efile, tfile, key, nv: string;
+	efile, tfile: string;
 	idx, i, j, oc, oc_sub: integer;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
 	xy : TwbGridCell;
 begin
-//	mode := 'init_clean';
+	mode := 'init_clean';
 //	mode := 'init_alt';
 //	mode := 'init';
 //	mode := 'precombine';
 //	mode := 'previs';
-	mode := 'rvis_proc';
+//	mode := 'rvis_proc';
 
 	if mode = 'init_clean' then begin
 		// Nuke anything not needed for precombines (or previs)
 		// XXX: test differences for cleaned vs uncleaned, do not add masters
-		Result := plugin_clean(e, false, false);
+		plugin_clean(e, true, false, true, false);
+		Exit;
+	end;
+
+	if mode = 'rvis_proc' then begin
+		plugin_cell_stat_master_add(e);
+		plugin_cell_rvis_master_add(e);
 		Exit;
 	end;
 
@@ -1448,13 +1607,8 @@ begin
 		Exit;
 	end;
 
-	if mode = 'rvis_proc' then begin
-		Result := plugin_rvis_proc(e);
-		Exit;
-	end;
-
 	if mode = 'init' then begin
-		Result := plugin_master_add(e);
+		Result := plugin_cell_stat_master_add(e);
 		Exit;
 	end;
 
@@ -1541,10 +1695,7 @@ end;
 		// happens when generating so-called sharded data for the same
 		// plugin when using CKs command line options.
 		if (mode = 'precombine') and ElementExists(t, 'PCMB') then begin
-			nv := GetElementEditValues(t, 'PCMB');
-			if Assigned(nv) and length(nv) >= 5 then
-				ts := StrToInt('$' + nv[4] + nv[5] + nv[1] + nv[2]);
-
+			ts := ts_to_int(GetElementEditValues(t, 'PCMB'));
 			if ts = 0 or ts > pcmb_max then begin
 				if pcmb_max <> 0 then
 					AddMessage('Plugin with greater PCMB: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
@@ -1552,10 +1703,7 @@ end;
 				e := t;
 			end;
 		end else if (mode = 'previs') and ElementExists(t, 'VISI') then begin
-			nv := GetElementEditValues(t, 'VISI');
-			if Assigned(nv) and length(nv) >= 5 then
-				ts := StrToInt('$' + nv[4] + nv[5] + nv[1] + nv[2]);
-
+			ts := ts_to_int(GetElementEditValues(t, 'VISI'));
 			if ts = 0 or ts > visi_max then begin
 				if visi_max <> 0 then
 					AddMessage('Plugin with greater VISI: ' + s + ' (ts == ' + IntToHex(ts, 8) + ')');
@@ -1809,6 +1957,27 @@ if false then begin
 	AddMessage(' ');
 end;
 
+if true then begin
+	AddMessage('Adding cell masters');
+	for i := 0 to Pred(cell_queue.count) do begin
+		t := ObjectToElement(cell_queue[i]);
+		if not Assigned(t) then continue;
+
+//		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
+		plugin_cell_stat_master_add(t);
+	end;
+
+	AddMessage('Adding vis grid masters');
+	for i := 0 to Pred(cell_queue.count) do begin
+		t := ObjectToElement(cell_queue[i]);
+		if not Assigned(t) then continue;
+
+//		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
+		plugin_cell_rvis_master_add(t);
+	end;
+end;
+
+	cell_queue.free;
 	cell_cache.free;
 
 end;
