@@ -6,7 +6,7 @@ set -e
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
 
 # Prereq check
-for i in tmux rsync parallel; do
+for i in tmux rsync parallel lockfile; do
 	if ! which $i &>/dev/null; then
 		echo "$i not found" 1>&2
 		exit -1
@@ -977,7 +977,7 @@ done
 SRC="$PROGDIR/Fallout 4.$PROFILE"
 cd "$SRC"
 
-# XXX: functionize
+# XXX: Completely rewrite this, and preferably use a function
 # Must occur before build dir clone as it's dependent on any cached files
 if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 	echo "Removing cache..." 1>&2
@@ -1070,6 +1070,7 @@ fi
 rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
 rm -rf "$CACHE/tmp" && mkdir -p "$CACHE/tmp"
 
+# Generate output file of jobs to be run by parallel
 for plugin in "${PLUGIN[@]}"; do
 	plugin_parse "$plugin" plugin t a s
 
