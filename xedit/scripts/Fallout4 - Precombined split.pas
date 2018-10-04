@@ -56,6 +56,7 @@ begin
 	pc_keep_map.Sorted := True;
 	pc_keep_map.add('CELL');
 	pc_keep_map.add('LAYR');
+	pc_keep_map.add('RFGP');
 	pc_keep_map.add('MSWP');
 	pc_keep_map.add('REFR');
 	pc_keep_map.add('SCOL');
@@ -268,9 +269,6 @@ begin
 		// any statics of its own. If it does then the master
 		// will be added regardless to guard against generation
 		// of previs data not taking into account the override.
-		//
-		// XXX: Consider cells which might not directly overlap
-		// XXX: but would overlap with 3x3 previs.
 		//
 		// XXX: Also figure out how to use has_static or not.
 //		if not has_static then begin
@@ -511,6 +509,29 @@ begin
 	SetFormVCS2(r, GetFormVCS2(e));
 end;
 
+function cell_cache_key(world_str: string; x, y: integer): string;
+begin
+	Result := Format('%s,%d,%d', [ world_str, x, y ]);
+end;
+
+procedure cell_remove(e: IInterface);
+var
+	cxy: TwbGridCell;
+	key, s: string;
+	idx: integer;
+begin
+	// XXX: Error check this
+	s := cell_world_edid(e);
+	cxy := GetGridCell(e);
+	key := cell_cache_key(s, cxy.x, cxy.y);
+	idx := cell_cache.indexOf(key);
+	if not idx < 0 then
+		cell_cache.delete(idx);
+	// XXX: cell_queue?
+
+	RemoveNode(e);
+end;
+
 function cell_refr_stat_all(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
@@ -626,6 +647,27 @@ begin
 	end;
 end;
 
+function cell_world_edid(e: IInterface): string;
+var
+	t, w: IInterface;
+	s: string;
+begin
+	// Note: Psuedo-record 'Worldspace' is only present in exterior cells
+	t := ElementByPath(e, 'Worldspace');
+	if not Assigned(t) then
+		Exit;
+
+	w := LinksTo(t);
+	if (not Assigned(w)) or (Signature(w) <> 'WRLD') then begin
+		// Workaround for a bug in xedit that corrupts the worldspace
+		// value on master change.
+		w := ChildrenOf(GetContainer(GetContainer(GetContainer(e))));
+		AddMessage('cell_world_edid (workaround): w: ' + FullPath(w));
+	end;
+
+	Result := GetElementEditValues(w, 'EDID');
+end;
+
 function cell_resolve_world(world_str: string): IInterface;
 var
 	plugin, wg, w: IInterface;
@@ -671,10 +713,11 @@ var
 	key: string;
 begin
 	// Check cell cache first and return early if found
-	key := Format('%s,%d,%d', [ world_str, x, y ]);
+	key := cell_cache_key(world_str, x, y);
 	idx := cell_cache.indexOf(key);
 	if not idx < 0 then begin
-		Result := ObjectToElement(cell_cache.Objects[idx]);
+		t := ObjectToElement(cell_cache.Objects[idx]);
+		Result := t;
 		Exit;
 	end;
 
@@ -742,7 +785,7 @@ begin
 
 			// Get coordinates of cell and cache it
 			cxy := GetGridCell(t);
-			key := Format('%s,%d,%d', [ world_str, cxy.x, cxy.y ]);
+			key := cell_cache_key(world_str, cxy.x, cxy.y);
 			cell_cache.addObject(key, t);
 
 			if (cxy.x = x) and (cxy.y = y) then begin
@@ -779,13 +822,13 @@ begin
 	r := ElementBySignature(e, 'RVIS');
 	if Assigned(r) then begin
 		r := LinksTo(r);
-		if Signature(r) <> 'CELL' then
+		if Signature(r) = 'CELL' then begin
+//			AddMessage('resolved: ' + FullPath(r));
+			Result := r;
 			Exit;
-
-//		AddMessage('resolved: ' + FullPath(r));
-
-		Result := r;
-		Exit;
+		end else begin
+			r := nil;
+		end;
 	end;
 
 	// No RVIS element found, attempt to calculate the
@@ -851,30 +894,12 @@ begin
 	r := cell_resolve(s, cxy[1].x, cxy[1].y);
 
 	if Assigned(r) then begin
-//		AddMessage('resolved (calculated): ' + FullPath(r));
+//		AddMessage('cell_rvis_cell: resolved (calculated): ' + FullPath(r));
 	end else begin
-//		AddMessage('Unable to resolve RVIS cell: ' + FullPath(e));
+//		AddMessage('cell_rvis_cell: unable to resolve RVIS cell: ' + FullPath(e));
 	end;
 
 	Result := r;
-end;
-
-function cell_world_edid(e: IInterface): string;
-var
-	t, w: IInterface;
-	s: string;
-begin
-	t := ElementByPath(e, 'Worldspace');
-	w := LinksTo(t);
-
-	if (not Assigned(w)) or (Signature(w) <> 'WRLD') then begin
-		// Workaround for a bug in xedit that corrupts the worldspace
-		// value on master change.
-		w := ChildrenOf(GetContainer(GetContainer(GetContainer(e))));
-		AddMessage('cell_world_edid (workaround): w: ' + FullPath(w));
-	end;
-
-	Result := GetElementEditValues(w, 'EDID');
 end;
 
 function cell_rvis_cell_grid(e: IInterface): TList;
@@ -888,15 +913,15 @@ var
 	flags: cardinal;
 begin
 	r := cell_rvis_cell(e);
-	if not Assigned(r) then begin
+	if not Assigned(r) then
 		Exit;
-	end;
 
 	// Add the RVIS cell to the front of the list
 	// so that it can be referenced by index 0.
 	tl := TList.create;
 	tl.add(r);
 
+	cxy := GetGridCell(r);
 	s := cell_world_edid(r);
 
 	// Get the coordinates of the RVIS cell and find all
@@ -914,8 +939,10 @@ begin
 
 				// Since the RVIS cell already occupies the first slot
 				// ignore the relative 0,0 offset.
-				if (i <> 0) or (j <> 0) then
-					tl.add(t);
+				if (i = 0) and (j = 0) then
+					continue;
+
+				tl.add(t);
 			end;
 		end;
 	end;
@@ -1458,6 +1485,67 @@ begin
 	Result := True;
 end;
 
+procedure plugin_cell_clean(e: IInterface; interior_allow, interior_only, other_allow, other_only: boolean);
+var
+	tl: TList;
+	cxy: TwbGridCell;
+	t, r, m: IInterface;
+	i, j, oc: integer;
+	keep, remove: boolean;
+begin
+	if (Signature(e) <> 'CELL') then
+		Exit;
+
+	remove := true;
+	tl := cell_rvis_cell_grid(e);
+//	if not Assigned(tl) then
+//		AddMessage('tl == nil');
+
+//if IsWinningOverride(e) then
+//	AddMessage('winning override: ' + FullPath(e));
+//
+//if cell_filter(e, interior_allow, interior_only, false, false) then
+//	AddMessage('keep cell: ' + FullPath(e));
+
+	if Assigned(tl) then begin
+//		AddMessage(' ');
+//		AddMessage(' ----------------');
+		for i := 0 to Pred(tl.count) do begin
+			t := ObjectToElement(tl[i]);
+			m := MasterOrSelf(t);
+			for j := -1 to Pred(OverrideCount(m)) do begin
+				if j < 0 then begin
+					r := m;
+				end else begin
+					r := OverrideByIndex(m, j);
+				end;
+
+				cxy := GetGridCell(r);
+//				AddMessage(Format('%d,%d %s', [cxy.x,cxy.y,FullPath(r)]));
+
+				// Do not go past the current plugin for this element
+				if GetLoadOrder(GetFile(r)) > GetLoadOrder(GetFile(e)) then begin
+//					AddMessage('remove = false: ' + FullPath(r));
+					remove := false;
+				end;
+			end;
+//			AddMessage(' ');
+		end;
+//		AddMessage(' ');
+		tl.free;
+	end else if not IsWinningOverride(e) and cell_filter(e, interior_allow, interior_only, false, false) then begin
+		remove := false;
+	end;
+
+	if remove then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		cell_remove(e);
+	end else begin
+		cell_queue.add(e);
+	end;
+
+end;
+
 procedure plugin_clean(e: IInterface; interior_allow, interior_only, other_allow, other_only: boolean);
 var
 	s, gl, fstr: string;
@@ -1468,8 +1556,10 @@ begin
 //	if (s = 'REFR') then
 //		s := Signature(BaseRecord(e));
 
-//	if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
-//		remove := true;
+	if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
+		remove := true;
+	end;
+
 	if (s = 'REFR') then begin
 		s := Signature(BaseRecord(e));
 
@@ -1490,15 +1580,19 @@ begin
 			remove := true;
 //		end else if not Assigned(cell_refr_stat_first(e)) then begin
 //			remove := true;
-		end else begin
-			// Add cell for processing of masters (and possibly rvis cells) later
-			cell_queue.add(e);
 		end;
 	end;
 
 	if remove then begin
 		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-		RemoveNode(e);
+		if s = 'CELL' then begin
+			cell_remove(e);
+		end else begin
+			RemoveNode(e);
+		end;
+	end else if s = 'CELL' then begin
+		// Add cell for processing of masters (and possibly rvis cells) later
+		cell_queue.add(e);
 	end;
 end;
 
@@ -1592,7 +1686,8 @@ begin
 	if mode = 'init_clean' then begin
 		// Nuke anything not needed for precombines (or previs)
 		// XXX: test differences for cleaned vs uncleaned, do not add masters
-		plugin_clean(e, true, false, true, false);
+		plugin_cell_clean(e, true, false, true, false);
+//		plugin_clean(e, true, true, false, false);
 		Exit;
 	end;
 

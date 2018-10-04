@@ -182,7 +182,6 @@ function ck_clone() {
 		--exclude CombinedObjects.esp \
 		--exclude PreVis.esp \
 		--exclude 'CreationKit*.ini' \
-		--exclude '*.es[pm]' \
 		--exclude 'enbseries' \
 		--exclude 'auto_backup_executable' \
 		--exclude 'FO4Edit*' \
@@ -192,18 +191,19 @@ function ck_clone() {
 		--exclude 'la_d3d*.dll' \
 		${EXCLUDE_AUX[*]} \
 		--link-dest="$src" "$src"/ "$build/$job"/
+#		--exclude '*.es[pm]' \
 #			--exclude "$SELF*" \
 
 	# Hardcopy CK ini files
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$src"/ "$build/$job"/
 
-	# Hardcopy plugins
-	rsync -aS --include '*.es[pm]' --exclude '*' "$src/Data"/ "$build/$job/Data"/
+#	# Hardcopy plugins
+#	rsync -aS --include '*.es[pm]' --exclude '*' "$src/Data"/ "$build/$job/Data"/
 
-	# Hardcopy plugins (modified)
-	if [[ -d "$src/Data/ckgen" ]]; then
-		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
-	fi
+#	# Hardcopy plugins (modified)
+#	if [[ -d "$src/Data/ckgen" ]]; then
+#		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
+#	fi
 
 	# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
 	if [[ -d "$cache/Data" ]]; then
@@ -335,28 +335,23 @@ function ck_wrap() {
 
 	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$mode\t$type\t$area\t$plugin\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
 
-	# XXX: Figure out something better for this
 	if ((!manual)); then
-if false; then
+		# XXX: Update comment to be master specific.
 		# Original plugins, can be useful in cases where masters should be
 		# pulled in but not all of their extended masters (i.e. ckgen style).
 		# The actual use case is rather specific in where a large amount of
 		# masters are involved and handle limits are being hit in CK, which
 		# prevents generation of any data.
-		for i in "$bdir/$job/Data/orig" "$bdir/$job/Data/orig/$area"; do
+		for i in "$bdir/$job/Data/ckgen/masters"{"","/$plugin","/$area","/$area/$plugin"}; do
 			[[ -d "$i" ]] \
 				&& find "$i" -maxdepth 1 -mindepth 1 -type f -print0 \
 				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
 		done
-fi
 
-if true; then
+		# Per target plugin only
 		for i in "$bdir/$job/Data/ckgen"{,"/$plugin","/$area","/$area/$plugin"}; do
-			[[ -d "$i" ]] \
-				&& find "$i" -maxdepth 1 -mindepth 1 -type f -print0 \
-				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
+			[[ -f "$i/$plugin" ]] && cp --remove-destination -pt "$bdir/$job/Data" "$i/$plugin"
 		done
-fi
 
 		if [[ "$plugin" =~ .esp ]]; then
 			FILE_BASE="${plugin/.esp*/.esp}.${mode}_merge"
