@@ -31,11 +31,13 @@ sub plugin_clone {
 	my ($src, $dst, $overwrite) = @_;
 
 	if (! -f $dst || $overwrite) {
-		if (-f $dst) { unlink($dst) or die "unlink: $!" }
+#		if (-f $dst) { unlink($dst) or die "unlink: $!" }
+print STDERR "plugin_clone: $src -> $dst (overwrite == $overwrite)\n";
 
 		# Copy src to dst and clone atime/mtime.
 		my @stat = stat($src) or die "stat: $!";
-		copy($src, $dst) or die "$src -> $dst";
+		copy($src, "$dst.tmp") or die "copy: $src -> $dst.tmp";
+		rename("$dst.tmp", $dst) or die "rename: $!: $dst.tmp -> $dst";
 		utime($stat[8], $stat[9], $dst) or die "utime: $!";
 	}
 }
@@ -127,10 +129,9 @@ sub main {
 		next unless (!$protect || !$protect_tab{$basename});
 
 		if ($copy_plugin_to_esm) {
-			my $esp = $basename;
-			if ($esp =~ /\.esp/i) {
-				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
-				plugin_clone("$dirname/$esp", "$dirname/$esm", $overwrite);
+			my $esm = plugin_sub($basename, [ 'esp', 'esm' ], @sub);
+			if ($esm ne $basename) {
+				plugin_clone("$dirname/$basename", "$dirname/$esm", $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
@@ -138,10 +139,9 @@ sub main {
 				next;
 			}
 		} elsif ($copy_plugin_to_esp) {
-			my $esm = $basename;
-			if ($esm =~ /\.esm/i) {
-				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
-				plugin_clone("$dirname/$esm", "$dirname/$esp", $overwrite);
+			my $esp = plugin_sub($basename, [ 'esm', 'esp' ], @sub);
+			if ($esp ne $basename) {
+				plugin_clone("$dirname/$basename", "$dirname/$esp", $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
@@ -151,13 +151,13 @@ sub main {
 		}
 
 		my $fd;
-		if ($_ eq '-') {
+		if ($path eq '-') {
 			$fd = *STDIN;
 			$esm_to_esp = 0;
 			$esp_to_esm = 0;
 			$unlink = 0;
 		} else {
-			open($fd, ($esm_to_esp || $esp_to_esm) ? '+<' : '<', $_) or die "open: $!: $_";
+			open($fd, '<', $path) or die "open: $!: $path";
 		}
 
 		my ($off, $len, $bsz, $buf) = (0, 0, 0);
@@ -194,6 +194,7 @@ sub main {
 				$off += $sz;
 			}
 		}
+		close($fd) or die "close: $!";
 
 		my @qt;
 		for (my $i = 0; $i < @$mproc; $i++) {
@@ -216,16 +217,22 @@ sub main {
 				}
 
 				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
-				plugin_clone("$dirname/$esp", "$dirname/$esm", $overwrite);
+				plugin_clone("$dirname/$esp", "$dirname/$esm", 0 && $overwrite); # XXX: Sort out overwrite race
 
-				# Update MAST to point to esm file
+				# Update MAST to point to esm file by cloning and reopening for write
+				plugin_clone($path, $path, $overwrite);
+
+				open($fd, '+<', $path) or die "open: $!: $path";
 				seek($fd, $offset, 0) or die "seek: $!";
+
 				my $len = !$dry_run
 					? (syswrite($fd, $esm, length($esm)) or die "syswrite: $!")
 					: length($esm);
 				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
 					$basename, $i, $esm, $dry_run ? ' (noop)' : '') if ($verbose);
 				$mproc->[$i]{'master'} = $esm;
+
+				close($fd);
 
 				push @qt, "$dirname/$esm";
 			} elsif ($esm_to_esp) {
@@ -250,14 +257,20 @@ sub main {
 				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
 				next if (! -f "$dirname/$esp"); # CRITICAL
 
-				# Update MAST to point to esp file.
+				# Update MAST to point to esp file by cloning and reopening for write
+				plugin_clone($path, $path, $overwrite);
+
+				open($fd, '+<', $path) or die "open: $!: $path";
 				seek($fd, $offset, 0) or die "seek: $!";
+
 				my $len = !$dry_run
 					? (syswrite($fd, $esp, length($esp)) or die "syswrite: $!")
 					: length($esp);
 				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
 					$basename, $i, $esp, $dry_run ? ' (noop)' : '') if ($verbose);
 				$mproc->[$i]{'master'} = $esp;
+
+				close($fd);
 
 				# The only esms which will be removed are those which
 				# have matching esp files and those which were resolved
@@ -272,7 +285,6 @@ sub main {
 		}
 
 		unshift @q, @qt if ($recurse);
-		close($fd);
 
 		push @$mout, { path => $_, dirname => $dirname, basename => $basename, mproc => $mproc };
 	}

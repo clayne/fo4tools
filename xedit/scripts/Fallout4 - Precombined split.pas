@@ -56,13 +56,16 @@ begin
 	pc_keep_map.Sorted := True;
 	pc_keep_map.add('CELL');
 	pc_keep_map.add('LAYR');
-	pc_keep_map.add('RFGP');
+//	pc_keep_map.add('RFGP');
 	pc_keep_map.add('MSWP');
 	pc_keep_map.add('REFR');
 	pc_keep_map.add('SCOL');
 	pc_keep_map.add('STAT');
 	pc_keep_map.add('TES4');
 	pc_keep_map.add('WRLD');
+
+	pc_keep_map.add('NAVM');
+	pc_keep_map.add('LAND');
 
 	pv_keep_map := THashedStringList.create;
 	pv_keep_map.Sorted := True;
@@ -231,14 +234,13 @@ procedure plugin_cell_stat_master_add(e: IInterface);
 var
 	plugin, tfile: IwbFile;
 	m, t, r: IInterface;
-	i, j, oc: integer;
+	i, j: integer;
 	efstr, tfstr, rfstr: string;
 	has_static: boolean;
 begin
 	plugin := GetFile(e);
 	efstr := GetFileName(e);
 	m := MasterOrSelf(e);
-	oc := OverrideCount(m);
 	has_static := false;
 
 	if Equals(e, m) then
@@ -258,7 +260,7 @@ begin
 	// done so that the masters added to the plugin represent masters
 	// which have been overridden only from the perspective of the
 	// plugin being modified.
-	for i := 0 to Pred(oc) do begin
+	for i := 0 to Pred(OverrideCount(m)) do begin
 		t := OverrideByIndex(m, i);
 		if Equals(e, t) then break;
 
@@ -467,6 +469,19 @@ begin
 	Result := False;
 end;
 
+function elem_deleted_check(e: IInterface): Boolean;
+var
+	flags: cardinal;
+begin
+	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
+	if (flags and $20) <> 0 then begin
+		Result := True;
+		Exit;
+	end;
+
+	Result := False;
+end;
+
 procedure elem_sync(e, r: IInterface; s: TString);
 begin
 	if ElementExists(e, s) then begin
@@ -527,7 +542,9 @@ begin
 	idx := cell_cache.indexOf(key);
 	if not idx < 0 then
 		cell_cache.delete(idx);
-	// XXX: cell_queue?
+	idx := cell_queue.indexOf(e);
+	if not idx < 0 then
+		cell_queue.delete(idx);
 
 	RemoveNode(e);
 end;
@@ -612,6 +629,7 @@ function cell_refr_stat_first(e: IInterface): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
+	deleted: boolean;
 begin
 	cg := ChildGroup(e);
 	if not Assigned(cg) then
@@ -1496,17 +1514,10 @@ begin
 	if (Signature(e) <> 'CELL') then
 		Exit;
 
+	// XXX: Check for cells that have nothing RVIS cares about?
+
 	remove := true;
 	tl := cell_rvis_cell_grid(e);
-//	if not Assigned(tl) then
-//		AddMessage('tl == nil');
-
-//if IsWinningOverride(e) then
-//	AddMessage('winning override: ' + FullPath(e));
-//
-//if cell_filter(e, interior_allow, interior_only, false, false) then
-//	AddMessage('keep cell: ' + FullPath(e));
-
 	if Assigned(tl) then begin
 //		AddMessage(' ');
 //		AddMessage(' ----------------');
@@ -1549,18 +1560,18 @@ end;
 procedure plugin_clean(e: IInterface; interior_allow, interior_only, other_allow, other_only: boolean);
 var
 	s, gl, fstr: string;
+	flags: cardinal;
 	remove: boolean;
 begin
 	remove := false;
 	s := Signature(e);
-//	if (s = 'REFR') then
-//		s := Signature(BaseRecord(e));
 
+	// XXX: deal with deleted references and/or deleted references within rvis|stat_first calls
+
+	// XXX: made into else if, double check
 	if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
 		remove := true;
-	end;
-
-	if (s = 'REFR') then begin
+	end else if (s = 'REFR') then begin
 		s := Signature(BaseRecord(e));
 
 		if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
@@ -1676,7 +1687,8 @@ var
 	merge: boolean;
 	xy : TwbGridCell;
 begin
-	mode := 'init_clean';
+//	mode := 'init_clean';
+	mode := 'init_masters';
 //	mode := 'init_alt';
 //	mode := 'init';
 //	mode := 'precombine';
@@ -1686,8 +1698,22 @@ begin
 	if mode = 'init_clean' then begin
 		// Nuke anything not needed for precombines (or previs)
 		// XXX: test differences for cleaned vs uncleaned, do not add masters
-		plugin_cell_clean(e, true, false, true, false);
-//		plugin_clean(e, true, true, false, false);
+//		plugin_clean(e, true, false, true, false);
+//		plugin_cell_clean(e, true, false, true, false);
+		Exit;
+	end;
+
+	if mode = 'init_masters' then begin
+//		// General add masters for all non-persistent cells
+//		if cell_filter(e, true, false, false, false) then
+//			cell_queue.add(e);
+		// General add masters for all exterior non-persistent cells
+		if cell_filter(e, false, false, false, false) then begin
+			cell_queue.add(e);
+		end else if Signature(e) = 'CELL' then begin
+			cell_remove(e);
+		end;
+
 		Exit;
 	end;
 

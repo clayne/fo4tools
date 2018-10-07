@@ -144,11 +144,7 @@ function ck_clone() {
 
 	case "$mode" in
 	precombine)
-		EXCLUDE_AUX=(
-			"--exclude '*.cdx'" \
-			"--exclude '*.psg'" \
-			"--exclude '*.csg'" \
-		)
+		EXCLUDE_PC_AUX=1
 		;;
 	esac
 
@@ -189,17 +185,19 @@ function ck_clone() {
 		--exclude 'x3d*.dll' \
 		--exclude 'd3d*.dll' \
 		--exclude 'la_d3d*.dll' \
-		${EXCLUDE_AUX[*]} \
+		${EXCLUDE_PC_AUX:+--exclude '*.cdx'} \
+		${EXCLUDE_PC_AUX:+--exclude '*.csg'} \
+		${EXCLUDE_PC_AUX:+--exclude '*.psg'} \
 		--link-dest="$src" "$src"/ "$build/$job"/
-#		--exclude '*.es[pm]' \
 #			--exclude "$SELF*" \
+#		--exclude '*.es[pm]' \
 
 	# Hardcopy CK ini files
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$src"/ "$build/$job"/
 
 #	# Hardcopy plugins
 #	rsync -aS --include '*.es[pm]' --exclude '*' "$src/Data"/ "$build/$job/Data"/
-
+#
 #	# Hardcopy plugins (modified)
 #	if [[ -d "$src/Data/ckgen" ]]; then
 #		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
@@ -303,6 +301,13 @@ function ck_wrap_archive_rename() {
 	return 0
 }
 
+function ck_needed_filter() {
+	local from="$1"; shift
+	local to="$1"; shift
+
+	sed -e "s#${from}#${to}#g" | tr -d '[\r\0\031]' | tr '\\' '/'
+}
+
 function ck_wrap() {
 	set -x
 
@@ -327,7 +332,7 @@ function ck_wrap() {
 	set -o pipefail
 
 	rm -f "$bdir/$job/EditorWarnings.txt"
-	trap "echo FAILURE >> '$bdir/$job/EditorWarnings.txt'; cp -p '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
+	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; cp -p '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
 
 	ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "CLONING"
 
@@ -380,16 +385,18 @@ function ck_wrap() {
 	plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	plugin_ck_base="${plugin_ck/%.es[pm]}"
 
-	if [[ "$plugin_sanitized" != "$plugin" ]]; then
-		ln -f "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin_sanitized"
+#	if [[ "$plugin_sanitized" != "$plugin" ]]; then
+#		ln -f "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin_sanitized"
+#	fi
+
+	if [[ "$plugin_ck" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
+		# Clone plugin before modification in case it's hard linked
+#		cp --remove-destination -p "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin.$$" \
+#			&& mv "$bdir/$job/Data/$plugin.$$" "$bdir/$job/Data/$plugin"
+		plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm --sub "$plugin_base:$plugin_ck_base" "$bdir/$job/Data/$plugin"
 	fi
 
-	if [[ "$plugin_esm" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
-		# Clone plugin before modification in case it's hard linked
-		cp --remove-destination -p "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin.$$" \
-			&& mv "$bdir/$job/Data/$plugin.$$" "$bdir/$job/Data/$plugin"
-		plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm "$bdir/$job/Data/$plugin"
-	fi
+	plugin-master-reloc -vr "$bdir/$job/Data/$plugin_ck"
 
 	if [[ "$plugin_ck" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
 		ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "REARCHIVING"
@@ -424,6 +431,7 @@ if false; then
 			echo "SUCCESS (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generatestaticcollections.txt"
+			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 		else
 			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
 				echo "FAILURE (generatestaticcollections handles)" >> "$bdir/$job/EditorWarnings.txt"
@@ -460,10 +468,13 @@ fi
 			echo "SUCCESS (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generateprecombined.txt"
+			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 			if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
+				plugin-master-reloc -vr "$bdir/$job/Data/CombinedObjects.esp"
+
 				# If run in clean mode a shared geometry psg file will be produced that
 				# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
 				# A CDX file should also be produced with -BuildCDX although it's not
@@ -487,6 +498,7 @@ fi
 						echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.buildcdx.txt"
+						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
@@ -517,6 +529,7 @@ fi
 						echo "SUCCESS (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.compresspsg.txt"
+						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 						# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
 						# they should be moved after both -CompressPSG and -BuildCDX are finished.
@@ -534,6 +547,7 @@ fi
 							echo "FAILURE (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
 						fi
 						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.compresspsg.error"
+
 						exit -1
 					fi
 				fi
@@ -548,14 +562,16 @@ fi
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
 					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
-					cat "$bdir/$job/dumpneededfiles.out" \
-						| sed -e "s#CombinedObjects.esp#$plugin#g" \
-						| tr -d '[\r\0\031]' | tr '\\' '/' \
+					ck_needed_filter "CombinedObjects.esp" "$plugin" \
+						< "$bdir/$job/dumpneededfiles.out" \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 
 					# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
 					if [[ "$plugin_ck" != "$plugin" ]]; then
+						echo "cross-check dumpneeded sub" 1>&2
+						egrep "$plugin_ck" "$bdir/$job/dumpneededfiles.out.cleaned" 1>&2 || true
 						sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 					fi
 
@@ -572,6 +588,7 @@ fi
 						echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					fi
 					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+
 					exit -1
 				fi
 
@@ -615,6 +632,7 @@ fi
 				echo "FAILURE (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
 			fi
 			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.generateprecombined.error"
+
 			exit -1
 		fi
 
@@ -634,10 +652,13 @@ fi
 			echo "SUCCESS (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generateprevisdata.txt"
+			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 			if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
+				plugin-master-reloc -vr "$bdir/$job/Data/PreVis.esp"
+
 				CKARGS=( -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out" )
 				if ( \
 					cd "$bdir/$job" \
@@ -648,10 +669,10 @@ fi
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
 					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
-					cat "$bdir/$job/dumpneededfiles.out" \
-						| sed -e "s#PreVis.esp#$plugin#g" \
-						| tr -d '[\r\0\031]' | tr '\\' '/' \
+					ck_needed_filter "PreVis.esp" "$plugin" \
+						< "$bdir/$job/dumpneededfiles.out" \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 
 					# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
@@ -728,9 +749,10 @@ fi
 			echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
-			cat "$bdir/$job/dumpneededfiles.out" \
-				| tr -d '[\r\0\031]' | tr '\\' '/' \
+			ck_needed_filter "$plugin_ck" "$plugin" \
+				< "$bdir/$job/dumpneededfiles.out" \
 				> "$bdir/$job/dumpneededfiles.out.cleaned"
 
 			# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
@@ -851,11 +873,54 @@ function ck_log_wrap() {
 	return 0
 }
 
+function ck_status() {
+	set -e
+
+	local build_dir="$1"; shift
+	local -a status=( $(awk -v jobs_in="$build_dir/tmp/jobs.in" -v jobs_log="$build_dir/tmp/jobs.log" -v meminfo=/proc/meminfo '
+BEGIN{
+	total=0
+	success=0
+	fail=0
+	while (getline < jobs_in > 0) {
+		total++
+	}
+	while (getline < jobs_log > 0) {
+		if ($1 == "Seq") continue
+		else if ($7) fail++
+		else success++
+	}
+	while (getline < meminfo > 0) {
+		if ($1 == "MemTotal:") memtotal=$2 
+		else if ($1 == "MemFree:") memfree=$2 
+		else if ($1 == "SwapTotal:") swaptotal=$2 
+		else if ($1 == "SwapFree:") swapfree=$2 
+	}
+}END{
+	print total,success,fail,memtotal,memfree,swaptotal,swapfree
+}
+' "$build_dir/tmp/jobs.log") )
+	local -a disk=( $(df --output=used,avail "$build_dir") )
+	local load=$(uptime)
+
+echo "${status[@]}"
+
+	printf 'total/success/fail: %s/%s/%s | load average: %s | mem free: %s%% (%dGB/%dGB) | disk free: %s%% (%d/%d GB)\n' \
+		"${status[0]}" "${status[1]}" "${status[2]}" "${load/*load average: }" \
+		$(((status[4]+status[6])*100/(status[3]+status[5]))) $((( (status[3]+status[5])-(status[4]+status[6]) )/1024**2)) $(((status[3]+status[5])/1024**2)) \
+		$((disk[3]*100/(disk[2]+disk[3]))) $((disk[2]/1024**2)) $(((disk[2]+disk[3])/1024**2))
+
+	return 0
+}
+
 if [[ "$1" == "--wrap" ]]; then
 	shift; ck_wrap "$@"
 	exit $?
 elif [[ "$1" == "--log-wrap" ]]; then
 	shift; ck_log_wrap "$@"
+	exit $?
+elif [[ "$1" == "--status" ]]; then
+	shift; ck_status "$@"
 	exit $?
 fi
 
@@ -1095,16 +1160,25 @@ if ((TMUX)); then
 	PAUSE="read"
 
 	# tmux doesn't emit the exit status of child commands as part of it's own exit status
+	touch "$BUILD/tmp/jobs.log"
 	rm -f "$BUILD/tmp/parallel.error"
 	tmux new \
 		"ckgen --log-wrap '$BUILD' cell $JOBS" ';' \
 		split -p 40 \
 		"ckgen --log-wrap '$BUILD' all $JOBS" ';' \
 		split -p 50 \
-		"parallel $PFLAGS 'ckgen --wrap {} {%} $MANUAL $BUILD/tmp/ctl.log' < '$BUILD/tmp/jobs.in'; [[ \$? -ne 255 ]] && $PAUSE || touch '$BUILD/tmp/parallel.error'; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill" ';' \
-		set-option status off \
+		"parallel $PFLAGS 'bash -x ckgen --wrap {} {%} $MANUAL $BUILD/tmp/ctl.log' < '$BUILD/tmp/jobs.in'; [[ \$? -ne 255 ]] && $PAUSE || touch '$BUILD/tmp/parallel.error'; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill" ';' \
+		set-option status-left "#(ckgen --status '$PWD/$BUILD')" ';' \
+		set-option status-interval 1 ';' \
+		set-option status-right '' ';' \
+		set-option status-left-length 180 ';' \
+		set-option status-style fg=black,reverse ';' \
+		set-window-option window-status-current-format '' \
 		&& [[ ! -f "$BUILD/tmp/parallel.error" ]] \
 		|| exit -1
+#		set-option alternate-screen off ';' \
+#		"set-option status off" ';' \
+#		"set -g terminal-overrides 'xterm*:smcup@:rmcup@'" \
 else
 	parallel $PFLAGS "ckgen --wrap {} {%} $MANUAL $BUILD/tmp/ctl.log" < "$BUILD/tmp/jobs.in" || exit -1
 fi
@@ -1176,6 +1250,12 @@ for plugin in "${PLUGIN[@]}"; do
 
 			mkdir -p "$OUT/$plugin"
 			mv -t "$OUT/$plugin" "$BUILD/$plugin"/EditorWarnings*.txt || true
+		fi
+
+		if ls -d "$BUILD/tmp/$t/$a/$plugin"/* &>/dev/null; then
+			echo "$plugin: Moving job output..." 1>&2
+			mkdir -p "$OUT/$plugin/job"
+			cp -Rpt "$OUT/$plugin/job" "$BUILD/tmp/$t/$a/$plugin"/*
 		fi
 	fi
 
