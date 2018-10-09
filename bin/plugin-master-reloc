@@ -55,7 +55,7 @@ sub plugin_sub {
 		$from =~ s/^\.//g;
 		$to =~ s/^\.//g;
 
-		$plugin_sub =~ s/\.$from$/\.$to/;
+		$plugin_sub =~ s/\.\Q$from\E$/\.$to/;
 	}
 
 	# Any generic substitution outside of extension
@@ -63,7 +63,7 @@ sub plugin_sub {
 		my ($from, $to) = split(':', $_, 2);
 		die "Problem with substitution data" unless ($from && $to);
 
-		$plugin_sub =~ s/$from/$to/;
+		$plugin_sub =~ s/\Q$from\E/$to/;
 	}
 
 	die "Unequal substitution lengths" unless (length($plugin_sub) == length($plugin));

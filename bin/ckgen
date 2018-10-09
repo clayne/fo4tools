@@ -338,7 +338,7 @@ function ck_wrap() {
 
 	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$mode" "$job" || exit -1
 
-	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$mode\t$type\t$area\t$plugin\t$cur\t$max\t$job\t$manual" > $bdir/$job/ck_wrap.info
+	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$mode\t$type\t$area\t$plugin\t$cur\t$max\t$job\t$manual\t$$" > $bdir/$job/ck_wrap.info
 
 	if ((!manual)); then
 		# XXX: Update comment to be master specific.
@@ -349,13 +349,15 @@ function ck_wrap() {
 		# prevents generation of any data.
 		for i in "$bdir/$job/Data/ckgen/masters"{"","/$plugin","/$area","/$area/$plugin"}; do
 			[[ -d "$i" ]] \
-				&& find "$i" -maxdepth 1 -mindepth 1 -type f -print0 \
+				&& find "$i" -maxdepth 1 -mindepth 1 -type f \! -name "$plugin" -print0 \
 				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
 		done
 
 		# Per target plugin only
 		for i in "$bdir/$job/Data/ckgen"{,"/$plugin","/$area","/$area/$plugin"}; do
-			[[ -f "$i/$plugin" ]] && cp --remove-destination -pt "$bdir/$job/Data" "$i/$plugin"
+			[[ -d "$i" ]] \
+				&& find "$i" -maxdepth 1 -mindepth 1 -type f -name "$plugin" -print0 \
+				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
 		done
 
 		if [[ "$plugin" =~ .esp ]]; then
@@ -430,7 +432,7 @@ if false; then
 		then
 			echo "SUCCESS (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generatestaticcollections.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generatestaticcollections.txt"
 			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 		else
 			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
@@ -442,7 +444,7 @@ if false; then
 			else
 				echo "FAILURE (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
 			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.generatestaticcollections.error"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generatestaticcollections.error"
 			exit -1
 		fi
 
@@ -467,7 +469,7 @@ fi
 		then
 			echo "SUCCESS (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generateprecombined.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprecombined.txt"
 			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
@@ -497,7 +499,7 @@ fi
 					then
 						echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.buildcdx.txt"
+						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.buildcdx.txt"
 						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 						mkdir -p "$bdir/$plugin"
@@ -512,7 +514,7 @@ fi
 						else
 							echo "FAILURE (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
 						fi
-						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.buildcdx.error"
+						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.buildcdx.error"
 
 						# It's not strictly critical that a cdx file is built - it's only critical that
 						# if it exists *and* if CSG/PSG precombines are used that it's kept up to date.
@@ -528,7 +530,7 @@ fi
 					then
 						echo "SUCCESS (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.compresspsg.txt"
+						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.compresspsg.txt"
 						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 						# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
@@ -546,7 +548,7 @@ fi
 						else
 							echo "FAILURE (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
 						fi
-						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.compresspsg.error"
+						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.compresspsg.error"
 
 						exit -1
 					fi
@@ -561,14 +563,14 @@ fi
 				then
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
 					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 					ck_needed_filter "CombinedObjects.esp" "$plugin" \
 						< "$bdir/$job/dumpneededfiles.out" \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 
-					# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+					# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
 					if [[ "$plugin_ck" != "$plugin" ]]; then
 						echo "cross-check dumpneeded sub" 1>&2
 						egrep "$plugin_ck" "$bdir/$job/dumpneededfiles.out.cleaned" 1>&2 || true
@@ -576,7 +578,7 @@ fi
 					fi
 
 					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out" || true
+					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out" || true
 				else
 					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
 						echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
@@ -587,7 +589,7 @@ fi
 					else
 						echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					fi
-					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
 
 					exit -1
 				fi
@@ -598,7 +600,7 @@ fi
 				fi
 
 				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+				mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
 			fi
 
 			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
@@ -631,7 +633,7 @@ fi
 			else
 				echo "FAILURE (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
 			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.generateprecombined.error"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generateprecombined.error"
 
 			exit -1
 		fi
@@ -651,7 +653,7 @@ fi
 		then
 			echo "SUCCESS (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.generateprevisdata.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprevisdata.txt"
 			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
@@ -668,20 +670,20 @@ fi
 				then
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
 					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 					ck_needed_filter "PreVis.esp" "$plugin" \
 						< "$bdir/$job/dumpneededfiles.out" \
 						> "$bdir/$job/dumpneededfiles.out.cleaned"
 
-					# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+					# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
 					if [[ "$plugin_ck" != "$plugin" ]]; then
 						sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 					fi
 
 					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out" || true
+					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out" || true
 				else
 					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
 						echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
@@ -690,7 +692,7 @@ fi
 					else
 						echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					fi
-					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
 					exit -1
 				fi
 
@@ -700,7 +702,7 @@ fi
 				fi
 
 				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$FILE_BASE.$area.$wcur.esp"
+				mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
 			fi
 
 			if [[ -d "$bdir/$job/Data/Vis" ]]; then
@@ -730,7 +732,7 @@ fi
 			else
 				echo "FAILURE (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
 			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.generateprevisdata.error"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generateprevisdata.error"
 			exit -1
 		fi
 
@@ -748,20 +750,20 @@ fi
 		then
 			echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$area.$wcur.dumpneeded.txt"
+			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
 			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
 
 			ck_needed_filter "$plugin_ck" "$plugin" \
 				< "$bdir/$job/dumpneededfiles.out" \
 				> "$bdir/$job/dumpneededfiles.out.cleaned"
 
-			# If the plugin was copied to an esm or sanitized, change any references in dumpneeded.out
+			# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
 			if [[ "$plugin_ck" != "$plugin" ]]; then
 				sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 			fi
 
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$FILE_BASE.$area.$wcur.needed.out"
+			mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out"
 		else
 			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
 				echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
@@ -770,7 +772,7 @@ fi
 			else
 				echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$FILE_BASE.$area.$wcur.dumpneeded.error"
+			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
 			exit -1
 		fi
 
@@ -803,11 +805,16 @@ function ck_log_wrap() {
 
 	echo $$ > "$build/tmp/ck_log_wrap.$wrap_mode.pid"
 
+	touch "$build/tmp/cell".{main,other,ints}.log
+
 	tail -vn0 -s 0.1 -F "${logs[@]}" 2>/dev/null \
 		| LC_ALL=C awk \
 			-v wrap_mode="$wrap_mode" \
-			-v ctl_log="$build/tmp/ctl.log" \
 			-v build_dir="$build" \
+			-v ctl_log="$build/tmp/ctl.log" \
+			-v main_log="$build/tmp/cell.main.log" \
+			-v other_log="$build/tmp/cell.other.log" \
+			-v ints_log="$build/tmp/cell.ints.log" \
 			-v info_file="ck_wrap.info" '
 	BEGIN{
 		IGNORECASE=1
@@ -853,6 +860,19 @@ function ck_log_wrap() {
 					usepcnt=0;
 				else
 					usepcnt=1;
+
+				if ($0 ~ /Generating for.*cell/) {
+					if ($0 ~ / interior cell /) {
+						print > ints_log;
+						fflush(ints_log);
+					} else if ($0 ~ / Commonwealth /) {
+						print > main_log;
+						fflush(main_log);
+					} else {
+						print > other_log;
+						fflush(other_log);
+					}
+				}
 			}
 		} else if (wrap_mode == "all") {
 			if (ctl)
@@ -900,13 +920,16 @@ BEGIN{
 	print total,success,fail,memtotal,memfree,swaptotal,swapfree
 }
 ' "$build_dir/tmp/jobs.log") )
+	local -a cell=( "$(wc -l < "$build_dir/tmp/cell.main.log")" "$(wc -l < "$build_dir/tmp/cell.other.log")" "$(wc -l < "$build_dir/tmp/cell.ints.log")" )
 	local -a disk=( $(df --output=used,avail "$build_dir") )
 	local load=$(uptime)
 
 echo "${status[@]}"
 
-	printf 'total/success/fail: %s/%s/%s | load average: %s | mem free: %s%% (%dGB/%dGB) | disk free: %s%% (%d/%d GB)\n' \
-		"${status[0]}" "${status[1]}" "${status[2]}" "${load/*load average: }" \
+	printf 'total/success/fail: %s/%s/%s (%d%%) | main/other/ints: %d/%d/%d (%d) | load average: %s | mem free: %s%% (%dGB/%dGB) | disk free: %s%% (%d/%d GB)\n' \
+		"${status[0]}" "${status[1]}" "${status[2]}" $(((status[1]+status[2])*100/status[0])) \
+		"${cell[0]}" "${cell[1]}" "${cell[2]}" $((cell[0]+cell[1]+cell[2])) \
+		"${load/*load average: }" \
 		$(((status[4]+status[6])*100/(status[3]+status[5]))) $((( (status[3]+status[5])-(status[4]+status[6]) )/1024**2)) $(((status[3]+status[5])/1024**2)) \
 		$((disk[3]*100/(disk[2]+disk[3]))) $((disk[2]/1024**2)) $(((disk[2]+disk[3])/1024**2))
 
@@ -1088,8 +1111,8 @@ if ((!PRESERVE_CACHE)) || [[ ! -d "$CACHE" ]]; then
 #				continue
 #			fi
 
-			# Get the latest needed.out file if available
-			PC_NEEDED=$(ls -t {Data,.}/$plugin.{precombine*merge*needed.out,needed.out} 2>/dev/null | head -1 || true)
+			# Get the latest dumpneededfiles.out file if available
+			PC_NEEDED=$(ls -t {Data,.}/$plugin.{precombine*merge*dumpneededfiles.out,dumpneededfiles.out} 2>/dev/null | head -1 || true)
 			[[ -n "$PC_NEEDED" ]] || continue
 
 			echo "$plugin: Repackaging temporary '$BASE_BA2' with updated precombines..." 1>&2
@@ -1224,7 +1247,7 @@ for plugin in "${PLUGIN[@]}"; do
 		fi
 
 		# XXX: Fix
-		if ls -d "$BUILD/$plugin/$plugin".*.{all,main,ints,other} &>/dev/null; then
+		if ls -d "$BUILD/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null | grep -q ''; then
 			echo "$plugin: Moving reference plugins..." 1>&2
 
 			mkdir -p "$OUT/$plugin"
@@ -1238,11 +1261,11 @@ for plugin in "${PLUGIN[@]}"; do
 			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.esp || true
 		fi
 
-		if ls -d "$BUILD/$plugin/"*.needed*out &>/dev/null; then
+		if ls -d "$BUILD/$plugin/"*.dumpneededfiles*out &>/dev/null; then
 			echo "$plugin: Moving needed files output..." 1>&2
 
 			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin" "$BUILD/$plugin/"*.needed*out || true
+			mv -t "$OUT/$plugin" "$BUILD/$plugin/"*.dumpneededfiles*out || true
 		fi
 
 		if ls -d "$BUILD/$plugin"/EditorWarnings*.txt &>/dev/null; then
@@ -1252,10 +1275,10 @@ for plugin in "${PLUGIN[@]}"; do
 			mv -t "$OUT/$plugin" "$BUILD/$plugin"/EditorWarnings*.txt || true
 		fi
 
-		if ls -d "$BUILD/tmp/$t/$a/$plugin"/* &>/dev/null; then
+		if find "$BUILD/tmp" -type d -name "$plugin" 2>/dev/null | egrep -q ''; then
 			echo "$plugin: Moving job output..." 1>&2
 			mkdir -p "$OUT/$plugin/job"
-			cp -Rpt "$OUT/$plugin/job" "$BUILD/tmp/$t/$a/$plugin"/*
+			find "$BUILD/tmp" -type d -name "$plugin" -print0 | xargs -r0 cp -Rpt "$OUT/$plugin/job"
 		fi
 	fi
 
