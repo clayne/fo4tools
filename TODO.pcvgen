@@ -439,7 +439,7 @@ Generate main,other (filtered) if ints fail or just generate main, ints, other b
 plugin-master-reloc: should still do subs even if --esm-to-esp is used with an esm or vice versa
 plugin-master-reloc: should not uniq/merge if the basename of 2 mods in different directories is the same
 plugin-master-reloc: fix issue with Knockout Framework.esm producing CombinedObjects.esp files with Knockout_Framework.esm still embededed within it
-plugin-master-reloc: fix general issues with when to clone masters 
+plugin-master-reloc: fix general issues with when to clone masters
 
 ---
 
