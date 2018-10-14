@@ -32,7 +32,7 @@ sub plugin_clone {
 
 	if (! -f $dst || $overwrite) {
 #		if (-f $dst) { unlink($dst) or die "unlink: $!" }
-print STDERR "plugin_clone: $src -> $dst (overwrite == $overwrite)\n";
+#print STDERR "plugin_clone: $src -> $dst (overwrite == $overwrite)\n";
 
 		# Copy src to dst and clone atime/mtime.
 		my @stat = stat($src) or die "stat: $!";

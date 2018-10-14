@@ -56,7 +56,7 @@ begin
 	pc_keep_map.Sorted := True;
 	pc_keep_map.add('CELL');
 	pc_keep_map.add('LAYR');
-//	pc_keep_map.add('RFGP');
+	pc_keep_map.add('RFGP');
 	pc_keep_map.add('MSWP');
 	pc_keep_map.add('REFR');
 	pc_keep_map.add('SCOL');
@@ -230,49 +230,6 @@ begin
 	Result := nil;
 end;
 
-procedure plugin_cell_stat_master_add(e: IInterface; require_static: boolean);
-var
-	plugin, tfile: IwbFile;
-	m, t, r: IInterface;
-	i, j: integer;
-begin
-	plugin := GetFile(e);
-	m := MasterOrSelf(e);
-
-	if Equals(e, m) then
-		Exit;
-
-	// Non-persistent cells only
-	if not cell_filter(e, true, true, true, false) then
-		Exit;
-
-	// Check if this cell has any static references at all.
-//	if require_static and not Assigned(cell_refr_rvis_first(e)) then
-//		Exit;
-
-	// Find this actual element and consider it the highest override so
-	// that additional overrides in the load order are ignored. This is
-	// done so that the masters added to the plugin represent masters
-	// which have been overridden only from the perspective of the
-	// plugin being modified.
-	for i := 0 to Pred(OverrideCount(m)) do begin
-		t := OverrideByIndex(m, i);
-		if Equals(e, t) then break;
-
-		// If the overridden cell does not have any STAT or SCOL
-		// references then it should not be considered a master
-		// candidate because it will not affect precombines. Note:
-		// this is only checked if the parent cell does not have
-		// any statics of its own. If it does then the master
-		// will be added regardless to guard against generation
-		// of previs data not taking into account the override.
-		if require_static and not Assigned(cell_refr_rvis_first(t)) then
-			continue;
-
-		plugin_master_add(plugin, t, true);
-	end;
-end;
-
 function plugin_resolve(e, o, m: IInterface; mode: TString): IInterface;
 var
 	t, r, tfile, rfile, ofile, plugin: IInterface;
@@ -433,7 +390,7 @@ begin
 	sl.free;
 end;
 
-procedure elem_previs_flag_check(e, m: IInterface);
+procedure elem_previs_flag_clean(e, m: IInterface);
 var
 	flags, mflags: cardinal;
 begin
@@ -599,14 +556,17 @@ begin
 			if s <> 'REFR' then
 				continue;
 
-			b := BaseRecord(t);
+			// deleted references should be considered matching
+			if elem_deleted_check(t) then begin
+				b := BaseRecord(MasterOrSelf(e));
+			end else begin
+				b := BaseRecord(t);
+			end;
+
 			s := Signature(b);
 
-			// deleted references should be considered matching
-			if not elem_deleted_check(e) then begin
-				if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
-					continue;
-			end;
+			if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
+				continue;
 
 			// ignore markers entirely
 			if elem_marker_check(b) then
@@ -642,14 +602,17 @@ begin
 			if s <> 'REFR' then
 				continue;
 
-			b := BaseRecord(t);
+			// deleted references should be considered matching
+			if elem_deleted_check(t) then begin
+				b := BaseRecord(MasterOrSelf(e));
+			end else begin
+				b := BaseRecord(t);
+			end;
+
 			s := Signature(b);
 
-			// deleted references should be considered matching
-			if not elem_deleted_check(e) then begin
-				if pc_keep_map.indexof(s) < 0 then
-					continue;
-			end;
+			if pc_keep_map.indexof(s) < 0 then
+				continue;
 
 			// ignore markers entirely
 			if elem_marker_check(b) then
@@ -1015,7 +978,7 @@ begin
 	// merged back into each plugin before it could be used with -generateprevisdata.
 
 	if CopyPerCellStatic then begin
-		m := Master(e);
+		m := MasterOrSelf(e);
 		oc := OverrideCount(m);
 		for i := Pred(oc) downto -1 do begin
 			if i < 0 then begin
@@ -1024,14 +987,18 @@ begin
 				t := OverrideByIndex(m, i);
 			end;
 
-			if Equals(t, e) then
+			// Do not go past the current plugin for this element
+//AddMessage('stat_refr_promote: ' + FullPath(t));
+//AddMessage('stat_refr_promote: ' + FullPath(e));
+			if GetLoadOrder(GetFile(t)) >= GetLoadOrder(GetFile(e)) then
 				continue;
 
-			r := cell_refr_stat_first(t);
+			r := cell_refr_rvis_first(t);
+//AddMessage('stat_refr_promote: r: ' + FullPath(r));
 			if not Assigned(r) then continue;
 
 			if Debug then begin
-//				AddMessage('copying REFR: ' + FullPath(r));
+				AddMessage(Format('%s: Copying: %s', [GetFileName(e), Name(r)]))
 			end;
 
 			elem_copy_deep_safe(plugin, r);
@@ -1114,8 +1081,6 @@ end;
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
-	s: string;
-	i: integer;
 begin
 	try
 		// Copy overridden plugin data as a starting base
@@ -1123,6 +1088,9 @@ begin
 
 		// Copy previs data from current element to plugin
 		elem_pv_sync(e, r);
+
+		// Ensure any 'no previs' flags are removed if master also does not have
+		elem_previs_flag_clean(o, m);
 
 		// Copy form version info
 		elem_version_sync(e, r);
@@ -1139,8 +1107,6 @@ end;
 function precombine_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
-	s: TString;
-	i, j: integer;
 begin
 	try
 		if PerElementMasters then
@@ -1150,7 +1116,7 @@ begin
 		elem_pc_sync(e, o);
 
 		// Ensure any 'no previs' flags are removed if master also does not have
-		elem_previs_flag_check(o, m);
+		elem_previs_flag_clean(o, m);
 
 		// Copy form version info
 		elem_version_sync(e, o);
@@ -1230,7 +1196,7 @@ begin
 		elem_pv_sync(o, r);
 
 		// Ensure any 'no previs' flags are removed if master also does not have
-		elem_previs_flag_check(r, m);
+		elem_previs_flag_clean(r, m);
 
 		// Copy form version info
 		elem_version_sync(e, r);
@@ -1564,7 +1530,7 @@ begin
 	tl.free;
 end;
 
-procedure plugin_master_cell_rvis_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
+procedure plugin_cell_rvis_master_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
 var
 	tl: TList;
 	cxy: TwbGridCell;
@@ -1591,9 +1557,7 @@ begin
 					r := OverrideByIndex(m, j);
 				end;
 
-				// XXX: Check for cells that only have things RVIS cares about?
-
-				cxy := GetGridCell(r);
+//				cxy := GetGridCell(r);
 //				AddMessage(Format('%d,%d %s', [cxy.x,cxy.y,FullPath(r)]));
 
 				// Do not go past the current plugin for this element
@@ -1603,11 +1567,25 @@ begin
 				// on as if the load order of the last override is the
 				// same as the plugin (e) then it is data within that
 				// plugin specifically.
+				//
+				// Essentially what is going on here is that if an override
+				// later in the load order were to generate a vis grid
+				// for the same set of cells for a plugin earlier in the
+				// load order, then this plugin must be a master for that
+				// plugin. Otherwise the later plugin will override the
+				// vis data from the earlier one. As a result this loop
+				// looks for any cell coming from a plugin later in the load
+				// order and if it finds one it prevents removal of this cell.
+				//
 				if GetLoadOrder(GetFile(r)) > GetLoadOrder(GetFile(e)) then begin
 //					AddMessage('remove = false: ' + FullPath(r));
 					remove := false;
 					break;
 				end;
+
+//				// XXX: Check for cells that only have things RVIS cares about?
+//				if Assigned(cell_refr_rvis_first(r)) then begin
+//					continue;
 			end;
 		end;
 
@@ -1617,7 +1595,7 @@ begin
 	end;
 
 	if remove then begin
-		AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 		cell_remove(e);
 //	end else begin
 //		cell_queue.add(e);
@@ -1625,8 +1603,59 @@ begin
 
 end;
 
+procedure plugin_cell_stat_master_add(e: IInterface; require_static: boolean);
+var
+	plugin, tfile: IwbFile;
+	m, t, r: IInterface;
+	i, j: integer;
+begin
+	plugin := GetFile(e);
+	m := MasterOrSelf(e);
+
+	if Equals(e, m) then
+		Exit;
+
+	// Non-persistent cells only
+	if not cell_filter(e, true, true, true, false) then
+		Exit;
+
+	// Find this actual element and consider it the highest override so
+	// that additional overrides in the load order are ignored. This is
+	// done so that the masters added to the plugin represent masters
+	// which have been overridden only from the perspective of the
+	// plugin being modified.
+	for i := 0 to Pred(OverrideCount(m)) do begin
+		t := OverrideByIndex(m, i);
+		if Equals(e, t) then break;
+
+		// If the overridden cell does not have any STAT or SCOL
+		// references then it should not be considered a master
+		// candidate because it will not affect precombines. Note:
+		// this is only checked if the parent cell does not have
+		// any statics of its own. If it does then the master
+		// will be added regardless to guard against generation
+		// of previs data not taking into account the override.
+		if require_static and not Assigned(cell_refr_rvis_first(t)) then
+			continue;
+
+		plugin_master_add(plugin, t, true);
+	end;
+end;
+
+procedure plugin_navm_clean(e: IInterface);
+var
+	s: string;
+begin
+	s := Signature(e);
+	if (s = 'NAVM') or (s = 'LAND') then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		RemoveNode(e);
+	end;
+end;
+
 procedure plugin_master_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
 var
+	b: IInterface;
 	s, ws, gl, fstr: string;
 	flags: cardinal;
 	remove: boolean;
@@ -1639,15 +1668,19 @@ begin
 	// XXX: made into else if, double check
 	if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
 // XXX: Do not remove top level GRUPs for now
-//		remove := true;
+		if Assigned(ElementExists(e, 'Cell')) then
+			remove := true;
 	end else if (s = 'REFR') then begin
-		s := Signature(BaseRecord(e));
-
 // XXX: Check for initially disabled as well?
-		if not elem_deleted_check(e) then begin
-			if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
-				remove := true;
-			end;
+		if elem_deleted_check(e) then begin
+			b := BaseRecord(MasterOrSelf(e));
+		end else begin
+			b := BaseRecord(e);
+		end;
+
+		s := Signature(b);
+		if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then begin
+			remove := true;
 		end;
 	end else if (s = 'WRLD') then begin
 		ws := GetElementEditValues(e, 'EDID');
@@ -1658,8 +1691,8 @@ begin
 		// Non-persistent cells only
 		if not cell_filter(e, main_allow, interior_allow, other_allow, false) then begin
 			remove := true;
-//		end else if not Assigned(cell_refr_rvis_first(e)) then begin
-//			remove := true;
+		end else if not Assigned(cell_refr_rvis_first(e)) then begin
+			remove := true;
 //		end else if not Assigned(cell_refr_stat_first(e)) then begin
 //			remove := true;
 		end;
@@ -1667,7 +1700,7 @@ begin
 
 	if remove then begin
 		if s = 'CELL' then begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end else begin
 			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
@@ -1691,14 +1724,16 @@ var
 	xy : TwbGridCell;
 begin
 //	mode := 'init_clean';
-	mode := 'init_master_cell_rvis_clean';
+//	mode := 'init_cell_rvis_master_clean';
 
-//	mode := 'init_master_cell_exts_clean';
-//	mode := 'init_master_cell_ints_clean';
-//	mode := 'init_master_cell_clean';
-//	mode := 'init_master_exts_add';
-//	mode := 'init_master_ints_add';
-//	mode := 'init_master_all_add';
+	mode := 'init_cell_exts_master_clean';
+//	mode := 'init_cell_ints_master_clean';
+//	mode := 'init_cell_all_master_clean';
+
+//	mode := 'init_cell_exts_master_add';
+//	mode := 'init_cell_ints_master_add';
+//	mode := 'init_cell_all_master_add';
+
 
 //	mode := 'init_alt';
 //	mode := 'init';
@@ -1714,96 +1749,119 @@ begin
 		Exit;
 	end;
 
-	if mode = 'init_master_cell_rvis_clean' then begin
-		plugin_master_cell_rvis_clean(e, true, true, true);
+	if mode = 'init_cell_rvis_master_clean' then begin
+		if Signature(e) <> 'CELL' then
+			Exit;
+
+		plugin_cell_rvis_master_clean(e, true, true, true);
 
 		Exit;
 	end;
 
-	if mode = 'init_master_cell_exts_clean' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_exts_master_clean' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all exterior non-persistent cells
 		if not isWinningOverride(e) and cell_filter(e, true, true, false, false) then begin
 			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
 		Exit;
 	end;
 
-	if mode = 'init_master_cell_ints_clean' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_ints_master_clean' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all interior non-persistent cells
 		if not isWinningOverride(e) and cell_filter(e, false, false, true, false) then begin
 			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
 		Exit;
 	end;
 
-	if mode = 'init_master_cell_clean' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_all_master_clean' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all non-persistent cells
 		if not isWinningOverride(e) and cell_filter(e, true, true, true, false) then begin
-//			cell_queue.add(e);
+			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
 		Exit;
 	end;
 
-	if mode = 'init_master_exts_add' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_exts_master_add' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all exterior non-persistent cells
 		if cell_filter(e, true, true, false, false) then begin
+			if not Assigned(cell_refr_rvis_first(e)) then begin
+				stat_refr_promote(GetFile(e), e);
+			end;
+
 			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
 		Exit;
 	end;
 
-	if mode = 'init_master_ints_add' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_ints_master_add' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all interior non-persistent cells
 		if cell_filter(e, false, false, true, false) then begin
+			if not Assigned(cell_refr_rvis_first(e)) then
+				stat_refr_promote(GetFile(e), e);
 			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
 		Exit;
 	end;
 
-	if mode = 'init_master_all_add' then begin
-		if Signature(e) <> 'CELL' then
+	if mode = 'init_cell_all_master_add' then begin
+		if Signature(e) <> 'CELL' then begin
+			plugin_navm_clean(e);
 			Exit;
+		end;
 
 		// General add masters for all non-persistent cells
 		if cell_filter(e, true, true, true, false) then begin
+			if not Assigned(cell_refr_rvis_first(e)) then
+				stat_refr_promote(GetFile(e), e);
 			cell_queue.add(e);
 		end else begin
-			AddMessage(Format('%s: Removing cell: %s', [GetFileName(e), Name(e)]));
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 			cell_remove(e);
 		end;
 
@@ -2039,6 +2097,8 @@ end;
 			end;
 		end else if mode = 'previs' then begin
 			previs_merge(plugin, e, o, m);
+		end else if mode = 'final' then begin
+			precombine_previs_final(plugin, e);
 		end;
 	except
 		on Ex: Exception do begin

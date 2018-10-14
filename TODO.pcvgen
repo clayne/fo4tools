@@ -353,6 +353,7 @@ ACHR 16725
 PGRE 594
 PHZD 2792
 PMIS 2
+
 CELL type_base_tab
 STAT 1803659
 SCOL 66199
@@ -388,6 +389,7 @@ XPRI type_tab
 REFR 168529
 PHZD 1208
 PMIS 1
+
 XPRI type_base_tab
 STAT 54960
 SCOL 2773
@@ -403,6 +405,7 @@ HAZD 1208
 
 XCRI type_tab
 REFR 2689908
+
 XCRI type_base_tab
 STAT 2632022
 SCOL 57799
@@ -439,6 +442,7 @@ Generate main,other (filtered) if ints fail or just generate main, ints, other b
 plugin-master-reloc: should still do subs even if --esm-to-esp is used with an esm or vice versa
 plugin-master-reloc: should not uniq/merge if the basename of 2 mods in different directories is the same
 plugin-master-reloc: fix issue with Knockout Framework.esm producing CombinedObjects.esp files with Knockout_Framework.esm still embededed within it
+plugin-master-reloc: fix issue with SimSettlements.esm producing CombinedObjects.esp files with Unofficial Fallout 4 Patch.esm still embedded within it
 plugin-master-reloc: fix general issues with when to clone masters
 
 ---
