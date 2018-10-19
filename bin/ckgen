@@ -44,7 +44,7 @@ function plugin_parse() {
 		# plugin/4 (TYPE AREA 4)
 		case "$i" in
 		filtered|clean) _t="$i" ;;
-		ALL|all|main|ints|other) _a="${_a:+$_a,}$i" ;;
+		ALL@*|all@*|main@*|ints@*|other@*|ALL|all|main|ints|other) _a="${_a:+$_a,}$i" ;;
 		[0-9]*) _s="$i" ;;
 		*) echo "Unknown option: $i" 1>&2; exit -1 ;;
 		esac
@@ -55,7 +55,7 @@ function plugin_parse() {
 }
 
 function ctl_log() {
-	echo -e "$2\t$3\t$4\t$5\t$6\t$7" >> "$1"
+	echo -e "$2\t$3\t$4\t$5\t$6\t$7\t$8" >> "$1"
 }
 
 function ck_ini_rewrite() {
@@ -137,10 +137,15 @@ function ck_clone() {
 	local out="$1"; shift
 	local cache="$1"; shift
 	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local area_ck="$1"; shift
+	local plugin="$1"; shift
 	local job="$1"; shift
 
 	set -e
 	set -o pipefail
+	set -x
 
 	case "$mode" in
 	precombine)
@@ -195,18 +200,10 @@ function ck_clone() {
 	# Hardcopy CK ini files
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$src"/ "$build/$job"/
 
-#	# Hardcopy plugins
-#	rsync -aS --include '*.es[pm]' --exclude '*' "$src/Data"/ "$build/$job/Data"/
-#
-#	# Hardcopy plugins (modified)
-#	if [[ -d "$src/Data/ckgen" ]]; then
-#		rsync -aS "$src/Data/ckgen"/ "$build/$job/Data/ckgen"/
-#	fi
-
-	# Hardlink temporary archives (if any) into build-dir (this won't affect the original archives)
-	if [[ -d "$cache/Data" ]]; then
-		rsync -aSH --link-dest="$src/$cache/Data" "$src/$cache/Data"/ "$build/$job/Data"/
-	fi
+	# Alter build-dir versions of CK ini files
+	for j in "$build/$job/CreationKit.ini" "$build/$job/CreationKitPrefs.ini" "$build/$job/CreationKitCustom.ini"; do
+		[[ -f "$j" ]] && ck_ini_rewrite < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
+	done
 
 	# XXX: Update comment (it's the presence of share dirs in the ini that make CK aware of VC)
 	# Nuke version control directory to prevent CK from prompting that VC is disabled and
@@ -216,10 +213,38 @@ function ck_clone() {
 		rm -rf "$build/$job/Data/Merging"
 	fi
 
-	# Alter build-dir versions of CK ini files
-	for j in "$build/$job/CreationKit.ini" "$build/$job/CreationKitPrefs.ini" "$build/$job/CreationKitCustom.ini"; do
-		[[ -f "$j" ]] && ck_ini_rewrite < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
-	done
+	# XXX: Update comment to be master specific.
+	# Original plugins, can be useful in cases where masters should be
+	# pulled in but not all of their extended masters (i.e. ckgen style).
+	# The actual use case is rather specific in where a large amount of
+	# masters are involved and handle limits are being hit in CK, which
+	# prevents generation of any data.
+	if [[ -d "$build/$job/Data/ckgen" ]]; then
+		# Multiple finds are used to workaround cp complaining about files it just
+		# overwrote. rsync is not an option because it sorts the input list.
+		(find "$build/$job/Data/ckgen/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			-maxdepth 1 -mindepth 1 -type f '!' -name "$plugin" -printf '%h\n' 2>/dev/null || true) \
+			| awk '!seen[$0]++' \
+			| while read tmp
+		do
+			find "$tmp" -maxdepth 1 -mindepth 1 -type f '!' -name "$plugin" -print0 \
+				| xargs -tr0 cp --remove-destination -pt "$build/$job/Data"
+		done
+
+		(find "$build/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			-maxdepth 1 -mindepth 1 -type f -name "$plugin" -printf '%h\n' 2>/dev/null || true) \
+			| awk '!seen[$0]++' \
+			| while read tmp
+		do
+			find "$tmp" -maxdepth 1 -mindepth 1 -type f -name "$plugin" -print0 \
+				| xargs -tr0 cp --remove-destination -pt "$build/$job/Data"
+		done
+	fi
+
+	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
+	if [[ -d "$cache/Data" ]]; then
+		rsync -aSH --link-dest="$src/$cache/Data" "$src/$cache/Data"/ "$build/$job/Data"/
+	fi
 
 	return 0
 }
@@ -229,7 +254,11 @@ function ck_wrap_archive_unpack() {
 }
 
 function ck_wrap_archive_pack() {
-	Tools/Archive2/Archive2.exe "$1" -c="$2.tmp" -compression="${3:-None}" -q && mv "$2.tmp" "$2"
+	# Archive2 refuses to create empty archives
+	if find "$1" -type d -prune -empty 2>/dev/null | egrep -ql ''; then
+		touch "$1/empty.txt"
+	fi
+	Tools/Archive2/Archive2.exe "$1" -c="$2.tmp" -compression="${3:-None}" && mv "$2.tmp" "$2"
 }
 
 function ck_wrap_archive() {
@@ -240,7 +269,9 @@ function ck_wrap_archive() {
 	local mode="$1"; shift
 	local type="$1"; shift
 	local area="$1"; shift
-	local -a q=( "$@" )
+	local area_ck="$1"; shift
+	local plugin_src="$1"; shift
+	local -a q=( "$plugin_src" "$@" )
 
 	set -e
 	set -o pipefail
@@ -267,10 +298,11 @@ function ck_wrap_archive() {
 			;;
 		esac
 
-		local archive_data_tmp="$bdir/$job/.archive_data_tmp/Data"
+		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
 		local archive_main="$bdir/$job/Data/$plugin_base - $archive_type.ba2"
 		local archive_main_ck="$bdir/$job/Data/$plugin_ck_base - $archive_type.ba2"
 		local archive_main_ck_cached="$cdir/Data/$plugin_ck_base - $archive_type.ba2"
+		local cleaned_marker="$cdir/tmp/$plugin.$mode.cleaned"
 		local cache_lock="$cdir/tmp/$plugin.lock"
 		local modified=0
 
@@ -282,18 +314,18 @@ function ck_wrap_archive() {
 		if [[ "$mode" == "sanitize" ]]; then
 			if [[ ! -f "$archive_main" ]]; then
 				continue
-			elif ! fgrep -q "$plugin" "$archive_main"; then
-				continue
+#			elif ! fgrep -q "$plugin" "$archive_main"; then
+#				continue
 			fi
 		fi
 
-		if ! lockfile -l 3600 -1 -r 0 "$cache_lock"; then
+		if ! lockfile -l 3600 -1 -r 1 "$cache_lock"; then
 			echo "Waiting on $cache_lock ..." 1>&2
 			q+=( "$plugin" )
 			continue
 		fi
 
-		ls -la "$archive_main_ck_cached" "$archive_main_ck" 2>/dev/null || true
+		ls -la "$archive_main_ck_cached" "$archive_main_ck" 1>&2 2>/dev/null || true
 		if [[ "$archive_main" -nt "$archive_main_ck_cached" || "$bdir/$job/$plugin" -nt "$archive_main_ck_cached" || "$mode" != "sanitize" ]]; then
 			if [[ -d "$archive_data_tmp" ]]; then
 				echo "Assertion failure: $archive_data_tmp exists" 1>&2
@@ -320,18 +352,22 @@ function ck_wrap_archive() {
 
 			case "$mode" in
 			sanitize)
-				ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "REARCHIVING"
+				ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin_src" "REARCHIVING ($plugin)"
 				if [[ -f "$archive_src" ]]; then
 					ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
-					for i in "$archive_data_tmp/Meshes/SCOL" "$archive_data_tmp/Meshes/PreCombined" "$archive_data_tmp/Vis"; do
-						[[ -d "$i" ]] && rm -rf "$i" && modified=1
-					done
 				fi
 				;;
 			scol)
 				if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
-					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "REARCHIVING"
-					[[ -f "$archive_src" ]] && ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin_src" "REARCHIVING ($plugin)"
+
+					if [[ -f "$archive_src" ]]; then
+						ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+						if [[ ! -f "$cleaned_marker" ]]; then
+							rm -rf "$archive_data_tmp/Meshes/SCOL"
+							touch "$cleaned_marker"
+						fi
+					fi
 
 					mkdir -p "$archive_data_tmp/Meshes/SCOL"
 					rsync -aSH \
@@ -342,8 +378,15 @@ function ck_wrap_archive() {
 				;;
 			precombine)
 				if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "REARCHIVING"
-					[[ -f "$archive_src" ]] && ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin_src" "REARCHIVING ($plugin)"
+
+					if [[ -f "$archive_src" ]]; then
+						ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+						if [[ ! -f "$cleaned_marker" ]]; then
+							rm -rf "$archive_data_tmp/Meshes/PreCombined"
+							touch "$cleaned_marker"
+						fi
+					fi
 
 					mkdir -p "$archive_data_tmp/Meshes/PreCombined"
 					rsync -aSH \
@@ -354,8 +397,15 @@ function ck_wrap_archive() {
 				;;
 			previs)
 				if [[ -d "$bdir/$job/Data/Vis" ]]; then
-					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "REARCHIVING"
-					[[ -f "$archive_src" ]] && ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+					ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin_src" "REARCHIVING ($plugin)"
+
+					if [[ -f "$archive_src" ]]; then
+						ck_wrap_archive_unpack "$archive_src" "$archive_data_tmp"
+						if [[ ! -f "$cleaned_marker" ]]; then
+							rm -rf "$archive_data_tmp/Vis"
+							touch "$cleaned_marker"
+						fi
+					fi
 
 					mkdir -p "$archive_data_tmp/Vis"
 					rsync -aSH \
@@ -367,9 +417,10 @@ function ck_wrap_archive() {
 			esac
 
 			# XXX: Handle desanitize
-			if find "$archive_data_tmp" -type d -name "$plugin" 2>/dev/null | egrep -ql ''; then
-				find "$archive_data_tmp" -type d -name "$plugin" -print0 \
-					| xargs -tr0 rename "$plugin" "$plugin_ck"
+			if find "$archive_data_tmp" -type d -iname "$plugin" 2>/dev/null | egrep -ql ''; then
+				find "$archive_data_tmp" -type d -iname "$plugin" | while read tmp; do
+					rename "$(basename "$tmp")" "$plugin_ck" "$tmp"
+				done
 				modified=1
 			fi
 
@@ -380,19 +431,19 @@ function ck_wrap_archive() {
 			do
 				[[ "$__plugin_base" != "$plugin_ck_base" ]] || continue
 
-#				if find "$archive_data_tmp" -type d -name "$__plugin_base" 2>/dev/null | egrep -ql ''; then
-#					find "$archive_data_tmp" -type d -name "$__plugin_base" -print0 \
+#				if find "$archive_data_tmp" -type d -iname "$__plugin_base" 2>/dev/null | egrep -ql ''; then
+#					find "$archive_data_tmp" -type d -iname "$__plugin_base" -print0 \
 #						| xargs -tr0 rename "$__plugin_base" "$plugin_ck_base"
 #					modified=1
 #				fi
-				if find "$archive_data_tmp" -type f -name "$__plugin_base*strings" 2>/dev/null | egrep -ql ''; then
-					find "$archive_data_tmp" -type f -name "$__plugin_base*strings" -print0 \
+				if find "$archive_data_tmp" -type f -iname "$__plugin_base*strings" 2>/dev/null | egrep -ql ''; then
+					find "$archive_data_tmp" -type f -iname "$__plugin_base*strings" -print0 \
 						| xargs -tr0 rename "$__plugin_base" "$plugin_ck_base"
 					modified=1
 				fi
 			done
 
-			if ((modified)); then
+			if ((modified)) || [[ ! -f "$archive_main_ck_cached" ]]; then
 				ck_wrap_archive_pack "$archive_data_tmp" "$archive_main_ck_cached"
 			fi
 			rm -rf "$archive_data_tmp"
@@ -401,7 +452,7 @@ function ck_wrap_archive() {
 
 		if [[ "$archive_main_ck_cached" -nt "$archive_main_ck" ]]; then
 			cp --remove-destination -p "$archive_main_ck_cached" "$archive_main_ck"
-			ls -la "$archive_main_ck_cached" "$archive_main_ck" 2>/dev/null || true
+			ls -la "$archive_main_ck_cached" "$archive_main_ck" 1>&2 2>/dev/null || true
 		fi
 	done
 
@@ -425,6 +476,7 @@ function ck_wrap() {
 	local mode="$1"; shift
 	local type="$1"; shift
 	local area="$1"; shift
+	local area_ck="$1"; shift
 	local plugin="$1"; shift
 	local cur="$1"; shift
 	local max="$1"; shift
@@ -447,32 +499,13 @@ function ck_wrap() {
 	rm -f "$bdir/$job/EditorWarnings.txt"
 	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; cp -p '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
 
-	ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin" "CLONING"
+	ctl_log "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin" "CLONING"
 
-	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$mode" "$job" || exit -1
+	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$mode" "$type" "$area" "$area_ck" "$plugin" "$job" || exit -1
 
-	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$mode\t$type\t$area\t$plugin\t$cur\t$max\t$job\t$manual\t$$" > $bdir/$job/ck_wrap.info
+	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$mode\t$type\t$area\t$area_ck\t$plugin\t$cur\t$max\t$job\t$manual\t$$" > $bdir/$job/ck_wrap.info
 
 	if ((!manual)); then
-		# XXX: Update comment to be master specific.
-		# Original plugins, can be useful in cases where masters should be
-		# pulled in but not all of their extended masters (i.e. ckgen style).
-		# The actual use case is rather specific in where a large amount of
-		# masters are involved and handle limits are being hit in CK, which
-		# prevents generation of any data.
-		for i in "$bdir/$job/Data/ckgen/masters"{"","/$plugin","/$area","/$area/$plugin"}; do
-			[[ -d "$i" ]] \
-				&& find "$i" -maxdepth 1 -mindepth 1 -type f \! -name "$plugin" -print0 \
-				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
-		done
-
-		# Per target plugin only
-		for i in "$bdir/$job/Data/ckgen"{,"/$plugin","/$area","/$area/$plugin"}; do
-			[[ -d "$i" ]] \
-				&& find "$i" -maxdepth 1 -mindepth 1 -type f -name "$plugin" -print0 \
-				| xargs -tr0 cp --remove-destination -pt "$bdir/$job/Data"
-		done
-
 		if [[ "$plugin" =~ .esp ]]; then
 			FILE_BASE="${plugin/.esp*/.esp}.${mode}_merge"
 		else
@@ -500,11 +533,17 @@ function ck_wrap() {
 	plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	plugin_ck_base="${plugin_ck/%.es[pm]}"
 
+	if [[ "$plugin_ck" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
+		plugin_master_reloc=1
+	else
+		plugin_master_reloc=0
+	fi
+
 #	if [[ "$plugin_sanitized" != "$plugin" ]]; then
 #		ln -f "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin_sanitized"
 #	fi
 
-	if [[ "$plugin_ck" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
+	if ((plugin_master_reloc)); then
 		# Clone plugin before modification in case it's hard linked
 #		cp --remove-destination -p "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin.$$" \
 #			&& mv "$bdir/$job/Data/$plugin.$$" "$bdir/$job/Data/$plugin"
@@ -514,12 +553,7 @@ function ck_wrap() {
 	plugin-master-reloc -vr "$bdir/$job/Data/$plugin_ck"
 
 	# Sanitize archive filename and embedded filenames within archive
-	if [[ "$plugin_ck" != "$plugin" || -n "${ESP_MASTERS[@]}" ]]; then
-		ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "sanitize" "$type" "$area" "${ESP_MASTERS[@]}"
-		if [[ "$plugin_ck" != "$plugin" ]]; then
-			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "sanitize" "$type" "$area" "$plugin"
-		fi
-	fi
+	ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "sanitize" "$type" "$area" "$plugin" "${ESP_MASTERS[@]}"
 
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
@@ -539,7 +573,7 @@ function ck_wrap() {
 			echo "SUCCESS (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generatestaticcollections.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 		else
 			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
 				echo "FAILURE (generatestaticcollections handles)" >> "$bdir/$job/EditorWarnings.txt"
@@ -560,7 +594,8 @@ function ck_wrap() {
 		;;
 
 	precombine)
-		((!manual)) && CKARGS=( -generateprecombined:"$plugin_ck" $type $area $cur $max )
+#		((!manual)) && CKARGS=( -generateprecombined:"$plugin_ck" $type $area $cur $max )
+		((!manual)) && CKARGS=( -generateprecombined:"$plugin_ck" $type $area_ck $cur $max )
 
 		if ( \
 			cd "$bdir/$job" \
@@ -572,7 +607,7 @@ function ck_wrap() {
 			echo "SUCCESS (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprecombined.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
@@ -602,7 +637,7 @@ function ck_wrap() {
 						echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.buildcdx.txt"
-						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+						cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
@@ -633,7 +668,7 @@ function ck_wrap() {
 						echo "SUCCESS (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
 						mkdir -p "$bdir/$plugin"
 						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.compresspsg.txt"
-						cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+						cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 						# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
 						cp -flt "$cdir/Data" "$bdir/$job/Data/$plugin_ck_base - Geometry.csg"
@@ -670,7 +705,7 @@ function ck_wrap() {
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
 					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+					cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 					ck_needed_filter "CombinedObjects.esp" "$plugin" \
 						< "$bdir/$job/dumpneededfiles.out" \
@@ -678,7 +713,6 @@ function ck_wrap() {
 
 					# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
 					if [[ "$plugin_ck" != "$plugin" ]]; then
-						echo "cross-check dumpneeded sub" 1>&2
 						egrep "$plugin_ck" "$bdir/$job/dumpneededfiles.out.cleaned" 1>&2 || true
 						sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 					fi
@@ -701,7 +735,7 @@ function ck_wrap() {
 				fi
 
 				# If the plugin was copied to an esm, switch esm masters back to esp masters
-				if [[ "$plugin_ck" != "$plugin" ]]; then
+				if ((plugin_master_reloc)); then
 					plugin-master-reloc -vfr --esm-to-esp --sub "$plugin_ck_base:$plugin_base" "$bdir/$job/Data/CombinedObjects.esp"
 				fi
 
@@ -728,6 +762,7 @@ function ck_wrap() {
 				done
 
 				mkdir -p "$bdir/$plugin"
+# XXX: temporary
 #				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
 			fi
 
@@ -749,7 +784,7 @@ function ck_wrap() {
 		;;
 
 	previs)
-		((!manual)) && CKARGS=( -generateprevisdata:"$plugin_ck" $type $area $cur $max )
+		((!manual)) && CKARGS=( -generateprevisdata:"$plugin_ck" $type $area_ck $cur $max )
 
 		if ( \
 			cd "$bdir/$job" \
@@ -761,7 +796,7 @@ function ck_wrap() {
 			echo "SUCCESS (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprevisdata.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
@@ -778,7 +813,7 @@ function ck_wrap() {
 					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 					mkdir -p "$bdir/$plugin"
 					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-					cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+					cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 					ck_needed_filter "PreVis.esp" "$plugin" \
 						< "$bdir/$job/dumpneededfiles.out" \
@@ -860,7 +895,7 @@ function ck_wrap() {
 			echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.buildcdx.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
@@ -893,7 +928,7 @@ function ck_wrap() {
 			echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
 			mkdir -p "$bdir/$plugin"
 			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 || true
+			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
 
 			ck_needed_filter "$plugin_ck" "$plugin" \
 				< "$bdir/$job/dumpneededfiles.out" \
@@ -974,7 +1009,8 @@ function ck_log_wrap() {
 				mode=info[5];
 				type=info[6];
 				area=info[7];
-				plugin=info[8];
+				area_ck=info[8];
+				plugin=info[9];
 				ctl=0
 			} else if ($0 ~ ctl_log) {
 				ctl=1
@@ -987,17 +1023,18 @@ function ck_log_wrap() {
 				mode=info[2];
 				type=info[3];
 				area=info[4];
-				plugin=info[5];
-				$0=info[6];
+				area_ck=info[5];
+				plugin=info[6];
+				$0=info[7];
 				usepcnt=0;
 			} else {
-				if ($0 !~ /generat.*for.*cell|Number of registered paths|SUCCESS|FAILURE/)
+				if ($0 !~ /generat.*for.*cell|Number of registered paths|^(SUCCESS|FAILURE)/)
 					next;
-#				if ($0 ~ /SUCCESS \(.+\)/)
+#				if ($0 ~ /^SUCCESS \(.+\)/)
 #					next;
 				if ($0 ~ /ROOTCELL/)
 					next;
-				if ($0 ~ /SUCCESS|FAILURE/)
+				if ($0 ~ /^(SUCCESS|FAILURE)/)
 					usepcnt=0;
 				else
 					usepcnt=1;
@@ -1099,7 +1136,7 @@ CACHE=$SELF.cache
 BUILD=$SELF.build
 OUT=$SELF.out
 TYPE="filtered"
-AREA="main"
+AREA="all"
 PRESERVE_CACHE=1
 PRESERVE_BUILD=0
 PRESERVE_OUT=0
@@ -1130,78 +1167,6 @@ elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 	exit -1
 fi
 
-MODE="$1"; shift
-
-# XXX: checkinplugin?
-# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
-# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
-case "$MODE" in
-needed|scol|cdx)
-	SHARDS=1
-	SHARDS_FORCE=1
-	;;
-precombine|previs)
-	if ((!MANUAL)); then
-		TYPE="$1"; shift
-		AREA="$1"; shift
-	elif [[ "$1" == "clean" || "$1" == "filtered" ]]; then
-		case "$2" in
-		ALL|all|main|other|ints) shift; shift ;;
-		esac
-	fi
-
-	if [[ "$TYPE" != "clean" && "$TYPE" != "filtered" ]]; then
-		echo "Invalid type: $TYPE" 1>&2
-		exit -1
-	fi
-
-	AREA=( ${AREA//,/ } )
-	for area in ${AREA[*]}; do
-		if [[ "$area" == "ALL" ]]; then
-			AREA=( main ints other )
-			continue
-		elif [[ "$area" != "all" && "$area" != "main" && "$area" != "ints" && "$area" != "other" ]]; then
-			echo "Invalid area: $area" 1>&2
-			exit -1
-		fi
-	done
-	;;
-*)
-	echo "Invalid mode: $MODE" 1>&2
-	exit -1
-	;;
-esac
-
-JOBS_TOTAL=0
-PLUGIN=( "$@" )
-for plugin in "${PLUGIN[@]}"; do
-	plugin_parse "$plugin" plugin t a s
-
-	if [[ ! "$plugin" =~ \.es[lpm]$ ]]; then
-		echo "Invalid plugin: $plugin" 1>&2
-		exit -1
-	fi
-
-	[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
-	[[ -n $t ]] || t=$TYPE
-	[[ -n $s ]] && s=$((SHARDS_FORCE ? SHARDS : s)) || s=$SHARDS
-
-	for area in ${atmp[*]}; do
-#		if [[ "$area" != "all" && "$MODE" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
-		if [[ "$MODE" == "precombine" && "$t" == "clean" && $s -ne 1 ]]; then
-			echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
-			exit -1
-#			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
-#				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
-#				s=1
-		fi
-
-		for j in $(seq -s ' ' $SHARDS_START $s); do
-			let ++JOBS_TOTAL
-		done
-	done
-done
-
 SRC="$PROGDIR/Fallout 4.$PROFILE"
 cd "$SRC"
 
@@ -1212,7 +1177,7 @@ fi
 
 if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	echo "Removing previous build data..." 1>&2
-	rm -rf "$BUILD" && mkdir -p "$BUILD" || exit -1
+	rm -rf "$BUILD"/[^0-9]* && mkdir -p "$BUILD" || exit -1
 fi
 
 if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
@@ -1224,27 +1189,119 @@ fi
 rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
 rm -rf "$CACHE/tmp" && mkdir -p "$CACHE/tmp"
 
+# XXX: checkinplugin?
+# Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+# Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
+MODE="$1"; shift
+case "$MODE" in
+needed|scol|cdx)
+	SHARDS=1
+	SHARDS_FORCE=1
+	;;
+precombine|previs)
+	if ((!MANUAL)); then
+		TYPE="$1"; shift
+		AREA="$1"; shift
+	elif [[ "$1" == "clean" || "$1" == "filtered" ]]; then
+		case "$2" in
+		ALL*|all*|main*|other*|ints*) shift; shift ;;
+		esac
+	fi
+
+	if [[ "$TYPE" != "clean" && "$TYPE" != "filtered" ]]; then
+		echo "Invalid type: $TYPE" 1>&2
+		exit -1
+	fi
+
+	AREA=( ${AREA//,/ } )
+	for area in ${AREA[*]}; do
+		case "$area" in
+		ALL) AREA=( main ints other ) ;;
+		ALL@*) AREA=( main@${area/*@} ints@${area/*@} other@${area/*@} ) ;;
+		all|all@*|main|main@*|ints|ints@*|other|other@*) ;;
+		*)
+			echo "Invalid area: $area" 1>&2
+			exit -1
+			;;
+		esac
+	done
+	;;
+*)
+	echo "Invalid mode: $MODE" 1>&2
+	exit -1
+	;;
+esac
+
 # Generate output file of jobs to be run by parallel
-for plugin in "${PLUGIN[@]}"; do
+for plugin in "$@"; do
 	plugin_parse "$plugin" plugin t a s
+
+	# Allow additional type/area keywords to override global value past the point of it's parse.
+	case "$plugin" in
+	filtered|clean) TYPE="$plugin"; continue ;;
+	ALL|ALL,*|ALL@*|all|all,*|all@*|ints|ints,*|ints@*|main|main,*|main@*|other|other,*|other@*) AREA=( "${plugin//,/ }" ); continue ;;
+	*)
+		if [[ ! "$plugin" =~ \.es[mpl]$ ]]; then
+			echo "Invalid plugin: $plugin" 1>&2
+			exit -1
+		fi
+		;;
+	esac
 
 	[[ -n $a ]] && atmp=( ${a//,/ } ) || atmp=( ${AREA[*]} )
 	[[ -n $t ]] || t=$TYPE
 	[[ -n $s ]] && s=$((SHARDS_FORCE ? SHARDS : s)) || s=$SHARDS
 
 	for area in ${atmp[*]}; do
+		area_ck="${area/*@}"; area="${area/@*}";
+#		if [[ "$area" != "all" && "$MODE" == "precombine" && "$t" == "clean" ]] || [[ "$t" == "clean" && $s -ne 1 ]]; then
+		if [[ "$MODE" == "precombine" && "$t" == "clean" && $s -ne 1 ]]; then
+			echo "$plugin: Error: generating precombines of type 'clean' cannot be run in parallel or in sub-areas due to inability to merge shared geometry data (PSG/CSG)" 1>&2
+			exit -1
+#			elif [[ "$area" != "main" && "$area" != "ints" && $s -ne 1 ]]; then
+#				echo "$plugin: Warning: area of '$area' does not parallelize (CK limitation)" 1>&2
+#				s=1
+		fi
+
 		# Use tabs for arg separation and escape-quote $plugin so that when parallel
 		# interprets this input line to call ck_wrap it doesn't consume quotes.
 		for _s in $(seq -s ' ' $SHARDS_START $s); do
-			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$SRC" "$BUILD" "$OUT" "$CACHE" "$MODE" "$t" "$area" "$plugin" "$_s" "$s"
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$SRC" "$BUILD" "$OUT" "$CACHE" "$MODE" "$t" "$area" "$area_ck" "$plugin" "$_s" "$s"
 		done
+
 	done
-done > "$BUILD/tmp/jobs.in"
+done | perl -e '
+	# Sort output jobs by largest plugins first so that longer running jobs overlap
+	# more with shorter running jobs - making better use of parallelization.
+
+	use warnings FATAL => qw(all);
+	use strict;
+
+	use File::Basename qw(basename);
+	use List::Util qw(shuffle);
+
+	my %plugins;
+	while (<>) {
+		chomp;
+		my @b = split("\t", $_); 
+		push @{$plugins{$b[8]}}, $_;
+	}
+
+	# Sort by count of CELL records within a plugin
+	open(my $fd, "-|", "find Data -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -c CELL") or die;
+	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
+	close($fd);
+
+	my %seen;
+	foreach (grep !$seen{$_}++, map $_->[0], sort { $b->[1] <=> $a->[1] } @a) {
+		print "$_\n" foreach (shuffle @{$plugins{$_}});
+	}
+' > "$BUILD/tmp/jobs.in"
 
 if ((MANUAL)); then
-	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
+	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
 else
-	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/ --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
+	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
 fi
 
 # Note: final 'read' commands are to prevent tmux from closing each sub-window
@@ -1277,7 +1334,7 @@ else
 fi
 
 # Process output from build
-for plugin in "${PLUGIN[@]}"; do
+awk -F'\t' '!seen[$8]++ { print $9 }' "$BUILD/tmp/jobs.in" | while read plugin; do
 	plugin_parse "$plugin" plugin t a s
 
 	if [[ -d "$BUILD/$plugin" ]]; then
@@ -1314,7 +1371,6 @@ for plugin in "${PLUGIN[@]}"; do
 			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.cdx || true
 		fi
 
-		# XXX: Fix
 		if ls -d "$BUILD/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null | grep -q ''; then
 			echo "$plugin: Moving reference plugins..." 1>&2
 

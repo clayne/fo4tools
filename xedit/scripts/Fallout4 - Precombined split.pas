@@ -12,18 +12,21 @@ const
 	StopOnError = True;
 	VersionInc = False;		// Not implemented
 	ConflictOnly = False;		// Not implemented
-	MergeIntoOverride = False;
+	MergeIntoOverride = True;
 	CopyPerCellStatic = True;
 	CopyPerCellStaticAll = False;
 	PerElementMasters = True;
 	InitFileSuffix = 'precombine_gen';
-	PrecombineFileSuffix = 'precombine_merge';
-	PrevisFileBase = 'pcv';
-	PrevisFileSuffix = 'previs_final';
+	PrecombineFileBase = 'precombine';
+	PrecombineFileSuffix = 'precombine_split';
+	PrevisFileBase = 'previs';
+	PrevisFileSuffix = 'previs_split';
+	FinalFileBase = 'pcv-final';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 8;
 var
 	// Elements to keep from the most immediate plugin being overridden
+	plugin_final: IInterface;
 	plugin_map: array [0..255] of IInterface;
 	pc_sig_tab: array [0..1] of TString;
 	pv_sig_tab: array [0..2] of TString;
@@ -186,21 +189,28 @@ var
 	i: integer;
 begin
 	// Attempt to locate existing plugin for the same file or create a new one
-	for i := idx to Pred(idx + MaxFileAttempts) do begin
+	for i := Pred(idx) to Pred(idx + MaxFileAttempts) do begin
 		if mode = 'init' then begin
 			b := ofstr;
-			s := InitFileSuffix + '.' + IntToStr(i);
-		end else if mode = 'precombine' then begin
+			s := InitFileSuffix;
+		end else if mode = 'precombine_split' then begin
 			b := ofstr;
-			s := PrecombineFileSuffix + '.' + IntToStr(i);
-		end else if mode = 'previs' then begin
-			b := PrevisFileBase;
-			s := PrevisFileSuffix + '.' + IntToStr(i);
+			s := PrecombineFileSuffix;
+		end else if mode = 'previs_split' then begin
+			b := ofstr;
+			s := PrevisFileSuffix;
+		end else if mode = 'final' then begin
+			b := FinalFileBase;
+			s := ofstr;
 		end else begin
 			Exit;
 		end;
 
-		pfile := b + '.' + s + '.' + PluginSuffix;
+		if i < idx then begin
+			pfile := b + '.' + s + '.' + PluginSuffix;
+		end else begin
+			pfile := b + '.' + s + '.' + IntToStr(i) + '.' + PluginSuffix;
+		end;
 		plugin := plugin_file_resolve_existing(pfile);
 		if Assigned(plugin) then begin
 			Result := plugin; Exit;
@@ -244,7 +254,7 @@ begin
 		Result := plugin; Exit;
 	end;
 
-	// Master and immediately preceeding master (if any) of the element being processed
+	// Master and immediately preceeding override (if any) of the element being processed
 	ofstr := GetFileName(ofile);
 	plugin := plugin_file_resolve(ofstr, 0, mode);
 	plugin_map[idx] := plugin;
@@ -342,12 +352,39 @@ end;
 	Result := plugin;
 end;
 
-function elem_copy_deep_safe(plugin: IwbFile; e: IInterface): IInterface;
+procedure plugin_elem_remove(plugin: IwbFile; e: IInterface);
+var
+	t: IInterface;
+	i: integer;
+begin
+	for i := -1 to Pred(OverrideCount(e)) do begin
+		if i < 0 then begin
+			t := Master(e);
+		end else begin
+			t := OverrideByIndex(e, i);
+		end;
+
+		if GetFileName(t) <> GetFileName(plugin) then
+			continue;
+
+		Remove(t);
+		Exit;
+	end;
+end;
+
+function elem_copy_deep(plugin: IwbFile; e: IInterface): IInterface;
 begin
 	if PerElementMasters then
 		elem_masters_add(plugin, e);
 
-	Result := wbCopyElementToFile(e, plugin, False, True);
+	try
+		Result := wbCopyElementToFile(e, plugin, False, True);
+	except
+		on Ex: Exception do begin
+			plugin_elem_remove(plugin, e);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
 end;
 
 function ts_to_int(ts: string): integer;
@@ -355,6 +392,37 @@ begin
 	Result := 0;
 	if Assigned(ts) and length(ts) >= 5 then
 		Result := StrToInt('$' + ts[4] + ts[5] + ts[1] + ts[2]);
+end;
+
+function elem_error_check(e: IInterface): boolean;
+var
+	i: integer;
+	t: IInterface;
+begin
+	for i := 0 to Pred(ElementCount(e)) do begin
+		t := ElementByIndex(e, i);
+		if Check(t) = '' then
+			continue;
+
+		if Debug then
+			AddMessage(Format('%s: elem_error_check: failed: %s: %s', [ GetFileName(t), Check(t), Path(t) ]));
+		Result := false;
+		Exit;
+	end;
+
+	Result := true;
+end;
+
+function elem_cell_check(e: IInterface): boolean;
+var
+	a, b: integer;
+begin
+	a := FormID(LinksTo(ElementByPath(MasterOrSelf(e), 'CELL'))) and $00ffffff;
+	b := FormID(LinksTo(ElementByPath(e, 'CELL'))) and $00ffffff;
+	Result := (a = b);
+	if not Result and Debug then begin
+		AddMessage(Format('%s: elem_cell_check: mismatch: %s != %s (%0.8x != %0.8x)', [ GetFileName(e), Name(MasterOrSelf(e)), Name(e), a, b ]));
+	end;
 end;
 
 procedure elem_masters_add(plugin: IwbFile; e: IInterface);
@@ -376,13 +444,15 @@ begin
 			r := MasterByIndex(tfile, j);
 			rfstr := GetFileName(r);
 			if not HasMaster(plugin, rfstr) then begin
-				if Debug then AddMessage('Adding element required master: ' + rfstr);
+				if Debug then
+					AddMessage(Format('%s: Adding element master (parent): %s: %s', [GetFileName(plugin), rfstr, Name(e)]));
 				AddMasterIfMissing(plugin, rfstr);
 			end;
 		end;
 
 		if not HasMaster(plugin, sl[i]) then begin
-			if Debug then AddMessage('Adding element required master: ' + sl[i]);
+			if Debug then
+				AddMessage(Format('%s: Adding element master (parent): %s: %s', [GetFileName(plugin), sl[i], Name(e)]));
 			AddMasterIfMissing(plugin, sl[i]);
 		end;
 	end;
@@ -497,48 +567,24 @@ begin
 	RemoveNode(e);
 end;
 
-function cell_refr_stat_all(e: IInterface): IInterface;
-var
-	cg, rcg, r, t, b: IInterface;
-	i, j: integer;
+function cell_refr_stat_check(e: IInterface): boolean;
 begin
-	cg := ChildGroup(e);
-	if not Assigned(cg) then
-		Exit;
-//	AddMessage('cg: ' + FullPath(cg));
-
-	for i := 0 to Pred(ElementCount(cg)) do begin
-		r := ElementByIndex(cg, i);
-
-//		AddMessage('r: ' + FullPath(r));
-
-		for j := 0 to Pred(ElementCount(r)) do begin
-			t := ElementByIndex(r, j);
-			b := BaseRecord(t);
-
-			if Signature(t) <> 'REFR' then
-				continue;
-			if (Signature(b) <> 'STAT') and (Signature(b) <> 'SCOL') then
-				continue;
-
-			// ignore markers entirely
-			if elem_marker_check(b) then
-				continue;
-
-			AddMessage('t: ' + FullPath(t));
-exit;
-//			Result := t;
-//			Exit;
-		end;
-	end;
+	Result := Assigned(cell_refr_stat_first(e, false, false));
 end;
 
-function cell_refr_rvis_first(e: IInterface): IInterface;
+function cell_refr_rvis_check(e: IInterface): boolean;
+begin
+	Result := Assigned(cell_refr_rvis_first(e, false, false));
+end;
+
+function cell_refr_stat_all(e: IInterface; ref_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
-	s: string;
 begin
+	if Signature(e) <> 'CELL' then
+		Exit;
+
 	cg := ChildGroup(e);
 	if not Assigned(cg) then
 		Exit;
@@ -553,24 +599,97 @@ begin
 			t := ElementByIndex(r, j);
 			s := Signature(t);
 
-			if s <> 'REFR' then
+			if (s <> 'REFR') and pc_keep_map.indexof(s) < 0 then
 				continue;
 
 			// deleted references should be considered matching
 			if elem_deleted_check(t) then begin
-				b := BaseRecord(MasterOrSelf(e));
+				b := BaseRecord(MasterOrSelf(t));
 			end else begin
 				b := BaseRecord(t);
 			end;
 
 			s := Signature(b);
+			if pc_keep_map.indexof(s) < 0 then
+				continue;
 
+			// ignore markers entirely
+			if elem_marker_check(b) then
+				continue;
+
+			// ignore refs with problems
+			if ref_check then begin
+				if not elem_error_check(t) then
+					continue;
+			end;
+
+			// ignore refs outside of the cell xedit thinks they should be in
+			if cell_check then begin
+				if not elem_cell_check(t) then
+					continue;
+			end;
+
+			AddMessage('t: ' + FullPath(t));
+
+//			XXX: TList?
+//			Result := t;
+//			Exit;
+		end;
+	end;
+end;
+
+function cell_refr_rvis_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j: integer;
+	s: string;
+begin
+	if Signature(e) <> 'CELL' then
+		Exit;
+
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(ElementCount(r)) do begin
+			t := ElementByIndex(r, j);
+			s := Signature(t);
+
+			if (s <> 'REFR') and (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
+				continue;
+
+			// deleted references should be considered matching
+			if elem_deleted_check(t) then begin
+				b := BaseRecord(MasterOrSelf(t));
+			end else begin
+				b := BaseRecord(t);
+			end;
+
+			s := Signature(b);
 			if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
 				continue;
 
 			// ignore markers entirely
 			if elem_marker_check(b) then
 				continue;
+
+			// ignore refs with problems
+			if ref_check then begin
+				if not elem_error_check(t) then
+					continue;
+			end;
+
+			// ignore refs outside of the cell xedit thinks they should be in
+			if cell_check then begin
+				if not elem_cell_check(t) then
+					continue;
+			end;
 
 //			AddMessage('t: ' + FullPath(t));
 			Result := t;
@@ -579,12 +698,15 @@ begin
 	end;
 end;
 
-function cell_refr_stat_first(e: IInterface): IInterface;
+function cell_refr_stat_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
 	s: string;
 begin
+	if Signature(e) <> 'CELL' then
+		Exit;
+
 	cg := ChildGroup(e);
 	if not Assigned(cg) then
 		Exit;
@@ -599,24 +721,35 @@ begin
 			t := ElementByIndex(r, j);
 			s := Signature(t);
 
-			if s <> 'REFR' then
+			if (s <> 'REFR') and pc_keep_map.indexof(s) < 0 then
 				continue;
 
 			// deleted references should be considered matching
 			if elem_deleted_check(t) then begin
-				b := BaseRecord(MasterOrSelf(e));
+				b := BaseRecord(MasterOrSelf(t));
 			end else begin
 				b := BaseRecord(t);
 			end;
 
 			s := Signature(b);
-
 			if pc_keep_map.indexof(s) < 0 then
 				continue;
 
 			// ignore markers entirely
 			if elem_marker_check(b) then
 				continue;
+
+			// ignore refs with problems
+			if ref_check then begin
+				if not elem_error_check(t) then
+					continue;
+			end;
+
+			// ignore refs outside of the cell xedit thinks they should be in
+			if cell_check then begin
+				if not elem_cell_check(t) then
+					continue;
+			end;
 
 //			AddMessage('t: ' + FullPath(t));
 			Result := t;
@@ -872,61 +1005,116 @@ begin
 	s := cell_world_edid(e);
 	r := cell_resolve(s, cxy[1].x, cxy[1].y);
 
+if false then begin
 	if Assigned(r) then begin
-//		AddMessage('cell_rvis_cell: resolved (calculated): ' + FullPath(r));
+		AddMessage('cell_rvis_cell: resolved (calculated): ' + FullPath(r));
 	end else begin
-//		AddMessage('cell_rvis_cell: unable to resolve RVIS cell: ' + FullPath(e));
+		AddMessage('cell_rvis_cell: unable to resolve RVIS cell: ' + FullPath(e));
 	end;
+end;
 
 	Result := r;
 end;
 
-function cell_rvis_cell_grid(e: IInterface): TList;
+
+function cell_rvis_rvis_grid(e: IInterface; offset: integer): TList;
 var
-	tl: TList;
-	r, t, w: IInterface;
+	tl, tll: TList;
+	r, t: IInterface;
+	seen: THashedStringList;
 	cxy: TwbGridCell;
-	i, j: integer;
+	ix, iy, jx, jy, k: integer;
 	x, y: integer;
-	s: string;
-	flags: cardinal;
+	ws, key: string;
 begin
-	r := cell_rvis_cell(e);
-	if not Assigned(r) then
-		Exit;
-
-	// Add the RVIS cell to the front of the list
-	// so that it can be referenced by index 0.
+	ws := cell_world_edid(e);
 	tl := TList.create;
-	tl.add(r);
+	seen := THashedStringList.create;
+	seen.sorted := True;
 
-	cxy := GetGridCell(r);
-	s := cell_world_edid(r);
+//	AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(e), Name(e)]));
 
-	// Get the coordinates of the RVIS cell and find all
-	// adjacent cells in the grid.
-	cxy := GetGridCell(r);
-	for i := -1 to 1 do begin
-		for j := -1 to 1 do begin
-			x := cxy.x + i;
-			y := cxy.y + j;
-			t := cell_resolve(s, x, y);
-			if not Assigned(t) then begin
-//				AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,'NULL']));
-			end else begin
+        cxy := GetGridCell(e);
+	for ix := -offset to offset do begin
+		for iy := -offset to offset do begin
+			e := cell_resolve(ws, cxy.x + ix, cxy.y + iy);
+			if not Assigned(e) then
+				continue;
+
+			r := cell_rvis_cell(e);
+			if not Assigned(r) then
+				continue;
+
+			key := IntToStr(FormID(r));
+			if seen.indexOf(key) < 0 then begin
+				seen.add(key);
+
+//				AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(r), Name(r)]));
+				tl.add(r);
+			end;
+		end;
+	end;
+//	AddMessage(' ');
+
+	seen.free;
+
+	Result := tl;
+end;
+
+function cell_rvis_cell_grid(e: IInterface): TList;
+const
+	RVIS_OFFSET = 1;
+var
+	tl, rgl, rvl: TList;
+	r, t: IInterface;
+	cxy: TwbGridCell;
+	i, ix, iy, jx, jy, k: integer;
+	x, y: integer;
+	s, ws: string;
+begin
+	ws := cell_world_edid(e);
+	rvl := cell_rvis_rvis_grid(e, RVIS_OFFSET);
+	rgl := TList.create;
+
+	for i := 0 to Pred(rvl.count) do begin
+		r := ObjectToElement(rvl[i]);
+		if not Assigned(r) then
+			continue;
+
+		// Add the RVIS cell to the front of the list
+		// so that it can be predictably referenced at
+		// index 0 by client code.
+		tl := TList.create;
+		tl.add(r);
+
+		// Get the coordinates of the RVIS cell and find all
+		// adjacent cells in the grid.
+		cxy := GetGridCell(r);
+		for jx := -1 to 1 do begin
+			for jy := -1 to 1 do begin
+				x := cxy.x + jx;
+				y := cxy.y + jy;
+				t := cell_resolve(ws, x, y);
+				if not Assigned(t) then begin
+//					AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,'NULL']));
+					continue;
+				end;
+
 //				AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,FullPath(t)]));
 
 				// Since the RVIS cell already occupies the first slot
-				// ignore the relative 0,0 offset.
-				if (i = 0) and (j = 0) then
+				// ignore the relative 0,0 offset as it is the same cell.
+				if (jx = 0) and (jy = 0) then
 					continue;
 
 				tl.add(t);
 			end;
 		end;
+
+		rgl.add(tl);
 	end;
 
-	Result := tl;
+	Result := rgl;
 end;
 
 function cell_filter(e: IInterface; main_allow, other_allow, interior_allow, persistent_allow: boolean): boolean;
@@ -990,27 +1178,50 @@ begin
 			// Do not go past the current plugin for this element
 //AddMessage('stat_refr_promote: ' + FullPath(t));
 //AddMessage('stat_refr_promote: ' + FullPath(e));
-			if GetLoadOrder(GetFile(t)) >= GetLoadOrder(GetFile(e)) then
+			if GetLoadOrder(GetFile(t)) > GetLoadOrder(GetFile(e)) then
+				continue;
+			if Equals(GetFile(t), GetFile(plugin)) then
 				continue;
 
-			r := cell_refr_rvis_first(t);
+			r := cell_refr_rvis_first(t, true, true);
 //AddMessage('stat_refr_promote: r: ' + FullPath(r));
 			if not Assigned(r) then continue;
 
 			if Debug then begin
-				AddMessage(Format('%s: Copying: %s', [GetFileName(e), Name(r)]))
+//				AddMessage(Format('%s: Copying: %s', [GetFileName(e), Name(r)]))
 			end;
 
-			elem_copy_deep_safe(plugin, r);
+			// Guard against xedit corrupting CELL parents
+			if not plugin_cell_find(plugin, e) then
+				form_copy_safe(plugin, e, true);
+
+			form_copy_safe(plugin, r, true);
+
 			break;
 		end;
 	end;
 end;
 
+function plugin_cell_find(plugin: IwbFile; e: IInterface): Boolean;
+var
+	t: IInterface;
+	i: integer;
+begin
+	for i := 0 to Pred(OverrideCount(e)) do begin
+		t := OverrideByIndex(e, i);
+		if Equals(GetFile(t), plugin) then begin
+			Result := true;
+			Exit;
+		end;
+	end;
+
+	Result := false;
+end;
+
 function form_copy_safe(plugin: IwbFile; e: IInterface; nopv: boolean): IInterface;
 var
-	r, t: IInterface;
-	i: integer;
+	r, d, t, v: IInterface;
+	i, j: integer;
 	s: string;
 begin
 	try
@@ -1019,11 +1230,13 @@ begin
 		// XXX: an element with busted references. Attempt a normal deepcopy first and if it does not
 		// XXX: succeed then attempt an element by element copy whilst avoiding bogus XPRI data.
 
-		r := elem_copy_deep_safe(plugin, e);
+		r := elem_copy_deep(plugin, e);
 	except
 		// Deep copy failed, most likely due to bad XPRI data, attempt a per-element copy.
 		// The vast majority of the time this branch will only be taken for XPRI data.
 		on Ex: Exception do begin
+			plugin_elem_remove(plugin, e);
+
 			if Debug then begin
 				AddMessage('Failed to deep copy: ' + FullPath(e));
 				AddMessage('             reason: ' + Ex.Message);
@@ -1058,7 +1271,7 @@ begin
 				end;
 			except
 				on Ex: Exception do begin
-					Remove(r);
+					plugin_elem_remove(plugin, e);
 					Raise Exception.Create(Ex.Message);
 				end;
 			end;
@@ -1070,7 +1283,7 @@ begin
 		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
-			Remove(r);
+			plugin_elem_remove(plugin, e);
 			Raise Exception.Create(Ex.Message);
 		end;
 	end;
@@ -1078,6 +1291,7 @@ begin
 	Result := r;
 end;
 
+// XXX: note this copies to a plugin rather than merging back into the master/override
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
@@ -1096,7 +1310,7 @@ begin
 		elem_version_sync(e, r);
 	except
 		on Ex: Exception do begin
-			Remove(r);
+			plugin_elem_remove(plugin, o);
 			Raise Exception.Create(Ex.Message);
 		end;
 	end;
@@ -1474,10 +1688,10 @@ end;
 
 procedure plugin_cell_rvis_master_add(e: IInterface; require_static: boolean);
 var
-	tl: TList;
+	rgl, tl: TList;
 	m, t, r, rvis, plugin: IInterface;
 	cxy: TwbGridCell;
-	rvx, rvy, i, j: integer;
+	rvx, rvy, i, j, k: integer;
 	f: string;
 begin
 	// Non-persistent exterior cells only
@@ -1485,111 +1699,132 @@ begin
 		Exit;
 
 	plugin := GetFile(e);
-	tl := cell_rvis_cell_grid(e);
-	if not Assigned(tl) then
+	rgl := cell_rvis_cell_grid(e);
+	if not Assigned(rgl) then
 		Exit;
 
-	// RVIS cell is always at the head of the list
-	rvis := ObjectToElement(tl[0]);
-	cxy := GetGridCell(rvis);
-	rvx := cxy.x;
-	rvy := cxy.y;
+	for i := 0 to Pred(rgl.count) do begin
+		tl := TList(rgl[i]);
+		if not Assigned(tl) then
+			continue;
 
-	for i := 0 to Pred(tl.count) do begin
-		t := ObjectToElement(tl[i]);
-		m := MasterOrSelf(t);
-		for j := -1 to Pred(OverrideCount(m)) do begin
-			if j < 0 then begin
-				r := m;
-			end else begin
-				r := OverrideByIndex(m, j);
-			end;
+		// RVIS cell is always at the head of the list
+		rvis := ObjectToElement(tl[0]);
+		cxy := GetGridCell(rvis);
+		rvx := cxy.x;
+		rvy := cxy.y;
 
-			// Do not go past the current plugin for this element
-			if GetLoadOrder(GetFile(r)) >= GetLoadOrder(GetFile(e)) then
-				break;
-
-			// Account for more than just stat objects as previs
-			// takes other things into account for physics.
-			if require_static and not Assigned(cell_refr_rvis_first(r)) then
+		for j := 0 to Pred(tl.count) do begin
+			t := ObjectToElement(tl[j]);
+			if not Assigned(t) then
 				continue;
 
-			// Check for masters that would be added but are not
-			// present in the plugin to indicate what would be
-			// added. Try this with and without STAT only.
-			f := GetFileName(r);
-			if not HasMaster(plugin, f) then begin
-				AddMessage(Format('VIS: [%d][%d] %s needs master: %s (rvis: %d,%d :: e: %s :: r: %s)', [i,j+1,GetFileName(plugin),f,rvx,rvy,Name(e),Name(r)]));
-			end;
-			plugin_master_add(plugin, r, true);
+			m := MasterOrSelf(t);
+			for k := -1 to Pred(OverrideCount(m)) do begin
+				if k < 0 then begin
+					r := m;
+				end else begin
+					r := OverrideByIndex(m, k);
+				end;
 
-//			AddMessage(Format('[%d][%d] %s', [i,j+1,FullPath(r)]));
+				// Do not go past the current plugin for this element
+				if GetLoadOrder(GetFile(r)) >= GetLoadOrder(plugin) then
+					break;
+
+				// Account for more than just stat objects as previs
+				// takes other things into account for physics.
+				if require_static and not cell_refr_rvis_check(r) then
+					continue;
+
+				// Check for masters that would be added but are not
+				// present in the plugin to indicate what would be
+				// added. XXX: Try this with and without STAT only?
+				if not HasMaster(plugin, GetFileName(r)) then begin
+					AddMessage(Format('VIS: [%d][%d][%d] %s needs master: %s (rvis: %d,%d :: e: %s :: r: %s)', [i,j,k+1,GetFileName(plugin),GetFileName(r),rvx,rvy,Name(e),Name(r)]));
+				end;
+				plugin_master_add(plugin, r, true);
+
+//				AddMessage(Format('[%d][%d][%d] %s', [i,j,k+1,FullPath(r)]));
+			end;
 		end;
+
+		tl.free;
 	end;
 
-	tl.free;
+	rgl.free;
 end;
 
-procedure plugin_cell_rvis_master_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
+procedure plugin_master_cell_rvis_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
 var
-	tl: TList;
+	tl, rgl: TList;
 	cxy: TwbGridCell;
 	t, r, m: IInterface;
-	i, j, oc: integer;
+	i, j, k, oc: integer;
 	keep, remove: boolean;
 begin
 	if (Signature(e) <> 'CELL') then
 		Exit;
 
-	tl := nil;
+	rgl := nil;
 	remove := true;
 	if cell_filter(e, main_allow, other_allow, interior_allow, false) then
-		tl := cell_rvis_cell_grid(e);
+		rgl := cell_rvis_cell_grid(e);
 
-	if Assigned(tl) then begin
-		for i := 0 to Pred(tl.count) do begin
-			t := ObjectToElement(tl[i]);
-			m := MasterOrSelf(t);
-			for j := -1 to Pred(OverrideCount(m)) do begin
-				if j < 0 then begin
-					r := m;
-				end else begin
-					r := OverrideByIndex(m, j);
+	if Assigned(rgl) then begin
+		for i := 0 to Pred(rgl.count) do begin
+			tl := TList(rgl[i]);
+			if not Assigned(tl) then
+				continue;
+
+			for j := 0 to Pred(tl.count) do begin
+				t := ObjectToElement(tl[j]);
+				if not Assigned(t) then
+					continue;
+
+				m := MasterOrSelf(t);
+				for k := -1 to Pred(OverrideCount(m)) do begin
+					if k < 0 then begin
+						r := m;
+					end else begin
+						r := OverrideByIndex(m, k);
+					end;
+
+//					cxy := GetGridCell(r);
+//					AddMessage(Format('%d,%d %s', [cxy.x,cxy.y,FullPath(r)]));
+
+					// Do not go past the current plugin for this element
+					// as that means this plugin (r) is dependent on a cell
+					// from plugin (e) within the rvis grid data. This is
+					// specifically for masters a plugin would be dependent
+					// on as if the load order of the last override is the
+					// same as the plugin (e) then it is data within that
+					// plugin specifically.
+					//
+					// Essentially what is going on here is that if an override
+					// later in the load order were to generate a vis grid
+					// for the same set of cells for a plugin earlier in the
+					// load order, then this plugin must be a master for that
+					// plugin. Otherwise the later plugin will override the
+					// vis data from the earlier one. As a result this loop
+					// looks for any cell coming from a plugin later in the load
+					// order and if it finds one it prevents removal of this cell.
+					//
+					if GetLoadOrder(GetFile(r)) > GetLoadOrder(GetFile(e)) then begin
+//						AddMessage('remove = false: ' + FullPath(r));
+						remove := false;
+						break;
+					end;
+
+//					// XXX: Check for cells that only have things RVIS cares about?
+//					if cell_refr_rvis_check(r) then begin
+//						continue;
 				end;
-
-//				cxy := GetGridCell(r);
-//				AddMessage(Format('%d,%d %s', [cxy.x,cxy.y,FullPath(r)]));
-
-				// Do not go past the current plugin for this element
-				// as that means this plugin (r) is dependent on a cell
-				// from plugin (e) within the rvis grid data. This is
-				// specifically for masters a plugin would be dependent
-				// on as if the load order of the last override is the
-				// same as the plugin (e) then it is data within that
-				// plugin specifically.
-				//
-				// Essentially what is going on here is that if an override
-				// later in the load order were to generate a vis grid
-				// for the same set of cells for a plugin earlier in the
-				// load order, then this plugin must be a master for that
-				// plugin. Otherwise the later plugin will override the
-				// vis data from the earlier one. As a result this loop
-				// looks for any cell coming from a plugin later in the load
-				// order and if it finds one it prevents removal of this cell.
-				//
-				if GetLoadOrder(GetFile(r)) > GetLoadOrder(GetFile(e)) then begin
-//					AddMessage('remove = false: ' + FullPath(r));
-					remove := false;
-					break;
-				end;
-
-//				// XXX: Check for cells that only have things RVIS cares about?
-//				if Assigned(cell_refr_rvis_first(r)) then begin
-//					continue;
 			end;
+
+			tl.free;
 		end;
 
-		tl.free;
+		rgl.free;
 	end else if not IsWinningOverride(e) and cell_filter(e, main_allow, other_allow, interior_allow, false) then begin
 		remove := false;
 	end;
@@ -1635,7 +1870,7 @@ begin
 		// any statics of its own. If it does then the master
 		// will be added regardless to guard against generation
 		// of previs data not taking into account the override.
-		if require_static and not Assigned(cell_refr_rvis_first(t)) then
+		if require_static and not cell_refr_rvis_check(t) then
 			continue;
 
 		plugin_master_add(plugin, t, true);
@@ -1653,7 +1888,7 @@ begin
 	end;
 end;
 
-procedure plugin_master_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
+procedure plugin_master_refr_clean(e: IInterface; main_allow, other_allow, interior_allow: boolean);
 var
 	b: IInterface;
 	s, ws, gl, fstr: string;
@@ -1691,9 +1926,9 @@ begin
 		// Non-persistent cells only
 		if not cell_filter(e, main_allow, interior_allow, other_allow, false) then begin
 			remove := true;
-		end else if not Assigned(cell_refr_rvis_first(e)) then begin
+		end else if not cell_refr_rvis_check(e) then begin
 			remove := true;
-//		end else if not Assigned(cell_refr_stat_first(e)) then begin
+//		end else if not cell_refr_stat_check(e) then begin
 //			remove := true;
 		end;
 	end;
@@ -1713,6 +1948,60 @@ begin
 
 end;
 
+procedure master_clean(e: IInterface; main_allow, other_allow, interior_allow, persistent_allow, refr_clean, rvis_clean: boolean);
+var
+	editable: boolean;
+begin
+	editable := IsEditable(e);
+
+	if Signature(e) = 'CELL' then begin
+		if editable and refr_clean then
+			plugin_master_refr_clean(e, main_allow, other_allow, interior_allow);
+		if editable and rvis_clean then
+			plugin_master_cell_rvis_clean(e, main_allow, other_allow, interior_allow);
+	end else begin
+		if editable then
+//			plugin_navm_clean(e);
+		Exit;
+	end;
+
+	// General add masters for all non-persistent cells
+// XXX: use boolean for winning override
+//	if (win_allow or not isWinningOverride(e)) and cell_filter(e, main_allow, other_allow, interior_allow, persistent_allow) then begin
+	if cell_filter(e, main_allow, other_allow, interior_allow, persistent_allow) then begin
+// XXX: only add if has pc/pv refrs?
+		cell_queue.add(e);
+	end else if editable then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		cell_remove(e);
+	end;
+end;
+
+procedure master_add(e: IInterface; main_allow, other_allow, interior_allow, persistent_allow, promote: boolean);
+var
+	editable: boolean;
+begin
+	editable := IsEditable(e);
+
+	if Signature(e) <> 'CELL' then begin
+		if editable then
+//			plugin_navm_clean(e);
+		Exit;
+	end;
+
+	// General add masters for all non-persistent cells
+	if cell_filter(e, main_allow, other_allow, interior_allow, persistent_allow) then begin
+		if editable and promote and not cell_refr_rvis_check(e) then
+			stat_refr_promote(GetFile(e), e);
+
+// XXX: only add if has pc/pv refrs?
+		cell_queue.add(e);
+	end else if editable then begin
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+		cell_remove(e);
+	end;
+end;
+
 function Process(e: IInterface): integer;
 var
 	o, m, t, r, g, plugin: IInterface;
@@ -1723,152 +2012,118 @@ var
 	merge: boolean;
 	xy : TwbGridCell;
 begin
-//	mode := 'init_clean';
-//	mode := 'init_cell_rvis_master_clean';
 
-	mode := 'init_cell_exts_master_clean';
-//	mode := 'init_cell_ints_master_clean';
+//	mode := 'init_master_refr_clean';
+//	mode := 'init_master_cell_rvis_clean';
+
 //	mode := 'init_cell_all_master_clean';
+//	mode := 'init_cell_exts_master_clean';
+//	mode := 'init_cell_main_master_clean';
+//	mode := 'init_cell_ints_master_clean';
+	mode := 'init_cell_other_master_clean';
 
-//	mode := 'init_cell_exts_master_add';
-//	mode := 'init_cell_ints_master_add';
 //	mode := 'init_cell_all_master_add';
-
+//	mode := 'init_cell_exts_master_add';
+//	mode := 'init_cell_main_master_add';
+//	mode := 'init_cell_ints_master_add';
+//	mode := 'init_cell_other_master_add';
 
 //	mode := 'init_alt';
 //	mode := 'init';
-//	mode := 'precombine';
-//	mode := 'previs';
-//	mode := 'rvis_proc';
+//	mode := 'precombine_merge';
+//	mode := 'precombine_split';
+//	mode := 'previs_merge';
+//	mode := 'previs_split';
+//	mode := 'final';
+//	mode := 'stats';
 
-	if mode = 'init_clean' then begin
+	// direct cleaning calls
+
+	if mode = 'init_master_refr_clean' then begin
 		// Nuke anything not needed for precombines (or previs)
 		// XXX: test differences for cleaned vs uncleaned, do not add masters
-		plugin_master_clean(e, true, true, true);
+		plugin_master_refr_clean(e, true, true, true);
 
 		Exit;
 	end;
 
-	if mode = 'init_cell_rvis_master_clean' then begin
-		if Signature(e) <> 'CELL' then
-			Exit;
+	if mode = 'init_master_cell_rvis_clean' then begin
+		plugin_master_cell_rvis_clean(e, true, true, true);
 
-		plugin_cell_rvis_master_clean(e, true, true, true);
+		Exit;
+	end;
+
+	if Signature(e) <> 'CELL' then
+		Exit;
+
+	// master clean
+
+	if mode = 'init_cell_all_master_clean' then begin
+		if not Assigned(plugin_final) then
+			plugin_final := plugin_file_resolve('all', 0, 'final');
+		master_clean(e, true, true, true, false, false, false);
 
 		Exit;
 	end;
 
 	if mode = 'init_cell_exts_master_clean' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
-
-		// General add masters for all exterior non-persistent cells
-		if not isWinningOverride(e) and cell_filter(e, true, true, false, false) then begin
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
-
+		if not Assigned(plugin_final) then
+			plugin_final := plugin_file_resolve('exts', 0, 'final');
+		master_clean(e, true, true, false, false, false, false);
 		Exit;
 	end;
 
 	if mode = 'init_cell_ints_master_clean' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
-
-		// General add masters for all interior non-persistent cells
-		if not isWinningOverride(e) and cell_filter(e, false, false, true, false) then begin
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
-
+		if not Assigned(plugin_final) then
+			plugin_final := plugin_file_resolve('ints', 0, 'final');
+		master_clean(e, false, false, true, false, false, false);
 		Exit;
 	end;
 
-	if mode = 'init_cell_all_master_clean' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
+	if mode = 'init_cell_main_master_clean' then begin
+		if not Assigned(plugin_final) then
+			plugin_final := plugin_file_resolve('main', 0, 'final');
+		master_clean(e, true, false, false, false, false, false);
+		Exit;
+	end;
 
-		// General add masters for all non-persistent cells
-		if not isWinningOverride(e) and cell_filter(e, true, true, true, false) then begin
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
+	if mode = 'init_cell_other_master_clean' then begin
+		if not Assigned(plugin_final) then
+			plugin_final := plugin_file_resolve('other', 0, 'final');
+		master_clean(e, false, true, false, false, false, false);
+		Exit;
+	end;
 
+	// master add
+
+	if mode = 'init_cell_all_master_add' then begin
+		master_add(e, true, true, true, false, true);
 		Exit;
 	end;
 
 	if mode = 'init_cell_exts_master_add' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
-
-		// General add masters for all exterior non-persistent cells
-		if cell_filter(e, true, true, false, false) then begin
-			if not Assigned(cell_refr_rvis_first(e)) then begin
-				stat_refr_promote(GetFile(e), e);
-			end;
-
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
-
+		master_add(e, true, true, false, false, true);
 		Exit;
 	end;
 
 	if mode = 'init_cell_ints_master_add' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
-
-		// General add masters for all interior non-persistent cells
-		if cell_filter(e, false, false, true, false) then begin
-			if not Assigned(cell_refr_rvis_first(e)) then
-				stat_refr_promote(GetFile(e), e);
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
-
+		master_add(e, false, false, true, false, true);
 		Exit;
 	end;
 
-	if mode = 'init_cell_all_master_add' then begin
-		if Signature(e) <> 'CELL' then begin
-			plugin_navm_clean(e);
-			Exit;
-		end;
-
-		// General add masters for all non-persistent cells
-		if cell_filter(e, true, true, true, false) then begin
-			if not Assigned(cell_refr_rvis_first(e)) then
-				stat_refr_promote(GetFile(e), e);
-			cell_queue.add(e);
-		end else begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			cell_remove(e);
-		end;
-
+	if mode = 'init_cell_main_master_add' then begin
+		master_add(e, true, false, false, false, true);
 		Exit;
 	end;
 
-	if mode = 'rvis_proc' then begin
+	if mode = 'init_cell_other_master_add' then begin
+		master_add(e, false, true, false, false, true);
+		Exit;
+	end;
+
+Exit;
+
+	if mode = 'stats' then begin
 		plugin_cell_stat_master_add(e, true);
 		plugin_cell_rvis_master_add(e, true);
 		Exit;
@@ -1906,19 +2161,6 @@ begin
 		if Debug then AddMessage('Element file contains PrevisFileSuffix: ' + FullPath(e));
 		Exit;
 	end;
-
-if false then begin
-	// XXX: check existing generated precombined plugins for cells without precombines
-	// XXX: but possibly with XPRI data (or vice versa)
-	// Skip cells without precombination
-	if not (ElementExists(e, 'XCRI') or ElementExists(e, 'PCMB')) then begin
-		// XXX: Clean this up
-		if mode <> 'previs' then
-			Exit;
-		if not (ElementExists(e, 'XPRI') or ElementExists(e, 'VISI') or ElementExists(e, 'RVIS')) then
-			Exit;
-	end;
-end;
 
 	m := MasterOrSelf(e);
 	oc := OverrideCount(m);
@@ -1966,7 +2208,7 @@ end;
 		// attempt to figure out the most recent one. This sometimes
 		// happens when generating so-called sharded data for the same
 		// plugin when using CKs command line options.
-		if (mode = 'precombine') and ElementExists(t, 'PCMB') then begin
+		if ((mode = 'precombine_merge') or (mode = 'precombine_split')) and ElementExists(t, 'PCMB') then begin
 			ts := ts_to_int(GetElementEditValues(t, 'PCMB'));
 			if ts = 0 or ts > pcmb_max then begin
 				if pcmb_max <> 0 then
@@ -1974,7 +2216,7 @@ end;
 				pcmb_max := ts;
 				e := t;
 			end;
-		end else if (mode = 'previs') and ElementExists(t, 'VISI') then begin
+		end else if ((mode = 'previs_merge') or (mode = 'previs_split')) and ElementExists(t, 'VISI') then begin
 			ts := ts_to_int(GetElementEditValues(t, 'VISI'));
 			if ts = 0 or ts > visi_max then begin
 				if visi_max <> 0 then
@@ -1985,85 +2227,19 @@ end;
 		end;
 
 		// XXX: consider allowing precombine_merge files in previs mode
-		if Pos('precombine_merge', s) <> 0 then
+		if Pos('precombine_split', s) <> 0 then
 			continue;
-		if Pos('previs_merge', s) <> 0 then
+		if Pos('previs_split', s) <> 0 then
 			continue;
 
 		o := t;
 		break;
 	end;
 
-// TEST HERE NOW
-if false then begin
+AddMessage(Format('e: %s', FullPath(e)));
+AddMessage(Format('o: %s', FullPath(o)));
 
-	cs := nil;
-	efile := GetFileName(e);
-	for i := Pred(OverrideCount(m)) downto -1 do begin
-		if i < 0 then begin
-			t := m;
-		end else begin
-			t := OverrideByIndex(m, i);
-		end;
-
-		// XXX: Figure out what to do about statics in t or e or both t and e?
-		if not Assigned(cell_refr_stat_first(t)) then begin
-//			AddMessage('no stat refr(t): ' + FullPath(t));
-			continue;
-		end;
-		if not Assigned(cell_refr_stat_first(e)) then begin
-//			AddMessage('no stat refr(e): ' + FullPath(e));
-			continue;
-		end;
-
-		tfile := GetFileName(t);
-
-		if Assigned(cs) then begin
-			cs := cs + ':' + tfile;
-		end else begin
-			cs := tfile;
-		end;
-
-		idx := GetLoadOrder(GetFile(e));
-		if not Assigned(cmap[idx]) then
-			cmap[idx] := THashedStringList.create;
-		if cmap[idx].indexOf(tfile) < 0 then
-			cmap[idx].addObject(tfile, t);
-
-		if Equals(t, e) then
-			continue;
-
-		if (rmap[0].indexOf(tfile + ':' + efile) < 0) then begin
-			xy := GetGridCell(t);
-			AddMessage(Format('%s: Adding: %s (%d, %d)', [tfile, efile, xy.x, xy.y]));
-			rmap[0].addObject(tfile + ':' + efile, t);
-		end;
-
-		if (rmap[1].indexOf(efile + ':' + tfile) < 0) then begin
-//			xy := GetGridCell(e);
-//			AddMessage(Format('%s: Adding: %s (%d, %d) [reverse]', [efile, tfile, xy.x, xy.y]));
-			rmap[1].addObject(efile + ':' + tfile, e);
-		end;
-
-	end;
-
-	if Assigned(cs) and (rmap[2].indexOf(cs) < 0) then begin
-//		AddMessage('adding cs: ' + cs);
-		rmap[2].addObject(cs, e);
-	end;
-
-	Result := False;
-	Exit;
-end;
-
-if false then begin
-	AddMessage(Format('Checking children of element %s using override %s for master %s [TEST]', [GetFileName(e), GetFileName(o), GetFileName(m)]));
-//	g := ChildGroup(o);
-//	cell_refr_stat_all(o);
-
-	Result := True;
-	Exit;
-end;
+Exit;
 
 	merge := (MergeIntoOverride and IsEditable(o));
 if false then begin
@@ -2089,13 +2265,11 @@ end;
 	try
 		if mode = 'init' then begin
 			init_gen(plugin, e, o, m);
-		end else if mode = 'precombine' then begin
-			if merge then begin
-				precombine_merge(plugin, e, o, m);
-			end else begin
-				precombine_split(plugin, e, o, m);
-			end;
-		end else if mode = 'previs' then begin
+		end else if mode = 'precombine_merge' then begin
+			precombine_merge(plugin, e, o, m);
+		end else if mode = 'precombine_split' then begin
+			precombine_split(plugin, e, o, m);
+		end else if mode = 'previs_merge' then begin
 			previs_merge(plugin, e, o, m);
 		end else if mode = 'final' then begin
 			precombine_previs_final(plugin, e);
@@ -2232,23 +2406,37 @@ if false then begin
 end;
 
 if true then begin
-	AddMessage('Adding cell masters');
+	AddMessage(Format('Adding cell masters for %d cells', [ cell_queue.count ]));
 	for i := 0 to Pred(cell_queue.count) do begin
 		t := ObjectToElement(cell_queue[i]);
 		if not Assigned(t) then continue;
 
+		if Assigned(plugin_final) then begin
+			if Equals(t, WinningOverride(t)) then begin
+				stat_refr_promote(plugin_final, t);
+				plugin_master_add(plugin_final, t, true);
+			end;
+		end;
+
 //		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 		plugin_cell_stat_master_add(t, true);
+
+		if ((i + 1 = cell_queue.count) or ((i + 1) mod (trunc(cell_queue.count / 10) + 1) = 0)) then
+			AddMessage(Format('Remain: %d cells (%d/%d)', [ cell_queue.count - (i + 1), i + 1, cell_queue.count ]));
 	end;
 
-	AddMessage('Adding vis grid masters');
+	AddMessage(Format('Adding vis grid masters for %d cells', [ cell_queue.count ]));
 	for i := 0 to Pred(cell_queue.count) do begin
 		t := ObjectToElement(cell_queue[i]);
 		if not Assigned(t) then continue;
 
 //		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 		plugin_cell_rvis_master_add(t, true);
+
+		if ((i + 1 = cell_queue.count) or ((i + 1) mod (trunc(cell_queue.count / 10) + 1) = 0)) then
+			AddMessage(Format('Remain: %d cells (%d/%d)', [ cell_queue.count - (i + 1), i + 1, cell_queue.count ]));
 	end;
+
 end;
 
 	cell_queue.free;

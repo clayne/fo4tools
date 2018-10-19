@@ -199,6 +199,7 @@ sub main {
 		my @qt;
 		for (my $i = 0; $i < @$mproc; $i++) {
 			my ($offset, $master) = map $mproc->[$i]{$_}, qw(offset master);
+			next unless (!$protect || !$protect_tab{$master});
 
 			if ($esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
@@ -252,10 +253,21 @@ sub main {
 				}
 
 				# If there is no matching esp file for the esm master being
-				# rewritten back to esp, then it never was an esp in the first
+				# rewritten back to esp, then it was never an esp in the first
 				# place and should be completely ignored.
-				my $esp = plugin_sub($esm, [ 'esm', 'esp' ], @sub);
-				next if (! -f "$dirname/$esp"); # CRITICAL
+				my $esp;
+				foreach my $ext (qw(esp esm)) {
+					my $__esp = plugin_sub($esm, [ 'esm', $ext ], @sub);
+
+					# If the renamed master is the same as the existing
+					# master *or* the renamed master does not exist, then
+					# no modification should be done. This is important.
+					next if ($__esp eq $esm || ! -f "$dirname/$__esp");
+
+					$esp = $__esp;
+					last;
+				}
+				next unless ($esp);
 
 				# Update MAST to point to esp file by cloning and reopening for write
 				plugin_clone($path, $path, $overwrite);
