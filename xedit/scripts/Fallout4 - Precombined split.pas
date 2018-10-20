@@ -638,11 +638,60 @@ begin
 	end;
 end;
 
+function cell_refr_ent_filter(e: IInterface; filter: THashedStringList; ref_check, cell_check: boolean): IInterface;
+var
+	t, b: IInterface;
+	i: integer;
+	s: string;
+begin
+	for i := 0 to Pred(ElementCount(e)) do begin
+		t := ElementByIndex(e, i);
+		s := Signature(t);
+
+		if (s <> 'REFR') and (filter.indexof(s) < 0) then
+			continue;
+
+		// deleted references should be considered matching
+		if elem_deleted_check(t) then begin
+			b := BaseRecord(MasterOrSelf(t));
+		end else begin
+			b := BaseRecord(t);
+		end;
+
+		s := Signature(b);
+		if (filter.indexof(s) < 0) then
+			continue;
+
+		// ignore markers entirely
+		if elem_marker_check(b) then
+			continue;
+
+		// ignore refs with problems
+		if ref_check then begin
+			if not elem_error_check(t) then
+				continue;
+		end;
+
+		// ignore refs outside of the cell xedit thinks they should be in
+		if cell_check then begin
+			if not elem_cell_check(t) then
+				continue;
+		end;
+
+		Result := t;
+		Exit;
+	end;
+
+	Result := nil;
+end;
+
 function cell_refr_rvis_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
-	i, j: integer;
+	i, j, k: integer;
 	s: string;
+	children: array[0..1] of IInterface;
+	filter: array[0..1] of THashedStringList;
 begin
 	if Signature(e) <> 'CELL' then
 		Exit;
@@ -652,50 +701,44 @@ begin
 		Exit;
 //	AddMessage('cg: ' + FullPath(cg));
 
+	children[0] := nil;
+	children[1] := nil;
+
+	// Prioritize temporary references over persistent ones
 	for i := 0 to Pred(ElementCount(cg)) do begin
 		r := ElementByIndex(cg, i);
-
-//		AddMessage('r: ' + FullPath(r));
-
-		for j := 0 to Pred(ElementCount(r)) do begin
-			t := ElementByIndex(r, j);
-			s := Signature(t);
-
-			if (s <> 'REFR') and (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
-				continue;
-
-			// deleted references should be considered matching
-			if elem_deleted_check(t) then begin
-				b := BaseRecord(MasterOrSelf(t));
-			end else begin
-				b := BaseRecord(t);
-			end;
-
-			s := Signature(b);
-			if (pc_keep_map.indexof(s) < 0) and (pv_keep_map.indexof(s) < 0) then
-				continue;
-
-			// ignore markers entirely
-			if elem_marker_check(b) then
-				continue;
-
-			// ignore refs with problems
-			if ref_check then begin
-				if not elem_error_check(t) then
-					continue;
-			end;
-
-			// ignore refs outside of the cell xedit thinks they should be in
-			if cell_check then begin
-				if not elem_cell_check(t) then
-					continue;
-			end;
-
-//			AddMessage('t: ' + FullPath(t));
-			Result := t;
-			Exit;
+		case GroupType(r) of
+		9: children[0] := r; //temporary
+		8: children[1] := r; // persistent
 		end;
 	end;
+
+	filter[0] := pc_keep_map;
+	filter[1] := pv_keep_map;
+
+	// Prioritize statics references over non-statics
+	for i := 0 to Pred(length(children)) do begin
+		r := children[i];
+		if not Assigned(r) then
+			continue;
+//		AddMessage('r: ' + FullPath(r));
+
+		for j := 0 to Pred(length(filter)) do begin
+			if not Assigned(filter[i]) then
+				continue;
+
+			t := cell_refr_ent_filter(r, filter[i], ref_check, cell_check);
+			if Assigned(t) then begin
+//				if i = 1 then
+//					AddMessage('PERSISTENT: ' + FullPath(t));
+//				AddMessage('t: ' + FullPath(t));
+				Result := t;
+				Exit;
+			end;
+		end;
+	end;
+
+	Result := nil;
 end;
 
 function cell_refr_stat_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
@@ -712,50 +755,45 @@ begin
 		Exit;
 //	AddMessage('cg: ' + FullPath(cg));
 
+	children[0] := nil;
+	children[1] := nil;
+
+	// Prioritize temporary references over persistent ones
 	for i := 0 to Pred(ElementCount(cg)) do begin
 		r := ElementByIndex(cg, i);
+		case GroupType(r) of
+		9: children[0] := r; //temporary
+		8: children[1] := r; // persistent
+		end;
+
+	if GroupType(r) = 8 then
+		AddMessage(FullPath(r));
+	end;
+
+	filter[0] := pc_keep_map;
+	filter[1] := nil;
+
+	// Prioritize statics references over non-statics
+	for i := 0 to Pred(length(children)) do begin
+		r := children[i];
+		if not Assigned(r) then
+			continue;
 
 //		AddMessage('r: ' + FullPath(r));
 
-		for j := 0 to Pred(ElementCount(r)) do begin
-			t := ElementByIndex(r, j);
-			s := Signature(t);
-
-			if (s <> 'REFR') and pc_keep_map.indexof(s) < 0 then
+		for j := 0 to Pred(length(filter)) do begin
+			if not Assigned(filter[i]) then
 				continue;
 
-			// deleted references should be considered matching
-			if elem_deleted_check(t) then begin
-				b := BaseRecord(MasterOrSelf(t));
-			end else begin
-				b := BaseRecord(t);
+			t := cell_refr_ent_filter(r, filter[i], ref_check, cell_check);
+			if Assigned(t) then begin
+				Result := t;
+				Exit;
 			end;
-
-			s := Signature(b);
-			if pc_keep_map.indexof(s) < 0 then
-				continue;
-
-			// ignore markers entirely
-			if elem_marker_check(b) then
-				continue;
-
-			// ignore refs with problems
-			if ref_check then begin
-				if not elem_error_check(t) then
-					continue;
-			end;
-
-			// ignore refs outside of the cell xedit thinks they should be in
-			if cell_check then begin
-				if not elem_cell_check(t) then
-					continue;
-			end;
-
-//			AddMessage('t: ' + FullPath(t));
-			Result := t;
-			Exit;
 		end;
 	end;
+
+	Result := nil;
 end;
 
 function cell_world_edid(e: IInterface): string;
@@ -2019,8 +2057,8 @@ begin
 //	mode := 'init_cell_all_master_clean';
 //	mode := 'init_cell_exts_master_clean';
 //	mode := 'init_cell_main_master_clean';
-//	mode := 'init_cell_ints_master_clean';
-	mode := 'init_cell_other_master_clean';
+	mode := 'init_cell_ints_master_clean';
+//	mode := 'init_cell_other_master_clean';
 
 //	mode := 'init_cell_all_master_add';
 //	mode := 'init_cell_exts_master_add';

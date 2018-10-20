@@ -200,6 +200,9 @@ function ck_clone() {
 	# Hardcopy CK ini files
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$src"/ "$build/$job"/
 
+	# Explicitly remove CK prefs ini so it'll be regenerated from a clean slate to avoid strange behavior.
+	rm "$build/$job/CreationKitPrefs.ini"
+
 	# Alter build-dir versions of CK ini files
 	for j in "$build/$job/CreationKit.ini" "$build/$job/CreationKitPrefs.ini" "$build/$job/CreationKitCustom.ini"; do
 		[[ -f "$j" ]] && ck_ini_rewrite < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
@@ -314,9 +317,15 @@ function ck_wrap_archive() {
 		if [[ "$mode" == "sanitize" ]]; then
 			if [[ ! -f "$archive_main" ]]; then
 				continue
-#			elif ! fgrep -q "$plugin" "$archive_main"; then
-#				continue
 			fi
+
+#			if [[ "$plugin" == "$plugin_ck" ]]; then
+#				continue
+#			fi
+
+#			if ! fgrep -q "$plugin" "$archive_main"; then
+#				continue
+#			fi
 		fi
 
 		if ! lockfile -l 3600 -1 -r 1 "$cache_lock"; then
@@ -553,7 +562,7 @@ function ck_wrap() {
 	plugin-master-reloc -vr "$bdir/$job/Data/$plugin_ck"
 
 	# Sanitize archive filename and embedded filenames within archive
-	ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "sanitize" "$type" "$area" "$plugin" "${ESP_MASTERS[@]}"
+	ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "sanitize" "$type" "$area" "$area_ck" "$plugin" "${ESP_MASTERS[@]}"
 
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
@@ -589,7 +598,7 @@ function ck_wrap() {
 		fi
 
 		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
-			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin"
+			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
 		fi
 		;;
 
@@ -744,7 +753,7 @@ function ck_wrap() {
 			fi
 
 			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin"
+				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
 
 				# If plugin name has been sanitized or flipped to an esm, change any
 				# directory references back to the original plugin name.
@@ -848,7 +857,7 @@ function ck_wrap() {
 			fi
 
 			if [[ -d "$bdir/$job/Data/Vis" ]]; then
-				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$plugin"
+				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
 
 				# If plugin name has been sanitized or flipped to an esm, change any
 				# directory references back to the original plugin name.
@@ -1288,7 +1297,7 @@ done | perl -e '
 	}
 
 	# Sort by count of CELL records within a plugin
-	open(my $fd, "-|", "find Data -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -c CELL") or die;
+	open(my $fd, "-|", "find Data -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
 	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
 	close($fd);
 
