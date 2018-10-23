@@ -75,6 +75,19 @@ function ck_ini_rewrite() {
 	# bHideImportantWarnings=1
 	# bUseVersionControl=0
 	#
+	# Other keys:
+	# uDefaultCombinedObjectLevelsXY:General
+	# uDefaultCombinedObjectLevelsZ:General
+	# bCombinedObjectsAvailableForPicking:Display
+	# bOnlyLoadPreVis3D:General
+	# bOnlyLoadCombinable3D:General
+	# fPreVisCameraBufferNear:General
+	# fPreVisCameraZShift:General
+	# bDoMultithreadedVisQuery:General
+	# bUsePreCulledObjects:Display
+	# bPreCulledObjectsEnabled:General
+	# bAllowResourceReloading:General
+	# bUsePreCreatedSCOL:General
 
 	set -e
 	set -o pipefail
@@ -94,6 +107,18 @@ function ck_ini_rewrite() {
 #		shash["General"]["bAllowClearOldestBufferedExterior"]=1;
 #		shash["General"]["bMinimizeCachedExteriors"]=1;
 #		shash["General"]["bPreemptivelyUnloadCells"]=1;
+#		shash["General"]["bOutputCombinedGeomDataWhenTinting"]=1;
+#		shash["General"]["bForcePreCombinedObject32bitExport"]=0;
+#		shash["General"]["bCheckDLCCombinedKeys"]=0;
+#		shash["General"]["bFixDLCCombinedKeys"]=0;
+#		shash["General"]["bOnlyLoadCombinable3D"]=1;
+#		shash["General"]["bOnlyLoadPreVis3D"]=1;
+#		shash["General"]["bUseCombinedObjects"]=1;
+#		shash["General"]["bUsePreCulledObjects"]=1;
+		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
+		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
+		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
+		shash["General"]["iMaxUmbraBakeThreads"]=threads;
 		shash["General"]["bSkipValidateForms"]=1;
 		shash["General"]["bSkipValidateInfos"]=1;
 		shash["General"]["bSkipProgramFlows"]=1;
@@ -101,10 +126,6 @@ function ck_ini_rewrite() {
 		shash["General"]["bThrowProcessCompleteExceptions"]=0;
 		shash["General"]["iNumHWThreads"]=threads;
 		shash["General"]["iMaxJobThreads"]=threads;
-		shash["General"]["iMaxUmbraBakeThreads"]=threads;
-		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
-		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
-		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
 		shash["General"]["bKeepPluginWhenMerging"]=1;
 		shash["General"]["bHideImportantWarnings"]=1;
 		shash["General"]["bAllowMultipleEditors"]=1;
@@ -201,7 +222,8 @@ function ck_clone() {
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$src"/ "$build/$job"/
 
 	# Explicitly remove CK prefs ini so it'll be regenerated from a clean slate to avoid strange behavior.
-	rm "$build/$job/CreationKitPrefs.ini"
+#	rm "$build/$job/CreationKitPrefs.ini"
+	cp /dev/null "$build/$job/CreationKitPrefs.ini"
 
 	# Alter build-dir versions of CK ini files
 	for j in "$build/$job/CreationKit.ini" "$build/$job/CreationKitPrefs.ini" "$build/$job/CreationKitCustom.ini"; do
@@ -704,6 +726,7 @@ function ck_wrap() {
 					fi
 				fi
 
+if false; then
 				CKARGS=( -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out" )
 				if ( \
 					cd "$bdir/$job" \
@@ -742,6 +765,7 @@ function ck_wrap() {
 
 					exit -1
 				fi
+fi
 
 				# If the plugin was copied to an esm, switch esm masters back to esp masters
 				if ((plugin_master_reloc)); then
@@ -1064,7 +1088,7 @@ function ck_log_wrap() {
 		} else if (wrap_mode == "all") {
 			if (ctl)
 				next;
-			if ($0 ~ /gen.*for.*cell/)
+			if ($0 ~ /gen.*for.*cell/ && $0 !~ /ROOTCELL/)
 				next;
 			usepcnt=1;
 		} else {
@@ -1117,20 +1141,20 @@ echo "${status[@]}"
 		"${status[0]}" "${status[1]}" "${status[2]}" $(((status[1]+status[2])*100/status[0])) \
 		"${cell[0]}" "${cell[1]}" "${cell[2]}" $((cell[0]+cell[1]+cell[2])) \
 		"${load/*load average: }" \
-		$(((status[3]+status[5])/1024**2)) $(((status[4]+status[6])*100/(status[3]+status[5]))) $((( (status[3]+status[5])-(status[4]+status[6]) )/1024**2)) \
+		$((( (status[3]+status[5])-(status[4]+status[6]) )/1024**2)) $(((status[3]+status[5])/1024**2)) $(((status[4]+status[6])*100/(status[3]+status[5]))) \
 		$((disk[2]/1024**2)) $(((disk[2]+disk[3])/1024**2)) $((disk[3]*100/(disk[2]+disk[3])))
 
 	return 0
 }
 
 if [[ "$1" == "--wrap" ]]; then
-	shift; ck_wrap "$@"
+	shift; ck_wrap "$@" || exit -1
 	exit $?
 elif [[ "$1" == "--log-wrap" ]]; then
-	shift; ck_log_wrap "$@"
+	shift; ck_log_wrap "$@" || exit -1
 	exit $?
 elif [[ "$1" == "--status" ]]; then
-	shift; ck_status "$@"
+	shift; ck_status "$@" || exit -1
 	exit $?
 fi
 
@@ -1343,7 +1367,7 @@ else
 fi
 
 # Process output from build
-awk -F'\t' '!seen[$8]++ { print $9 }' "$BUILD/tmp/jobs.in" | while read plugin; do
+awk -F'\t' '!seen[$9]++ { print $9 }' "$BUILD/tmp/jobs.in" | while read plugin; do
 	plugin_parse "$plugin" plugin t a s
 
 	if [[ -d "$BUILD/$plugin" ]]; then
