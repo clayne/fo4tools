@@ -565,3 +565,16 @@ General difficulties:
 6. CK likes to trash the master id of XPRI formids if more than 2 masters are used.
 7. xEdit doesn't allow more than 254 plugins so even if the plugins in the list aren't actually going to be loaded there's still an issue with generating more plugins than the maximum load order can handle.
 8. xEdit has a bug where if during the process of copying an element if masters are somehow added around the same time then it can produce broken worldspace references that have the wrong load order formid. Still investigating.
+9. DLCs like DLCCoast and DLCNukaWorld don't like previs generation with a synthetic plugin that only overrides refs in cells that contain statics - the overrides must target all cells. I suspect this has something to do with world borders but it still seems like a bug.
+
+---
+
+use cells only with precombinable statics and not just pc+pv?
+test with only stat's promoted (not rvis stuff)
+test with precombined stats/scols in priority to non-precombined
+test with temporary in priority to persistent refs first
+test with buseprecombinedobjects=1
+test with various ini's disabled
+test with removing CK prefs
+test frm close with xedit scripting to get around empty dialog box on script finish.
+

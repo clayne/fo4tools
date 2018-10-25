@@ -168,6 +168,12 @@ function ck_clone() {
 	set -o pipefail
 	set -x
 
+	# Exclude anything not needed for automated processes like PC/PV generation
+	if ((!MANUAL)); then
+		EXCLUDE_AUTOMATED_AUX=1
+	fi
+
+	# Exclude files precombine generation may be involved with generating
 	case "$mode" in
 	precombine)
 		EXCLUDE_PC_AUX=1
@@ -214,6 +220,9 @@ function ck_clone() {
 		${EXCLUDE_PC_AUX:+--exclude '*.cdx'} \
 		${EXCLUDE_PC_AUX:+--exclude '*.csg'} \
 		${EXCLUDE_PC_AUX:+--exclude '*.psg'} \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Textures*.ba2'} \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Sounds*.ba2'} \
+		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Voices*.ba2'} \
 		--link-dest="$src" "$src"/ "$build/$job"/
 #			--exclude "$SELF*" \
 #		--exclude '*.es[pm]' \
@@ -247,6 +256,18 @@ function ck_clone() {
 	if [[ -d "$build/$job/Data/ckgen" ]]; then
 		# Multiple finds are used to workaround cp complaining about files it just
 		# overwrote. rsync is not an option because it sorts the input list.
+
+		# Copy of plugins from Data/ckgen/*
+		(find "$build/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			-maxdepth 1 -mindepth 1 -type f -printf '%h\n' 2>/dev/null || true) \
+			| awk '!seen[$0]++' \
+			| while read tmp
+		do
+			find "$tmp" -maxdepth 1 -mindepth 1 -type f -print0 \
+				| xargs -tr0 cp --remove-destination -pt "$build/$job/Data"
+		done
+
+		# Copy of plugins specifically setup as masters from Data/ckgen/master/*
 		(find "$build/$job/Data/ckgen/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f '!' -name "$plugin" -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
@@ -256,6 +277,8 @@ function ck_clone() {
 				| xargs -tr0 cp --remove-destination -pt "$build/$job/Data"
 		done
 
+if false; then
+		# Copy of the specific plugin being processed
 		(find "$build/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f -name "$plugin" -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
@@ -264,6 +287,7 @@ function ck_clone() {
 			find "$tmp" -maxdepth 1 -mindepth 1 -type f -name "$plugin" -print0 \
 				| xargs -tr0 cp --remove-destination -pt "$build/$job/Data"
 		done
+fi
 	fi
 
 	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
@@ -341,9 +365,9 @@ function ck_wrap_archive() {
 				continue
 			fi
 
-#			if [[ "$plugin" == "$plugin_ck" ]]; then
-#				continue
-#			fi
+			if [[ "$plugin" == "$plugin_ck" ]]; then
+				continue
+			fi
 
 #			if ! fgrep -q "$plugin" "$archive_main"; then
 #				continue
@@ -356,7 +380,6 @@ function ck_wrap_archive() {
 			continue
 		fi
 
-		ls -la "$archive_main_ck_cached" "$archive_main_ck" 1>&2 2>/dev/null || true
 		if [[ "$archive_main" -nt "$archive_main_ck_cached" || "$bdir/$job/$plugin" -nt "$archive_main_ck_cached" || "$mode" != "sanitize" ]]; then
 			if [[ -d "$archive_data_tmp" ]]; then
 				echo "Assertion failure: $archive_data_tmp exists" 1>&2
@@ -482,7 +505,7 @@ function ck_wrap_archive() {
 		rm -f "$cache_lock"
 
 		if [[ "$archive_main_ck_cached" -nt "$archive_main_ck" ]]; then
-			cp --remove-destination -p "$archive_main_ck_cached" "$archive_main_ck"
+			cp --remove-destination -flp "$archive_main_ck_cached" "$archive_main_ck"
 			ls -la "$archive_main_ck_cached" "$archive_main_ck" 1>&2 2>/dev/null || true
 		fi
 	done
@@ -495,6 +518,48 @@ function ck_needed_filter() {
 	local to="$1"; shift
 
 	sed -e "s#${from}#${to}#g" | tr -d '[\r\0\031]' | tr '\\' '/'
+}
+
+function ck_exec_wrap() {
+	local bdir="$1"; shift
+	local mode="$1"; shift
+	local type="$1"; shift
+	local area="$1"; shift
+	local plugin="$1"; shift
+	local wcur="$1"; shift
+	local job="$1"; shift
+	local target="$1"; shift
+	local args="$@";
+
+	if ((DEBUG)); then
+		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
+	else
+		CKEXEC="./CreationKit.exe"
+	fi
+
+	if ( \
+		cd "$bdir/$job" \
+			&& eval "$CKEXEC" ${args[*]} \
+			&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
+	);
+	then
+		cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+
+		echo "SUCCESS ($target)" >> "$bdir/$job/EditorWarnings.txt"
+		mkdir -p "$bdir/$plugin"
+		cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.$target.txt"
+	else
+		if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
+			echo "FAILURE ($target handles)" >> "$bdir/$job/EditorWarnings.txt"
+		elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
+			echo "FAILURE ($target file)" >> "$bdir/$job/EditorWarnings.txt"
+		else
+			echo "FAILURE ($target)" >> "$bdir/$job/EditorWarnings.txt"
+		fi
+
+		cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.$target.error"
+		exit -1
+	fi
 }
 
 function ck_wrap() {
@@ -517,12 +582,6 @@ function ck_wrap() {
 
 	# Equalized width of $cur
 	local wcur=$(printf "%02d" $cur)
-
-	if ((DEBUG)); then
-		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
-	else
-		CKEXEC="./CreationKit.exe"
-	fi
 
 	set -e
 	set -o pipefail
@@ -570,14 +629,7 @@ function ck_wrap() {
 		plugin_master_reloc=0
 	fi
 
-#	if [[ "$plugin_sanitized" != "$plugin" ]]; then
-#		ln -f "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin_sanitized"
-#	fi
-
 	if ((plugin_master_reloc)); then
-		# Clone plugin before modification in case it's hard linked
-#		cp --remove-destination -p "$bdir/$job/Data/$plugin" "$bdir/$job/Data/$plugin.$$" \
-#			&& mv "$bdir/$job/Data/$plugin.$$" "$bdir/$job/Data/$plugin"
 		plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm --sub "$plugin_base:$plugin_ck_base" "$bdir/$job/Data/$plugin"
 	fi
 
@@ -589,402 +641,193 @@ function ck_wrap() {
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
 	# to the output directory.
-
 	case "$mode" in
 	scol)
-		((!manual)) && CKARGS=( -generatestaticcollections:"$plugin_ck" x64 )
+		rm -rf "$bdir/$job/Data/Meshes/SCOL"
 
-		if ( \
-			cd "$bdir/$job" \
-				&& rm -rf "Data/Meshes/SCOL" \
-				&& eval "$CKEXEC" ${CKARGS[*]} \
-				&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt" \
-		);
-		then
-			echo "SUCCESS (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generatestaticcollections.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-		else
-			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generatestaticcollections handles)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generatestaticcollections plugin)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generatestaticcollections master)" >> "$bdir/$job/EditorWarnings.txt"
-			else
-				echo "FAILURE (generatestaticcollections)" >> "$bdir/$job/EditorWarnings.txt"
-			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generatestaticcollections.error"
-			exit -1
-		fi
+		((!manual)) && CKARGS=( -generatestaticcollections:"$plugin_ck" x64 )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'generatestaticcollections' "${CKARGS[@]}"
 
 		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
 			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
+
+			# If plugin name has been sanitized or flipped to an esm, change any
+			# directory references back to the original plugin name.
+			if [[ "$plugin_ck" != "$plugin" ]]; then
+				find "$bdir/$job/Data/Meshes/SCOL" -type d -name "$plugin_ck" -print0 \
+					| xargs -tr0 rename "$plugin_ck" "$plugin"
+			fi
+
+			mkdir -p "$bdir/$plugin"
+			mv "$bdir/$job/Data/Meshes/SCOL" "$bdir/$plugin/SCOL"
 		fi
+
 		;;
 
 	precombine)
-#		((!manual)) && CKARGS=( -generateprecombined:"$plugin_ck" $type $area $cur $max )
+		rm -rf "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$job/Data/$plugin_ck_base - Geometry".{csg,psg}
+
 		((!manual)) && CKARGS=( -generateprecombined:"$plugin_ck" $type $area_ck $cur $max )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'generateprecombined' "${CKARGS[@]}"
 
-		if ( \
-			cd "$bdir/$job" \
-				&& rm -rf "Data/Meshes/PreCombined" "Data/$plugin_ck_base.cdx" "Data/$plugin_ck_base - Geometry".{csg,psg} \
-				&& eval "$CKEXEC" ${CKARGS[*]} \
-				&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt" \
-		);
-		then
-			echo "SUCCESS (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
+		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
+			plugin-master-reloc -vr "$bdir/$job/Data/CombinedObjects.esp"
+
+			# If the plugin was copied to an esm, switch esm masters back to esp masters
+			if ((plugin_master_reloc)); then
+				plugin-master-reloc -vfr --esm-to-esp --sub "$plugin_ck_base:$plugin_base" "$bdir/$job/Data/CombinedObjects.esp"
+			fi
+
+			# If run in clean mode a shared geometry psg file will be produced that
+			# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
+			# A CDX file should also be produced with -BuildCDX although it's not
+			# strictly necessary that the PSG file be compressed first.
+			if [[ -f "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" ]]; then
+				# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
+				cp --remove-destination -flt "$cdir/Data" "$bdir/$job/Data/$plugin_ck_base - Geometry.psg"
+
+				mkdir -p "$bdir/$plugin"
+				mv "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" "$bdir/$plugin/$plugin_base - Geometry.psg"
+			fi
+
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprecombined.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+			mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+		fi
 
-			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
-			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
-			if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
-				plugin-master-reloc -vr "$bdir/$job/Data/CombinedObjects.esp"
+		if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
+			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
 
-				# If run in clean mode a shared geometry psg file will be produced that
-				# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
-				# A CDX file should also be produced with -BuildCDX although it's not
-				# strictly necessary that the PSG file be compressed first.
-				if [[ -f "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" ]]; then
-					# Using CombinedObjects.esp is perfectly fine as long as the requisite
-					# XCRI data (which it contains), PSG or CSG file, and precombined NIFs
-					# are accessible to the -BuildCDX codepath. The PSG data will be loaded
-					# by one of the masters of CombinedObjects.esp and that's all the engine
-					# needs (it doesn't need to explicitly match the file base). This ability
-					# is highly convenient as it avoids having to copy CombinedObjects.esp to
-					# a temporary file with the same file base.
-					CKARGS=( -buildcdx:"CombinedObjects.esp" )
-					if ( \
-						cd "$bdir/$job" \
-							&& eval "$CKEXEC" ${CKARGS[*]} \
-							&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt" \
-							&& mv "Data/CombinedObjects.cdx" "Data/$plugin_ck_base.cdx" \
-					);
-					then
-						echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
-						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.buildcdx.txt"
-						cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-
-						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
-					else
-						if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (buildcdx handles)" >> "$bdir/$job/EditorWarnings.txt"
-						elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (buildcdx plugin)" >> "$bdir/$job/EditorWarnings.txt"
-						elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (buildcdx master)" >> "$bdir/$job/EditorWarnings.txt"
-						else
-							echo "FAILURE (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
-						fi
-						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.buildcdx.error"
-
-						# It's not strictly critical that a cdx file is built - it's only critical that
-						# if it exists *and* if CSG/PSG precombines are used that it's kept up to date.
-						# exit -1
-					fi
-
-					CKARGS=( -compresspsg:"$plugin_ck" )
-					if ( \
-						cd "$bdir/$job" \
-							&& eval "$CKEXEC" ${CKARGS[*]} \
-							&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt" \
-					);
-					then
-						echo "SUCCESS (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
-						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.compresspsg.txt"
-						cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-
-						# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
-						cp -flt "$cdir/Data" "$bdir/$job/Data/$plugin_ck_base - Geometry.csg"
-						cp -flt "$cdir/Data" "$bdir/$job/Data/$plugin_ck_base - Geometry.psg"
-
-						# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
-						# they should be moved after both -CompressPSG and -BuildCDX are finished.
-						mkdir -p "$bdir/$plugin"
-						mv "$bdir/$job/Data/$plugin_ck_base - Geometry.csg" "$bdir/$plugin/$plugin_base - Geometry.csg"
-						mv "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" "$bdir/$plugin/$plugin_base - Geometry.psg"
-					else
-						if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (compresspsg handles)" >> "$bdir/$job/EditorWarnings.txt"
-						elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (compresspsg plugin)" >> "$bdir/$job/EditorWarnings.txt"
-						elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-							echo "FAILURE (compresspsg master)" >> "$bdir/$job/EditorWarnings.txt"
-						else
-							echo "FAILURE (compresspsg)" >> "$bdir/$job/EditorWarnings.txt"
-						fi
-						cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.compresspsg.error"
-
-						exit -1
-					fi
-				fi
-
-if false; then
-				CKARGS=( -dumpneededfiles:"CombinedObjects.esp" "dumpneededfiles.out" )
-				if ( \
-					cd "$bdir/$job" \
-						&& eval "$CKEXEC" ${CKARGS[*]} \
-						&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt" \
-				);
-				then
-					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-					cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-
-					ck_needed_filter "CombinedObjects.esp" "$plugin" \
-						< "$bdir/$job/dumpneededfiles.out" \
-						> "$bdir/$job/dumpneededfiles.out.cleaned"
-
-					# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
-					if [[ "$plugin_ck" != "$plugin" ]]; then
-						egrep "$plugin_ck" "$bdir/$job/dumpneededfiles.out.cleaned" 1>&2 || true
-						sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-					fi
-
-					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out" || true
-				else
-					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-						echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
-					elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-						echo "FAILURE (dumpneededfiles plugin)" >> "$bdir/$job/EditorWarnings.txt"
-					elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-						echo "FAILURE (dumpneededfiles master)" >> "$bdir/$job/EditorWarnings.txt"
-					else
-						echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-					fi
-					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
-
-					exit -1
-				fi
-fi
-
-				# If the plugin was copied to an esm, switch esm masters back to esp masters
-				if ((plugin_master_reloc)); then
-					plugin-master-reloc -vfr --esm-to-esp --sub "$plugin_ck_base:$plugin_base" "$bdir/$job/Data/CombinedObjects.esp"
-				fi
-
-				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+			# If plugin name has been sanitized or flipped to an esm, change any
+			# directory references back to the original plugin name.
+			if [[ "$plugin_ck" != "$plugin" ]]; then
+				find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$plugin_ck" -print0 \
+					| xargs -tr0 rename "$plugin_ck" "$plugin"
 			fi
 
-			if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
+			# If there are any esp masters which were changed to esm masters in the
+			# plugin, change any directory references back to their esp form.
+			for esp in "${ESP_MASTERS[@]}"; do
+				esm="${esp/%.esp/.esm}"
+				find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$esm" -print0 \
+					| xargs -tr0 rename "$esm" "$esp"
+			done
 
-				# If plugin name has been sanitized or flipped to an esm, change any
-				# directory references back to the original plugin name.
-				if [[ "$plugin_ck" != "$plugin" ]]; then
-					find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$plugin_ck" -print0 \
-						| xargs -tr0 rename "$plugin_ck" "$plugin"
-				fi
-
-				# If there are any esp masters which were changed to esm masters in the
-				# plugin, change any directory references back to their esp form.
-				for esp in "${ESP_MASTERS[@]}"; do
-					esm="${esp/%.esp/.esm}"
-					find "$bdir/$job/Data/Meshes/PreCombined" -type d -name "$esm" -print0 \
-						| xargs -tr0 rename "$esm" "$esp"
-				done
-
-				mkdir -p "$bdir/$plugin"
-# XXX: temporary
-#				mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
-			fi
-
-		else
-			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generateprecombined handles)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generateprecombined plugin)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generateprecombined master)" >> "$bdir/$job/EditorWarnings.txt"
-			else
-				echo "FAILURE (generateprecombined)" >> "$bdir/$job/EditorWarnings.txt"
-			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generateprecombined.error"
-
-			exit -1
+			mkdir -p "$bdir/$plugin"
+			mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
 		fi
 
 		;;
 
 	previs)
+		rm -rf "$bdir/$job/Data/Vis"
+
 		((!manual)) && CKARGS=( -generateprevisdata:"$plugin_ck" $type $area_ck $cur $max )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'generateprevisdata' "${CKARGS[@]}"
 
-		if ( \
-			cd "$bdir/$job" \
-				&& rm -rf "Data/Vis" \
-				&& eval "$CKEXEC" ${CKARGS[*]} \
-				&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
-		);
-		then
-			echo "SUCCESS (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
+		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
+		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
+		if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
+			plugin-master-reloc -vr "$bdir/$job/Data/PreVis.esp"
+
+			# If the plugin was copied to an esm, switch esm masters back to esp masters
+			if [[ "$plugin_ck" != "$plugin" ]]; then
+				plugin-master-reloc -vfr --esm-to-esp --sub "$plugin_ck_base:$plugin_base" "$bdir/$job/Data/PreVis.esp"
+			fi
+
 			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.generateprevisdata.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+			mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+		fi
 
-			# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
-			# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
-			if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-				plugin-master-reloc -vr "$bdir/$job/Data/PreVis.esp"
+		if [[ -d "$bdir/$job/Data/Vis" ]]; then
+			ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
 
-				CKARGS=( -dumpneededfiles:"PreVis.esp" "dumpneededfiles.out" )
-				if ( \
-					cd "$bdir/$job" \
-						&& eval "$CKEXEC" ${CKARGS[*]} \
-						&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
-				);
-				then
-					echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-					cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-
-					ck_needed_filter "PreVis.esp" "$plugin" \
-						< "$bdir/$job/dumpneededfiles.out" \
-						> "$bdir/$job/dumpneededfiles.out.cleaned"
-
-					# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
-					if [[ "$plugin_ck" != "$plugin" ]]; then
-						sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-					fi
-
-					mkdir -p "$bdir/$plugin"
-					mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out" || true
-				else
-					if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-						echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
-					elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-						echo "FAILURE (dumpneededfiles file)" >> "$bdir/$job/EditorWarnings.txt"
-					else
-						echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-					fi
-					cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
-					exit -1
-				fi
-
-				# If the plugin was copied to an esm, switch esm masters back to esp masters
-				if [[ "$plugin_ck" != "$plugin" ]]; then
-					plugin-master-reloc -vfr --esm-to-esp --sub "$plugin_ck_base:$plugin_base" "$bdir/$job/Data/PreVis.esp"
-				fi
-
-				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+			# If plugin name has been sanitized or flipped to an esm, change any
+			# directory references back to the original plugin name.
+			if [[ "$plugin_ck" != "$plugin" ]]; then
+				find "$bdir/$job/Data/Vis" -type d -name "$plugin_ck" -print0 \
+					| xargs -tr0 rename "$plugin_ck" "$plugin"
 			fi
 
-			if [[ -d "$bdir/$job/Data/Vis" ]]; then
-				ck_wrap_archive "$bdir" "$cdir" "$ctl_log" "$job" "$mode" "$type" "$area" "$area_ck" "$plugin"
+			# If there are any esp masters which were changed to esm masters in the
+			# plugin, change any directory references back to their esp form.
+			for esp in "${ESP_MASTERS[@]}"; do
+				esm="${esp/%.esp/.esm}"
+				find "$bdir/$job/Data/Vis" -type d -name "$esm" -print0 \
+					| xargs -tr0 rename "$esm" "$esp"
+			done
 
-				# If plugin name has been sanitized or flipped to an esm, change any
-				# directory references back to the original plugin name.
-				if [[ "$plugin_ck" != "$plugin" ]]; then
-					find "$bdir/$job/Data/Vis" -type d -name "$plugin_ck" -print0 \
-						| xargs -tr0 rename "$plugin_ck" "$plugin"
-				fi
-
-				# If there are any esp masters which were changed to esm masters in the
-				# plugin, change any directory references back to their esp form.
-				for esp in "${ESP_MASTERS[@]}"; do
-					esm="${esp/%.esp/.esm}"
-					find "$bdir/$job/Data/Vis" -type d -name "$esm" -print0 \
-						| xargs -tr0 rename "$esm" "$esp"
-				done
-
-				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
-			fi
-		else
-			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generateprevisdata handles)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (generateprevisdata file)" >> "$bdir/$job/EditorWarnings.txt"
-			else
-				echo "FAILURE (generateprevisdata)" >> "$bdir/$job/EditorWarnings.txt"
-			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.generateprevisdata.error"
-			exit -1
+			mkdir -p "$bdir/$plugin"
+			mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
 		fi
 
 		;;
 
-	cdx)
-		((!manual)) && CKARGS=( -buildcdx:"$plugin_ck" )
+	csg)
+		# Using CombinedObjects.esp is perfectly fine as long as the requisite
+		# XCRI data (which it contains), PSG or CSG file, and precombined NIFs
+		# are accessible to the -BuildCDX codepath. The PSG data will be loaded
+		# by one of the masters of CombinedObjects.esp and that's all the engine
+		# needs (it doesn't need to explicitly match the file base). This ability
+		# is highly convenient as it avoids having to copy CombinedObjects.esp to
+		# a temporary file with the same file base.
 
-		if ( \
-			cd "$bdir/$job" \
-				&& rm -rf "Data/$plugin_ck_base.cdx" \
-				&& eval "$CKEXEC" ${CKARGS[*]} \
-				&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Unable to find masterfile' "EditorWarnings.txt"
-		);
-		then
-			echo "SUCCESS (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.buildcdx.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
-
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
-		else
-			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (buildcdx handles)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (buildcdx plugin)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Unable to find masterfile' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (buildcdx master)" >> "$bdir/$job/EditorWarnings.txt"
-			else
-				echo "FAILURE (buildcdx)" >> "$bdir/$job/EditorWarnings.txt"
-			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.buildcdx.error"
-
-			exit -1
+		if [[ ! -f "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" ]]; then
+			exit
 		fi
+
+		rm -rf "$bdir/$job/Data/$plugin_ck_base - Geometry.csg"
+
+		((!manual)) && CKARGS=( -compresspsg:"$plugin_ck" )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'compresspsg' "${CKARGS[@]}"
+
+		# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
+		cp --remove-destination -flt "$cdir/Data" "$bdir/$job/Data/$plugin_ck_base - Geometry.csg"
+
+		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
+		# they should be moved after both -CompressPSG and -BuildCDX are finished.
+		mkdir -p "$bdir/$plugin"
+		mv "$bdir/$job/Data/$plugin_ck_base - Geometry.csg" "$bdir/$plugin/$plugin_base - Geometry.csg"
+
+		;;
+
+	cdx)
+		# Generate "cell resource index" (SCellResourceIndexFileList) for a given
+		# plugin which is known to use shared precombine data combined with XCRI
+		# and XPRI records to generate an index database used by the game itself.
+		# Additionally, if a plugin makes use of both shared-geom and non-shared
+		# geom precombines the cdx file must be updated to reflect that.
+
+		if [[ ! -f "$bdir/$job/Data/$plugin_ck_base - Geometry.psg" ]]; then
+			exit
+		fi
+
+		rm -rf "$bdir/$job/Data/$plugin_ck_base.cdx"
+
+		((!manual)) && CKARGS=( -buildcdx:"$plugin_ck" )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'buildcdx' "${CKARGS[@]}"
+
+		mkdir -p "$bdir/$plugin"
+		mv "$bdir/$job/Data/$plugin_ck_base.cdx" "$bdir/$plugin/$plugin_base.cdx"
 
 		;;
 
 	needed)
 		((!manual)) && CKARGS=( -dumpneededfiles:"$plugin_ck" "dumpneededfiles.out" )
+		ck_exec_wrap "$bdir" "$mode" "$type" "$area" "$plugin" "$wcur" "$job" 'dumpneededfiles' "${CKARGS[@]}"
 
-		if ( \
-			cd "$bdir/$job" \
-				&& eval "$CKEXEC" ${CKARGS[*]} \
-				&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
-		);
-		then
-			echo "SUCCESS (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin/EditorWarnings.$mode.$type.$area.$wcur.dumpneededfiles.txt"
-			cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+		ck_needed_filter "$plugin_ck" "$plugin" \
+			< "$bdir/$job/dumpneededfiles.out" \
+			> "$bdir/$job/dumpneededfiles.out.cleaned"
 
-			ck_needed_filter "$plugin_ck" "$plugin" \
-				< "$bdir/$job/dumpneededfiles.out" \
-				> "$bdir/$job/dumpneededfiles.out.cleaned"
-
-			# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
-			if [[ "$plugin_ck" != "$plugin" ]]; then
-				sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
-			fi
-
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out"
-		else
-			if fgrep -q 'OUT OF HANDLE' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (dumpneededfiles handles)" >> "$bdir/$job/EditorWarnings.txt"
-			elif fgrep -q 'Could not get file pointer' "$bdir/$job/EditorWarnings.txt"; then
-				echo "FAILURE (dumpneededfiles file)" >> "$bdir/$job/EditorWarnings.txt"
-			else
-				echo "FAILURE (dumpneededfiles)" >> "$bdir/$job/EditorWarnings.txt"
-			fi
-			cp -p "$bdir/$job/EditorWarnings.txt" "$bdir/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.error"
-			exit -1
+		# If the plugin was copied to an esm or sanitized, change any references in dumpneededfiles.out
+		if [[ "$plugin_ck" != "$plugin" ]]; then
+			sed -i -e "s#$plugin_ck#$plugin#g" "$bdir/$job/dumpneededfiles.out.cleaned"
 		fi
+
+		mkdir -p "$bdir/$plugin"
+		mv "$bdir/$job/dumpneededfiles.out.cleaned" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.dumpneededfiles.out"
 
 		;;
 	esac
@@ -998,6 +841,108 @@ fi
 	echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
 
 	return 0
+}
+
+function ck_wrap_proc() {
+	local bdir="$1"; shift
+	local odir="$1"; shift
+	local plugin="$1"; shift
+
+	if [[ -d "$bdir/$plugin" ]]; then
+		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
+
+		if ls -d "$bdir/$plugin/SCOL" &>/dev/null; then
+			echo "$plugin: Moving static collections..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data/Meshes/SCOL"
+			ls -d "$bdir/$plugin/SCOL" | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Meshes/SCOL"/ || true
+			done
+		fi
+
+		if ls -d "$bdir/$plugin/PreCombined".* &>/dev/null; then
+			echo "$plugin: Moving precombined..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data/Meshes/PreCombined"
+			ls -d "$bdir/$plugin/PreCombined".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Meshes/PreCombined"/ || true
+			done
+		fi
+
+		if ls -d "$bdir/$plugin/Vis".* &>/dev/null; then
+			echo "$plugin: Moving previs..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data/Vis"
+			ls -d "$bdir/$plugin/Vis".* | while read tmp; do
+				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Vis"/ || true
+			done
+		fi
+
+		if ls -d "$bdir/$plugin"/*.[pc]sg &>/dev/null; then
+			echo "$plugin: Moving shared geometry..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data"
+			mv -t "$odir/$plugin/Data" "$bdir/$plugin/"*.[pc]sg || true
+		fi
+
+		if ls -d "$bdir/$plugin"/*.cdx &>/dev/null; then
+			echo "$plugin: Moving cell resource index..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data"
+			mv -t "$odir/$plugin/Data" "$bdir/$plugin/"*.cdx || true
+		fi
+
+		if ls -d "$bdir/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null | grep -q ''; then
+			echo "$plugin: Moving reference plugins..." 1>&2
+
+			mkdir -p "$odir/$plugin"
+			mv -t "$odir/$plugin" "$bdir/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null || true
+		fi
+
+		if ls -d "$bdir/$plugin/"*.esp &>/dev/null; then
+			echo "$plugin: Moving generated plugins..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data"
+			mv -t "$odir/$plugin/Data" "$bdir/$plugin/"*.esp || true
+		fi
+
+		if ls -d "$bdir/$plugin/"*.dumpneededfiles*out &>/dev/null; then
+			echo "$plugin: Moving needed files output..." 1>&2
+
+			mkdir -p "$odir/$plugin/Data"
+			mv -t "$odir/$plugin" "$bdir/$plugin/"*.dumpneededfiles*out || true
+		fi
+
+		if ls -d "$bdir/$plugin"/EditorWarnings*.txt &>/dev/null; then
+			echo "$plugin: Moving editor warnings output..." 1>&2
+
+			mkdir -p "$odir/$plugin"
+			mv -t "$odir/$plugin" "$bdir/$plugin"/EditorWarnings*.txt || true
+		fi
+
+		if find "$bdir/tmp" -type d -name "$plugin" 2>/dev/null | egrep -ql ''; then
+			echo "$plugin: Moving job output..." 1>&2
+			mkdir -p "$odir/$plugin/job"
+			find "$bdir/tmp" -type d -name "$plugin" -print0 | xargs -r0 cp -Rpt "$odir/$plugin/job"
+		fi
+	fi
+
+	if ls -d "$bdir/$plugin".*.error &>/dev/null; then
+		echo "$plugin: Moving error output..." 1>&2
+
+		mkdir -p "$odir"
+		mv -t "$odir" "$bdir/$plugin".*.error || true
+	fi
+
+	# XXX: hardlink plugins into Data?
+	if false && ((MERGE)); then
+		echo "$plugin: Merging plugins..." 1>&2
+
+		# XXX: Plugins might have to be in Data first
+		# Could not parse command line properly.  Should be -CheckInPlugin:<PluginFilename> <ESMFilename>
+		find "$odir/$plugin" -type f -name '*.esp' -print0 \
+			| xargs -I{} -tr0 -n1 ./CreationKit.exe -checkinplugin:{} $plugin
+	fi
 }
 
 function ck_log_wrap() {
@@ -1089,6 +1034,8 @@ function ck_log_wrap() {
 			if (ctl)
 				next;
 			if ($0 ~ /gen.*for.*cell/ && $0 !~ /ROOTCELL/)
+				next;
+			if ($0 ~ /D3D error|Empty reference group/)
 				next;
 			usepcnt=1;
 		} else {
@@ -1334,7 +1281,8 @@ done | perl -e '
 if ((MANUAL)); then
 	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
 else
-	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
+#	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
+	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --lb -tr -j $JOBS --colsep '\t'"
 fi
 
 # Note: final 'read' commands are to prevent tmux from closing each sub-window
@@ -1369,91 +1317,5 @@ fi
 # Process output from build
 awk -F'\t' '!seen[$9]++ { print $9 }' "$BUILD/tmp/jobs.in" | while read plugin; do
 	plugin_parse "$plugin" plugin t a s
-
-	if [[ -d "$BUILD/$plugin" ]]; then
-		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
-		if ls -d "$BUILD/$plugin/PreCombined".* &>/dev/null; then
-			echo "$plugin: Moving precombined..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data/Meshes/PreCombined"
-			ls -d "$BUILD/$plugin/PreCombined".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$plugin/Data/Meshes/PreCombined"/ || true
-			done
-		fi
-
-		if ls -d "$BUILD/$plugin/Vis".* &>/dev/null; then
-			echo "$plugin: Moving previs..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data/Vis"
-			ls -d "$BUILD/$plugin/Vis".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$OUT/$plugin/Data/Vis"/ || true
-			done
-		fi
-
-		if ls -d "$BUILD/$plugin"/*.[pc]sg &>/dev/null; then
-			echo "$plugin: Moving shared geometry..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.[pc]sg || true
-		fi
-
-		if ls -d "$BUILD/$plugin"/*.cdx &>/dev/null; then
-			echo "$plugin: Moving cell resource index..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.cdx || true
-		fi
-
-		if ls -d "$BUILD/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null | grep -q ''; then
-			echo "$plugin: Moving reference plugins..." 1>&2
-
-			mkdir -p "$OUT/$plugin"
-			mv -t "$OUT/$plugin" "$BUILD/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null || true
-		fi
-
-		if ls -d "$BUILD/$plugin/"*.esp &>/dev/null; then
-			echo "$plugin: Moving generated plugins..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin/Data" "$BUILD/$plugin/"*.esp || true
-		fi
-
-		if ls -d "$BUILD/$plugin/"*.dumpneededfiles*out &>/dev/null; then
-			echo "$plugin: Moving needed files output..." 1>&2
-
-			mkdir -p "$OUT/$plugin/Data"
-			mv -t "$OUT/$plugin" "$BUILD/$plugin/"*.dumpneededfiles*out || true
-		fi
-
-		if ls -d "$BUILD/$plugin"/EditorWarnings*.txt &>/dev/null; then
-			echo "$plugin: Moving editor warnings output..." 1>&2
-
-			mkdir -p "$OUT/$plugin"
-			mv -t "$OUT/$plugin" "$BUILD/$plugin"/EditorWarnings*.txt || true
-		fi
-
-		if find "$BUILD/tmp" -type d -name "$plugin" 2>/dev/null | egrep -ql ''; then
-			echo "$plugin: Moving job output..." 1>&2
-			mkdir -p "$OUT/$plugin/job"
-			find "$BUILD/tmp" -type d -name "$plugin" -print0 | xargs -r0 cp -Rpt "$OUT/$plugin/job"
-		fi
-	fi
-
-	if ls -d "$BUILD/$plugin".*.error &>/dev/null; then
-		echo "$plugin: Moving error output..." 1>&2
-
-		mkdir -p "$OUT"
-		mv -t "$OUT" "$BUILD/$plugin".*.error || true
-	fi
-
-	# XXX: hardlink plugins into Data?
-	if false && ((MERGE)); then
-		echo "$plugin: Merging plugins..." 1>&2
-
-		# XXX: Plugins might have to be in Data first
-		# Could not parse command line properly.  Should be -CheckInPlugin:<PluginFilename> <ESMFilename>
-		find "$OUT/$plugin" -type f -name '*.esp' -print0 \
-			| xargs -I{} -tr0 -n1 ./CreationKit.exe -checkinplugin:{} $plugin
-	fi
-
+	ck_wrap_proc "$BUILD" "$OUT" "$plugin"
 done
