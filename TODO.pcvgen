@@ -555,6 +555,23 @@ cluster[43] cmap[159][159]: AK74M.esp (437)
 
 ---
 
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.out  (modded_regrowth) $ find */EditorWarnings* -print0 | xargs -r0 egrep -i 'failed to collect ref' | awk -F'\t' '{print $8}' | sort | uniq -c | sort -k1,1nr
+  23349 enable parented
+  10358 switch node
+   6856 dynamic havok
+   5799 external emittance
+   5644 gamebryo anims
+   4347 no geometry
+   3417 has recipe
+   2738 attach ref
+   2676 linked to/from
+   1876 gamebryo property anims
+   1554 billboard node
+    552 loc ref type
+      2 particles
+
+---
+
 General difficulties:
 
 1. xEdit doesn't allow editing Fallout4.esm. This would be useful for the intermediate step between merging XCRI data and generating new previs data.

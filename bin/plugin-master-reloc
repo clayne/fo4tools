@@ -35,7 +35,7 @@ sub plugin_clone {
 #print STDERR "plugin_clone: $src -> $dst (overwrite == $overwrite)\n";
 
 		# Copy src to dst and clone atime/mtime.
-		my @stat = stat($src) or die "stat: $!";
+		my @stat = stat($src) or die "stat: $!: $src";
 		copy($src, "$dst.tmp") or die "copy: $src -> $dst.tmp";
 		rename("$dst.tmp", $dst) or die "rename: $!: $dst.tmp -> $dst";
 		utime($stat[8], $stat[9], $dst) or die "utime: $!";
@@ -66,7 +66,7 @@ sub plugin_sub {
 		$plugin_sub =~ s/\Q$from\E/$to/;
 	}
 
-	die "Unequal substitution lengths" unless (length($plugin_sub) == length($plugin));
+	die "Unequal substitution lengths: '$plugin_sub' vs '$plugin'" unless (length($plugin_sub) == length($plugin));
 
 	return $plugin_sub;
 }
@@ -75,7 +75,7 @@ sub main {
 	my $ret;
 	my $help = 0;
 	my $quick = 0;
-	my $dry_run = 0;
+	my $noop = 0;
 	my $esm_to_esp = 0;
 	my $esp_to_esm = 0;
 	my $copy_plugin_to_esm = 0;
@@ -96,7 +96,7 @@ sub main {
                 'h|help' => \$help,
 		'q|quick+' => \$quick,
 		'v|verbose+' => \$verbose,
-		'n|dry-run+' => \$dry_run,
+		'n|dry-run+' => \$noop,
 		'unlink!' => \$unlink,
 		'protect!' => \$protect,
 		'copy-plugin-to-esm' => \$copy_plugin_to_esm,
@@ -150,6 +150,8 @@ sub main {
 			}
 		}
 
+		print STDERR Dumper $path if ($verbose > 1);
+
 		my $fd;
 		if ($path eq '-') {
 			$fd = *STDIN;
@@ -157,7 +159,7 @@ sub main {
 			$esp_to_esm = 0;
 			$unlink = 0;
 		} else {
-			open($fd, '<', $path) or die "open: $!: $path";
+			open($fd, '<', $path) or ($noop ? next : die "open: $!: $path");
 		}
 
 		my ($off, $len, $bsz, $buf) = (0, 0, 0);
@@ -209,7 +211,7 @@ sub main {
 				# be substituted accordingly.
 
 				my $esp = $master;
-				if ($esp =~ /\.esm/i) {
+				if ($esp =~ /\.esm$/i) {
 					# Possible to have an esm with an esp master. Pass
 					# it on to check just in case. Vanilla files will
 					# be ignored by the protect list.
@@ -217,6 +219,7 @@ sub main {
 					next;
 				}
 
+				# Clone master that MAST entry will point to
 				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
 				plugin_clone("$dirname/$esp", "$dirname/$esm", 0 && $overwrite); # XXX: Sort out overwrite race
 
@@ -226,11 +229,11 @@ sub main {
 				open($fd, '+<', $path) or die "open: $!: $path";
 				seek($fd, $offset, 0) or die "seek: $!";
 
-				my $len = !$dry_run
+				my $len = !$noop
 					? (syswrite($fd, $esm, length($esm)) or die "syswrite: $!")
 					: length($esm);
 				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
-					$basename, $i, $esm, $dry_run ? ' (noop)' : '') if ($verbose);
+					$basename, $i, $esm, $noop ? ' (noop)' : '') if ($verbose);
 				$mproc->[$i]{'master'} = $esm;
 
 				close($fd);
@@ -244,7 +247,7 @@ sub main {
 				# script.
 
 				my $esm = $master;
-				if ($esm =~ /\.esp/i) {
+				if ($esm =~ /\.esp$/i) {
 					# Possible to have an esp with an esm master. Pass
 					# it on to check just in case. Vanilla files will
 					# be ignored by the protect list.
@@ -262,35 +265,42 @@ sub main {
 					# If the renamed master is the same as the existing
 					# master *or* the renamed master does not exist, then
 					# no modification should be done. This is important.
-					next if ($__esp eq $esm || ! -f "$dirname/$__esp");
-
-					$esp = $__esp;
-					last;
+					if (-f "$dirname/$__esp") {
+						$esp = $__esp;
+						last;
+					}
 				}
-				next unless ($esp);
 
-				# Update MAST to point to esp file by cloning and reopening for write
-				plugin_clone($path, $path, $overwrite);
+				# If no esp could be resolved or the file is the same, skip modifying
+				# this plugin to point to it but still pass it on to be checked for
+				# MAST entries within said master.
+				if (!$esp) {
+					next;
+				} elsif ($esp eq $esm) {
+					push @qt, "$dirname/$esm";
+				} else {
+					# Update MAST to point to esp file by cloning and reopening for write
+					plugin_clone($path, $path, $overwrite);
 
-				open($fd, '+<', $path) or die "open: $!: $path";
-				seek($fd, $offset, 0) or die "seek: $!";
+					open($fd, '+<', $path) or die "open: $!: $path";
+					seek($fd, $offset, 0) or die "seek: $!";
 
-				my $len = !$dry_run
-					? (syswrite($fd, $esp, length($esp)) or die "syswrite: $!")
-					: length($esp);
-				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
-					$basename, $i, $esp, $dry_run ? ' (noop)' : '') if ($verbose);
-				$mproc->[$i]{'master'} = $esp;
+					my $len = !$noop
+						? (syswrite($fd, $esp, length($esp)) or die "syswrite: $!")
+						: length($esp);
+					printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
+						$basename, $i, $esp, $noop ? ' (noop)' : '') if ($verbose);
+					$mproc->[$i]{'master'} = $esp;
 
-				close($fd);
+					close($fd);
 
-				# The only esms which will be removed are those which
-				# have matching esp files and those which were resolved
-				# from masters present in the arg list.
-				next if (! -f "$dirname/$esm");
-				push @unlink, "$dirname/$esm";
-
-				push @qt, "$dirname/$esm";
+					# The only esms which will be removed are those which
+					# have matching esp files and those which were resolved
+					# from masters present in the arg list.
+					if (-f "$dirname/$esp") {
+						push @unlink, "$dirname/$esm";
+					}
+				}
 			} else {
 				push @qt, ($dirname ne '.') ? "$dirname/$master" : $master;
 			}
@@ -309,7 +319,7 @@ sub main {
 
 		-f $_ || next;
 		print STDERR "unlink $_\n" if ($verbose);
-		if ($dry_run) {
+		if ($noop) {
 			print STDERR "unlink: $_\n";
 		} else {
 			unlink($_) or die "unlink: $!";
