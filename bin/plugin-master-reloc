@@ -276,9 +276,7 @@ sub main {
 				# MAST entries within said master.
 				if (!$esp) {
 					next;
-				} elsif ($esp eq $esm) {
-					push @qt, "$dirname/$esm";
-				} else {
+				} elsif ($esp ne $esm) {
 					# Update MAST to point to esp file by cloning and reopening for write
 					plugin_clone($path, $path, $overwrite);
 
@@ -301,6 +299,7 @@ sub main {
 						push @unlink, "$dirname/$esm";
 					}
 				}
+				push @qt, "$dirname/$esp";
 			} else {
 				push @qt, ($dirname ne '.') ? "$dirname/$master" : $master;
 			}
