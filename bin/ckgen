@@ -506,14 +506,20 @@ function ck_archive_wrap() {
 	fi
 	mkdir -p "$archive_data_tmp"
 
+	local archive_src
+	if [[ -f "$archive_main_cached" ]]; then
+		archive_src="$archive_main_cached"
+	elif [[ -f "$archive_main" ]]; then
+		archive_src="$archive_main"
+	fi
+
 	# It's entirely commonly that an archive being updated
 	# *may* not actually exist yet.
-	[[ -f "$archive_main" ]] && ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
+	[[ -f "$archive_src" ]] && ck_archive_wrap_unpack "$archive_src" "$archive_data_tmp"
 
 	# Remove archived data for the same type being updated
 	# to prevent cruft - but only do it once in case of
 	# concurrent runs (shards, etc).
-	local cleaned_marker="$cdir/$plugin.$mode.cleaned"
 	if [[ ! -f "$cleaned_marker" ]]; then
 		rm -rf "$archive_data_tmp/$ddir"
 		touch "$cleaned_marker"
@@ -878,7 +884,7 @@ function ck_wrap() {
 	set -o errtrace
 
 	rm -f "$bdir/$job/EditorWarnings.txt"
-	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; cp --remove-destination -fp '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
+	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'" ERR
 
 	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
@@ -1321,7 +1327,9 @@ fi
 
 if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	echo "Removing previous build data..." 1>&2
-	rm -rf "$BUILD"/[^0-9]* && mkdir -p "$BUILD" || exit -1
+	find "$BUILD" -mindepth 1 -maxdepth 1 \! -regex '.*/[0-9]+$' -print0 \
+		| xargs -tr0 rm -rf \
+		&& mkdir -p "$BUILD" || exit -1
 fi
 
 if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
@@ -1331,7 +1339,6 @@ fi
 
 # Cleanup any temporary files from prior runs
 rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
-rm -rf "$CACHE/tmp" && mkdir -p "$CACHE/tmp"
 
 # XXX: checkinplugin?
 # Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
