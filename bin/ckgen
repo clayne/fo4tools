@@ -97,7 +97,7 @@ function ck_ini_rewrite() {
 
 	local wpwd=$(cygpath -aw "$bdir/$job/")
 	awk -v threads=$(cpu_thread_cnt) -v wpwd="${wpwd//\\/\\\\}\\\\" '
-	{ 
+	{
 		if (match($0, "^\\[([^\\]]+)\\]", a)) {
 			section=a[1];
 			slist[++slidx]=section;
@@ -361,35 +361,65 @@ function ck_archive_rewrite() {
 
 	case "$method" in
 	sanitize)
-		egrep -qi "$plugin|$plugin_base.*strings" "$archive_main" || return 0
-
 		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
-		mkdir -p "$archive_data_tmp"
 
-		cp --remove-destination -flp "$archive_main" "$archive_main.save" && mv "$archive_main" "$archive_main_ck"
-		ck_archive_wrap_unpack "$archive_main_ck" "$archive_data_tmp"
+		OIFS="$IFS";
+		IFS="
+"
+		local -a masters=( $(plugin-master-reloc -qr "$bdir/$job/Data/$plugin" | awk '!seen[$0]++') )
+		IFS="$OIFS"
 
-		# Account for plugin-specific dirs
-		find "$archive_data_tmp" -type d -iname "$plugin" | while read tmp; do
-			rename "$(basename "$tmp")" "$plugin_ck" "$tmp"
+		for __plugin in "$plugin" "${masters[@]}"; do
+			local __plugin_base="${__plugin/%.es[pm]}"
+			local __plugin_esm="${__plugin/%.esp/.esm}"
+			local __plugin_sanitized="${__plugin_esm//[^A-Za-z0-9_.-]/_}"
+			local __plugin_ck="${__plugin_sanitized:-${__plugin_esm:-$__plugin}}"
+			local __plugin_ck_base="${__plugin_ck/%.es[pm]}"
+			local __plugin_sub="$__plugin_esm"
+			local __plugin_sub_base="$__plugin_base"
+
+			# If plugin name or masters have been sanitized or flipped to an esm,
+			# change any directory references back to the original plugin name.
+			if [[ "$__plugin" == "$__plugin_ck" ]]; then
+				continue
+			elif [[ "$__plugin" == "$plugin" ]]; then
+				__plugin_sub="$__plugin_ck"
+				__plugin_sub_base="$__plugin_ck_base"
+			fi
+
+			if [[ ! -d "$archive_data_tmp" ]]; then
+				egrep -qi "$__plugin|$__plugin_base.*strings" "$archive_main" || continue
+
+				mkdir -p "$archive_data_tmp"
+				cp --remove-destination -flp "$archive_main" "$archive_main.save"
+				ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
+			fi
+
+			# Account for plugin-specific dirs
+			if [[ "$__plugin" != "$__plugin_sub" ]]; then
+				find "$archive_data_tmp" -type d -name "$__plugin" -print0 \
+					| xargs -tr0 rename "$__plugin" "$__plugin_sub"
+			fi
+
+			# Account for mixed case base string files
+			if [[ "$__plugin_base" != "$__plugin_sub_base" ]]; then
+				for ___plugin_base in "${__plugin_base}" "${__plugin_base^^}" "${__plugin_base,,}"; do
+					find "$archive_data_tmp" -type f -name "${___plugin_base}*" -iname '*strings' -print0 \
+						| xargs -tr0 rename "$___plugin_base" "$__plugin_sub_base"
+				done
+			fi
 		done
 
-		# Account for mixed case base string files
-		if [[ "$plugin_base" != "$plugin_ck_base" ]]; then
-			awk -v s="$plugin_base" 'BEGIN{ printf("%s\n%s\n%s\n", s,tolower(s),toupper(s)) }' | while read __plugin_base; do
-				find "$archive_data_tmp" -type f -name "$__plugin_base*" -iname '*strings' -print0 \
-					| xargs -tr0 rename "$__plugin_base" "$plugin_ck_base"
-			done
+		if [[ -d "$archive_data_tmp" ]]; then
+			ck_archive_wrap_pack "$archive_data_tmp" "$archive_main_ck" 'None'
+			rm -rf "$archive_data_tmp"
 		fi
-
-		ck_archive_wrap_pack "$archive_data_tmp" "$archive_main_ck" 'None'
-
-		rm -rf "$archive_data_tmp"
 
 		;;
 	restore)
 		if [[ -f "$archive_main.save" ]]; then
-			rm -f "$archive_main_ck"
+			ls -lai "$archive_main.save" "$archive_main" "$archive_main_ck" 1>&2
+			rm -f "$archive_main_ck" "$archive_main"
 			mv "$archive_main.save" "$archive_main"
 		fi
 		;;
@@ -435,9 +465,7 @@ function ck_archive_wrap() {
 	esac
 
 	local archive_main="$bdir/$job/Data/$plugin_base - $archive_type.ba2"
-	local archive_main_ck="$bdir/$job/Data/$plugin_ck_base - $archive_type.ba2"
 	local archive_main_cached="$cdir/Data/$plugin_base - $archive_type.ba2"
-	local archive_main_ck_cached="$cdir/Data/$plugin_ck_base - $archive_type.ba2"
 	local cleaned_marker="$cdir/tmp/$plugin.$mode.cleaned"
 	local cache_lock="$cdir/tmp/$plugin.lock"
 	local modified=0
@@ -458,12 +486,18 @@ function ck_archive_wrap() {
 	# for a full generation an archive needs to be used for any
 	# further generation depending on those files (e.g. previs).
 
-	local archive_src
-	if [[ -f "$archive_main_cached" ]]; then
-		archive_src="$archive_main_cached"
-	elif [[ -f "$archive_main" ]]; then
-		archive_src="$archive_main"
+	case "$mode" in
+	scol)		local ddir="Meshes/SCOL" ;;
+	precombine)	local ddir="Meshes/PreCombined" ;;
+	previs)		local ddir="Vis" ;;
+	*)		return 1 ;;
+	esac
+
+	if [[ ! -d "$bdir/$job/Data/$ddir" ]]; then
+		return 0
 	fi
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$mode" "$type" "$area" "$area_ck" "ARCHIVING"
 
 	local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
 	if [[ -d "$archive_data_tmp" ]]; then
@@ -473,46 +507,28 @@ function ck_archive_wrap() {
 	fi
 	mkdir -p "$archive_data_tmp"
 
-	case "$mode" in
-	scol|precombine|previs)
-		case "$mode" in
-		scol) local ddir="Meshes/SCOL" ;;
-		precombine) local ddir="Meshes/PreCombined" ;;
-		previs) local ddir="Vis" ;;
-		esac
-
-		if [[ -d "$bdir/$job/Data/$ddir" ]]; then
-			ctl_log "$ctl_log" "$job" "$plugin" "$mode" "$type" "$area" "$area_ck" "ARCHIVING"
-
-			if [[ -f "$archive_src" ]]; then
-				ck_archive_wrap_unpack "$archive_src" "$archive_data_tmp"
-			fi
-
-			local cleaned_marker="$cdir/$plugin.$mode.cleaned"
-			if [[ ! -f "$cleaned_marker" ]]; then
-				rm -rf "$archive_data_tmp/$ddir"
-				touch "$cleaned_marker"
-			fi
-
-			mkdir -p "$archive_data_tmp/$ddir"
-			rsync -aSH \
-				--link-dest="$PWD/$bdir/$job/Data/$ddir" \
-				"$bdir/$job/Data/$ddir"/ "$archive_data_tmp/$ddir"/
-			modified=1
-		fi
-
-		;;
-	esac
-
-	if ((modified)); then
-		ck_archive_wrap_pack "$archive_data_tmp" "$archive_main_cached"
-
-		cp --remove-destination -flp "$archive_main_cached" "$archive_main"
-		ls -lai "$archive_main_cached" "$archive_main" 1>&2 2>/dev/null || true
+	if [[ -f "$archive_main" ]]; then
+		ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
 	fi
+
+	local cleaned_marker="$cdir/$plugin.$mode.cleaned"
+	if [[ ! -f "$cleaned_marker" ]]; then
+		rm -rf "$archive_data_tmp/$ddir"
+		touch "$cleaned_marker"
+	fi
+
+	mkdir -p "$archive_data_tmp/$ddir"
+	rsync -aSH \
+		--link-dest="$PWD/$bdir/$job/Data/$ddir" \
+		"$bdir/$job/Data/$ddir"/ "$archive_data_tmp/$ddir"/
+
+	ck_archive_wrap_pack "$archive_data_tmp" "$archive_main"
+	cp --remove-destination -flp "$archive_main" "$archive_main_cached"
 
 	rm -rf "$archive_data_tmp"
 	rm -f "$cache_lock"
+
+	ls -lai "$archive_main" "$archive_main_cached" 1>&2 2>/dev/null || true
 
 	return 0
 }
@@ -589,7 +605,7 @@ function ck_plugin_master_wrap() {
 	return 0
 }
 
-function ck_output_dir_wrap() {
+function ck_output_dir_rename() {
 	set -x
 
 	local bdir="$1"; shift
@@ -672,14 +688,14 @@ function ck_exec_wrap() {
 		CKEXEC="./CreationKit.exe"
 	fi
 
-	# Sanitize masters to be compatible with ck args (no spaces) and archives
-	ck_plugin_master_wrap "$bdir" "$job" "esp-to-esm" "$plugin"
+	# Sanitize any shared geometry files
+	ck_geom_wrap "$bdir" "$job" "$plugin"
 
 	# Sanitize archive filename and embedded filenames within archive
 	ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin"
 
-	# Sanitize any shared geometry files
-	ck_geom_wrap "$bdir" "$job" "$plugin"
+	# Sanitize masters to be compatible with ck args (no spaces) and archives
+	ck_plugin_master_wrap "$bdir" "$job" "esp-to-esm" "$plugin"
 
 	case "$mode" in
 	scol)
@@ -753,13 +769,13 @@ function ck_exec_wrap() {
 		return 1
 	fi
 
-	# Restore original archive
+	# Restore original archive and remove temporaries
 	ck_archive_rewrite "$bdir" "$job" "restore" "$plugin"
 
 	case "$mode" in
 	scol)
 		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
-			ck_output_dir_wrap "$bdir" "$job" "Data/Meshes/SCOL" "$plugin"
+			ck_output_dir_rename "$bdir" "$job" "Data/Meshes/SCOL" "$plugin"
 		fi
 
 		;;
@@ -781,7 +797,7 @@ function ck_exec_wrap() {
 		fi
 
 		if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
-			ck_output_dir_wrap "$bdir" "$job" "Data/Meshes/PreCombined" "$plugin"
+			ck_output_dir_rename "$bdir" "$job" "Data/Meshes/PreCombined" "$plugin"
 		fi
 
 		;;
@@ -794,7 +810,7 @@ function ck_exec_wrap() {
 		fi
 
 		if [[ -d "$bdir/$job/Data/Vis" ]]; then
-			ck_output_dir_wrap "$bdir" "$job" "Data/Vis" "$plugin"
+			ck_output_dir_rename "$bdir" "$job" "Data/Vis" "$plugin"
 		fi
 
 		;;
@@ -1217,10 +1233,10 @@ BEGIN{
 		else success++
 	}
 	while (getline < meminfo > 0) {
-		if ($1 == "MemTotal:") memtotal=$2 
-		else if ($1 == "MemFree:") memfree=$2 
-		else if ($1 == "SwapTotal:") swaptotal=$2 
-		else if ($1 == "SwapFree:") swapfree=$2 
+		if ($1 == "MemTotal:") memtotal=$2
+		else if ($1 == "MemFree:") memfree=$2
+		else if ($1 == "SwapTotal:") swaptotal=$2
+		else if ($1 == "SwapFree:") swapfree=$2
 	}
 }END{
 	print total,success,fail,memtotal,memfree,swaptotal,swapfree
@@ -1415,7 +1431,7 @@ done | perl -e '
 	my %plugins;
 	while (<>) {
 		chomp;
-		my @b = split("\t", $_); 
+		my @b = split("\t", $_);
 		push @{$plugins{$b[4]}}, $_;
 	}
 
