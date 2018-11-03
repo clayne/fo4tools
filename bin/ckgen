@@ -378,8 +378,9 @@ function ck_archive_rewrite() {
 			local __plugin_sub="$__plugin_esm"
 			local __plugin_sub_base="$__plugin_base"
 
-			# If plugin name or masters have been sanitized or flipped to an esm,
-			# change any directory references back to the original plugin name.
+			# If the target is the plugin itself, then the ck-sanitized name
+			# should be used - otherwise the esm-extension name should be used
+			# as esp masters are simply flipped to esm extensions.
 			if [[ "$__plugin" == "$__plugin_ck" ]]; then
 				continue
 			elif [[ "$__plugin" == "$plugin" ]]; then
@@ -388,6 +389,7 @@ function ck_archive_rewrite() {
 			fi
 
 			if [[ ! -d "$archive_data_tmp" ]]; then
+				# Speed-hack to avoid archive extraction unless it's absolutely necessary.
 				egrep -qi "$__plugin|$__plugin_base.*strings" "$archive_main" || continue
 
 				mkdir -p "$archive_data_tmp"
@@ -470,17 +472,15 @@ function ck_archive_wrap() {
 	local cache_lock="$cdir/tmp/$plugin.lock"
 	local modified=0
 
-	# Check if the original plugin's name is anywhere
-	# in it's main archive file. If found, extract it's
-	# archive, rename any directories to the new name of
-	# the plugin, and repackage it as a new archive.
-
+	# Multiple jobs may be generating data which is stored in the
+	# same backing archive. As such, it should be lock-controlled
+	# to prevent race conditions on update.
 	if ! lockfile -l 3600 -r 3600 -1 "$cache_lock"; then
 		echo "Failed to acquire lock: $cache_lock ..." 1>&2
 		return 1
 	fi
 
-	# Node: There are limitations in CK around the maximum number
+	# Note: There are limitations in CK around the maximum number
 	# of cached file handles involved with loose files. Since
 	# Data/Meshes/PreCombined usually contains over 100k files
 	# for a full generation an archive needs to be used for any
@@ -493,9 +493,8 @@ function ck_archive_wrap() {
 	*)		return 1 ;;
 	esac
 
-	if [[ ! -d "$bdir/$job/Data/$ddir" ]]; then
-		return 0
-	fi
+	# Bail if the directory to archive doesn't exist.
+	[[ -d "$bdir/$job/Data/$ddir" ]] || return 0
 
 	ctl_log "$ctl_log" "$job" "$plugin" "$mode" "$type" "$area" "$area_ck" "ARCHIVING"
 
@@ -507,10 +506,13 @@ function ck_archive_wrap() {
 	fi
 	mkdir -p "$archive_data_tmp"
 
-	if [[ -f "$archive_main" ]]; then
-		ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
-	fi
+	# It's entirely commonly that an archive being updated
+	# *may* not actually exist yet.
+	[[ -f "$archive_main" ]] && ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
 
+	# Remove archived data for the same type being updated
+	# to prevent cruft - but only do it once in case of
+	# concurrent runs (shards, etc).
 	local cleaned_marker="$cdir/$plugin.$mode.cleaned"
 	if [[ ! -f "$cleaned_marker" ]]; then
 		rm -rf "$archive_data_tmp/$ddir"
