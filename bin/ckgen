@@ -89,10 +89,13 @@ function ck_ini_rewrite() {
 	# bAllowResourceReloading:General
 	# bUsePreCreatedSCOL:General
 
+	local bdir="$1"; shift
+	local job="$1"; shift
+
 	set -e
 	set -o pipefail
 
-	local wpwd=$(cygpath -aw "$build/$job/")
+	local wpwd=$(cygpath -aw "$bdir/$job/")
 	awk -v threads=$(cpu_thread_cnt) -v wpwd="${wpwd//\\/\\\\}\\\\" '
 	{ 
 		if (match($0, "^\\[([^\\]]+)\\]", a)) {
@@ -118,6 +121,7 @@ function ck_ini_rewrite() {
 #		shash["General"]["bUsePreCulledObjects"]=1;
 #		shash["General"]["bCleanUpInvalidFormsOnLoad"]=0;
 #		shash["General"]["bFixAIPackagesOnLoad"]=0;
+#		shash["DistantLOD"]["bUpdateDistantRefDataOnLoad"]=1;
 		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
 		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
 		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
@@ -137,11 +141,11 @@ function ck_ini_rewrite() {
 		shash["General"]["bUseVersionControl"]=0;
 		shash["General"]["bBackgroundLoading"]=1;
 		shash["Pathfinding"]["bFixNavmeshInfosOnLoad"]=0;
-		shash["DistantLOD"]["bUpdateDistantRefDataOnLoad"]=1;
 		shash["BackgroundLoad"]["bBackgroundCellLoads"]=1;
 		shash["BackgroundLoad"]["bUseBackgroundFileLoader"]=1;
 		shash["Archive"]["bInvalidateOlderFiles"]=1;
 		shash["Archive"]["sResourceDataDirsFinal"]="";
+		shash["Audio"]["bEnableAudio"]=0;
 		shash["General"]["sFile Path"]=wpwd;
 
 		for (i = 1; i <= slidx; i++) {
@@ -252,7 +256,7 @@ function ck_clone() {
 
 	# Alter build-dir versions of CK ini files
 	for j in "$bdir/$job/CreationKit.ini" "$bdir/$job/CreationKitPrefs.ini" "$bdir/$job/CreationKitCustom.ini"; do
-		[[ -f "$j" ]] && ck_ini_rewrite < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
+		[[ -f "$j" ]] && ck_ini_rewrite "$bdir" "$job" < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
 	done
 
 	# XXX: Update comment (it's the presence of share dirs in the ini that make CK aware of VC)
@@ -357,7 +361,7 @@ function ck_archive_rewrite() {
 
 	case "$method" in
 	sanitize)
-		egrep -q "$plugin|$plugin_base.*strings" "$archive_main" || return 0
+		egrep -qi "$plugin|$plugin_base.*strings" "$archive_main" || return 0
 
 		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
 		mkdir -p "$archive_data_tmp"
@@ -384,8 +388,10 @@ function ck_archive_rewrite() {
 
 		;;
 	restore)
-		rm -f "$archive_main_ck"
-		mv "$archive_main.save" "$archive_main"
+		if [[ -f "$archive_main.save" ]]; then
+			rm -f "$archive_main_ck"
+			mv "$archive_main.save" "$archive_main"
+		fi
 		;;
 	esac
 
@@ -462,6 +468,7 @@ function ck_archive_wrap() {
 	local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
 	if [[ -d "$archive_data_tmp" ]]; then
 		echo "Assertion failure: $archive_data_tmp exists" 1>&2
+		find "$archive_data_tmp" -ls 1>&2
 		return 1
 	fi
 	mkdir -p "$archive_data_tmp"
@@ -855,7 +862,7 @@ function ck_wrap() {
 	rm -f "$bdir/$job/EditorWarnings.txt"
 	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; cp --remove-destination -fp '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
 
-	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log" || false
+	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 	# For each given mode, nuke any old data left in per-job build
 	# directory, regenerate it with CK, and then move the results
@@ -1238,7 +1245,7 @@ SHARDS=1
 SHARDS_START=1
 CORES=$(cpu_core_cnt)
 THREADS=$(cpu_thread_cnt)
-JOBS=$CORES
+JOBS=$THREADS
 SELF=$(basename $0)
 CACHE=$SELF.cache
 BUILD=$SELF.build
@@ -1413,7 +1420,8 @@ done | perl -e '
 	}
 
 	# Sort by count of CELL records within a plugin
-	open(my $fd, "-|", "find Data -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
+	my $ckgen_dir = "Data/ckgen";
+	open(my $fd, "-|", "find Data/*.es[mpl] $ckgen_dir -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
 	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
 	close($fd);
 
@@ -1422,6 +1430,10 @@ done | perl -e '
 		print "$_\n" foreach (shuffle @{$plugins{$_}});
 	}
 ' > "$BUILD/tmp/jobs.in"
+
+if [[ ! -s "$BUILD/tmp/jobs.in" ]]; then
+	exit 0
+fi
 
 if ((MANUAL)); then
 	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
@@ -1460,7 +1472,7 @@ else
 fi
 
 # Process output from build
-awk -F'\t' '!seen[$9]++ { print $5 }' "$BUILD/tmp/jobs.in" | while read plugin; do
+awk -F'\t' '!seen[$5]++ { print $5 }' "$BUILD/tmp/jobs.in" | while read plugin; do
 	plugin_parse "$plugin" plugin t a s
 	ck_wrap_proc "$BUILD" "$OUT" "$plugin"
 done

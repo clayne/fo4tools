@@ -64,14 +64,14 @@ begin
 //	process_mode := 'init_cell_all_master_clean';
 //	process_mode := 'init_cell_exts_master_clean';
 //	process_mode := 'init_cell_main_master_clean';
-//	process_mode := 'init_cell_other_master_clean';
 	process_mode := 'init_cell_ints_master_clean';
+//	process_mode := 'init_cell_other_master_clean';
 
 //	process_mode := 'init_cell_all_master_add';
 //	process_mode := 'init_cell_exts_master_add';
 //	process_mode := 'init_cell_main_master_add';
-//	process_mode := 'init_cell_other_master_add';
 //	process_mode := 'init_cell_ints_master_add';
+//	process_mode := 'init_cell_other_master_add';
 
 //	process_mode := 'precombine_merge';
 //	process_mode := 'previs_merge';
@@ -82,6 +82,25 @@ begin
 
 	plugin_final_use := false;
 	plugin_each_use := false;
+
+	master_force := TStringList.create;
+	master_force.add('Fallout4.esm');
+	master_force.add('DLCRobot.esm');
+	master_force.add('DLCworkshop01.esm');
+	master_force.add('DLCCoast.esm');
+	master_force.add('DLCworkshop02.esm');
+	master_force.add('DLCworkshop03.esm');
+	master_force.add('DLCNukaWorld.esm');
+	master_force.add('Unofficial Fallout 4 Patch.esp');
+	master_force.add('ReGrowth Overhaul 10.esp');
+	master_force.add('rgo_tree_noocclude.esp');
+	master_force.add('pcv-final.ints.esp');
+	master_force.add('pcv-final.main.esp');
+	master_force.add('pcv-final.other.esp');
+
+	master_force_seen := THashedStringList.create;
+	master_force_seen.sorted := true;
+	master_force_seen.duplicates := dupIgnore;
 
 	// Precombine specific signatures
 	pc_sig_tab[0] := 'XCRI';
@@ -135,17 +154,6 @@ begin
 	cell_cache.Duplicates := dupIgnore;
 
 	cell_queue := TList.create;
-
-	master_force := TStringList.create;
-//	master_force.add('ReGrowth Overhaul 10.esp');
-	master_force.add('rgo_tree_noocclude.esp');
-	master_force.add('pcv-final.ints.esp');
-	master_force.add('pcv-final.main.esp');
-	master_force.add('pcv-final.other.esp');
-
-	master_force_seen := THashedStringList.create;
-	master_force_seen.sorted := true;
-	master_force_seen.duplicates := dupIgnore;
 
 	plugin_ignore_list := TStringList.create;
 	plugin_ignore_list.sorted := true;
@@ -274,6 +282,8 @@ var
 	pfstr: string;
 begin
 	pfstr := GetFileName(plugin);
+	if not master_force.indexOf(pfstr) < 0 then
+		Exit;
 	if not master_force_seen.indexOf(pfstr) < 0 then
 		Exit;
 	master_force_seen.add(pfstr);
@@ -2212,7 +2222,7 @@ plugin_each_use := true;
 		winning_only := true;
 		non_winning_only := false;
 	end else if plugin_each_use then begin
-		remove := true;
+		remove := false;
 		promote := true;
 		refr_clean := false;
 		stat_check := true;
@@ -2233,11 +2243,12 @@ plugin_each_use := true;
 
 	// Add any forced masters
 	if Signature(e) = 'TES4' then begin
-		if (pos('master', process_mode) <> 0) and not (plugin_final_use or plugin_each_use) then begin
-			plugin_master_queue.addObject(GetFileName(e), GetFile(e));
+		if (pos('master', process_mode) <> 0) then begin
+			if plugin_master_queue.indexof(GetFileName(e)) < 0 then
+				plugin_master_queue.addObject(GetFileName(e), GetFile(e));
 			Exit;
 		end;
-	end else if Signature(e) = 'RFGP' then begin
+	end else if remove and (Signature(e) = 'RFGP') then begin
 		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 		RemoveNode(e);
 	end;
@@ -2471,7 +2482,7 @@ begin
 	for i := 0 to Pred(plugin_master_queue.count) do begin
 		plugin := ObjectToElement(plugin_master_queue.Objects[i]);
 		plugin_master_force(plugin, true, false);
-		SortMasters(plugin);
+//		SortMasters(plugin);
 	end;
 
 	AddMessage(Format('Removed %d cells', [ cell_remove_cnt ]));
