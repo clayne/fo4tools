@@ -164,6 +164,15 @@ function ck_ini_rewrite() {
 	}'
 }
 
+function perm_debug() {
+	ls -lai "$@" 1>&2 2>/dev/null || true
+	if which handle &>/dev/null; then
+		for i in "$@"; do
+			(cd /tmp && handle "$(basename "$i")" -nobanner) 1>&2 || true
+		done
+	fi
+}
+
 function ck_clone() {
 	set -x
 
@@ -181,6 +190,8 @@ function ck_clone() {
 	local job="$1"; shift
 	local manual="$1"; shift
 	local ctl_log="$1"; shift
+
+	local plugin_base="${plugin/%.es[pm]}"
 
 	set -e
 	set -o pipefail
@@ -245,7 +256,14 @@ function ck_clone() {
 		${EXCLUDE_PC_AUX:+--exclude '*.psg'} \
 		--link-dest="$sdir" "$sdir"/ "$bdir/$job"/
 #		--exclude "$SELF*" \
-#		--exclude '*.es[pm]' \
+#		--exclude '*.es[pml]' \
+
+	# Move any esms into place as they should be considered the most up to date.
+	# Note: CK will stow know VC is enabled due to network shared dirs in the ini files.
+	if [[ -d "$bdir/$job/Data/Merging" ]]; then
+		find "$bdir/$job/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -tr0 mv -t "$bdir/$job/Data"
+		rm -rf "$bdir/$job/Data/Merging"
+	fi
 
 	# Hardcopy CK ini files
 	rsync -aS --include 'CreationKit*.ini' --exclude '*' "$sdir"/ "$bdir/$job"/
@@ -259,13 +277,23 @@ function ck_clone() {
 		[[ -f "$j" ]] && ck_ini_rewrite "$bdir" "$job" < "$j" > "$j.tmp" && mv "$j.tmp" "$j"
 	done
 
-	# XXX: Update comment (it's the presence of share dirs in the ini that make CK aware of VC)
-	# Nuke version control directory to prevent CK from prompting that VC is disabled and
-	# move any esms into place as they should be considered the most up to date.
-	if [[ -d "$bdir/$job/Data/Merging" ]]; then
-		find "$bdir/$job/Data/Merging" -maxdepth 1 -type f -name '*.esm' -print0 | xargs -tr0 mv -t "$bdir/$job/Data"
-		rm -rf "$bdir/$job/Data/Merging"
+	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
+	if [[ -d "$cdir/Data" ]]; then
+		rsync -aSH --link-dest="$sdir/$cdir/Data" "$sdir/$cdir/Data"/ "$bdir/$job/Data"/
 	fi
+
+	# Clone plugin specific archive so that later archive rewrites don't run into
+	# concurrent access issues (e.g. Permission denied).
+	find "$bdir/$job/Data" -maxdepth 1 -mindepth 1 -type f -name "$plugin_base - *.ba2" | while read tmp; do
+		while ! cp --remove-destination -fp "$tmp" "$tmp.$$"; do
+			perm_debug "$tmp" "$tmp.$$"
+			sleep 1
+		done
+		while ! mv "$tmp.$$" "$tmp"; do
+			perm_debug "$tmp" "$tmp.$$"
+			sleep 1
+		done
+	done
 
 	# XXX: Update comment to be master specific.
 	# Original plugins, can be useful in cases where masters should be
@@ -278,7 +306,8 @@ function ck_clone() {
 		# overwrote. rsync is not an option because it sorts the input list.
 
 		# Copy of plugins from Data/ckgen/*
-		(find "$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+		(find \
+			"$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -288,7 +317,9 @@ function ck_clone() {
 		done || return 1
 
 		# Copy of plugins specifically setup as masters from Data/ckgen/master/*
-		(find "$bdir/$job/Data/ckgen/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+		(find \
+			"$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
+			"$bdir/$job/Data/ckgen/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f '!' -name "${plugin/.es[pml]*/.es[pml]}*" -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -296,23 +327,6 @@ function ck_clone() {
 			find "$tmp" -maxdepth 1 -mindepth 1 -type f '!' -name "${plugin/.es[pml]*/.es[pml]}*" -print0 \
 				| xargs -tr0 cp --remove-destination -flpt "$bdir/$job/Data"
 		done || return 1
-
-if false; then
-		# Copy of the specific plugin being processed
-		(find "$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
-			-maxdepth 1 -mindepth 1 -type f -name "$plugin" -printf '%h\n' 2>/dev/null || true) \
-			| awk '!seen[$0]++' \
-			| while read tmp
-		do
-			find "$tmp" -maxdepth 1 -mindepth 1 -type f -name "$plugin" -print0 \
-				| xargs -tr0 cp --remove-destination -flpt "$bdir/$job/Data"
-		done || return 1
-fi
-	fi
-
-	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
-	if [[ -d "$cdir/Data" ]]; then
-		rsync -aSH --link-dest="$sdir/$cdir/Data" "$sdir/$cdir/Data"/ "$bdir/$job/Data"/
 	fi
 
 	# Propogate info file with information about cloned environment
@@ -322,14 +336,27 @@ fi
 }
 
 function ck_archive_wrap_unpack() {
+	date 1>&2 || true
+	ls -lai "$1" 1>&2 2>/dev/null
 	Tools/Archive2/Archive2.exe "$1" -e="$2" -q
+	find "$2" -ls 1>&2
+	date 1>&2 || true
 }
 
 function ck_archive_wrap_pack() {
 	# Archive2 refuses to create empty archives
 	find "$1" -type f '!' -empty 2>/dev/null | egrep '' &>/dev/null || echo 'empty' > "$1/empty.txt"
 
-	Tools/Archive2/Archive2.exe "$1" -c="$2.tmp" -compression="${3:-Default}" -q && mv "$2.tmp" "$2"
+	date 1>&2 || true
+	ps -efW | egrep Archive2 || true
+	ls -lai "$2" 1>&2 2>/dev/null || true
+	find "$1" -ls 1>&2
+	Tools/Archive2/Archive2.exe "$1" -c="$2.$$" -compression="${3:-Default}" -q
+	while ! mv "$2.$$" "$2"; do
+		perm_debug "$2.$$" "$2"
+		sleep 1
+	done
+	date 1>&2 || true
 }
 
 function ck_archive_rewrite() {
@@ -340,11 +367,11 @@ function ck_archive_rewrite() {
 	local method="$1"; shift
 	local plugin="$1"; shift
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	local archive_type="Main"
 	local archive_main="$bdir/$job/Data/$plugin_base - $archive_type.ba2"
@@ -363,6 +390,13 @@ function ck_archive_rewrite() {
 	sanitize)
 		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
 
+		if [[ "$archive_main" != "$archive_main_ck" ]]; then
+			while ! cp -flp --remove-destination "$archive_main" "$archive_main_ck"; do
+				perm_debug "$archive_main" "$archive_main_ck"
+				sleep 1
+			done
+		fi
+
 		OIFS="$IFS";
 		IFS="
 "
@@ -370,11 +404,11 @@ function ck_archive_rewrite() {
 		IFS="$OIFS"
 
 		for __plugin in "$plugin" "${masters[@]}"; do
-			local __plugin_base="${__plugin/%.es[pm]}"
+			local __plugin_base="${__plugin/%.es[pml]}"
 			local __plugin_esm="${__plugin/%.esp/.esm}"
 			local __plugin_sanitized="${__plugin_esm//[^A-Za-z0-9_.-]/_}"
 			local __plugin_ck="${__plugin_sanitized:-${__plugin_esm:-$__plugin}}"
-			local __plugin_ck_base="${__plugin_ck/%.es[pm]}"
+			local __plugin_ck_base="${__plugin_ck/%.es[pml]}"
 			local __plugin_sub="$__plugin_esm"
 			local __plugin_sub_base="$__plugin_base"
 
@@ -392,9 +426,13 @@ function ck_archive_rewrite() {
 				# Speed-hack to avoid archive extraction unless it's absolutely necessary.
 				egrep -qi "$__plugin|$__plugin_base.*strings" "$archive_main" || continue
 
+				while ! cp -flp --remove-destination "$archive_main" "$archive_main.save"; do
+					perm_debug "$archive_main" "$archive_main.save"
+					sleep 1
+				done
+
 				mkdir -p "$archive_data_tmp"
-				cp --remove-destination -flp "$archive_main" "$archive_main.save"
-				ck_archive_wrap_unpack "$archive_main" "$archive_data_tmp"
+				ck_archive_wrap_unpack "$archive_main_ck" "$archive_data_tmp"
 			fi
 
 			# Account for plugin-specific dirs
@@ -413,16 +451,25 @@ function ck_archive_rewrite() {
 		done
 
 		if [[ -d "$archive_data_tmp" ]]; then
-			ck_archive_wrap_pack "$archive_data_tmp" "$archive_main_ck" 'None'
+			ck_archive_wrap_pack "$archive_data_tmp" "$archive_main_ck" 'Default'
 			rm -rf "$archive_data_tmp"
 		fi
 
 		;;
 	restore)
+		ls -lai "$archive_main.save" "$archive_main" "$archive_main_ck" 1>&2 2>/dev/null || true
+		if [[ "$archive_main" != "$archive_main_ck" ]]; then
+			rm -f "$archive_main_ck"
+		fi
 		if [[ -f "$archive_main.save" ]]; then
-			ls -lai "$archive_main.save" "$archive_main" "$archive_main_ck" 1>&2
-			rm -f "$archive_main_ck" "$archive_main"
-			mv "$archive_main.save" "$archive_main"
+			while ! rm -f "$archive_main"; do
+				perm_debug "$archive_main"
+				sleep 1
+			done
+			while ! mv "$archive_main.save" "$archive_main"; do
+				perm_debug "$archive_main.save" "$archive_main"
+				sleep 1
+			done
 		fi
 		;;
 	esac
@@ -446,11 +493,11 @@ function ck_archive_wrap() {
 	set -e
 	set -o pipefail
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 	local archive_type="Main"
 
 	case "$mode" in
@@ -531,7 +578,10 @@ function ck_archive_wrap() {
 		"$bdir/$job/Data/$ddir"/ "$archive_data_tmp/$ddir"/
 
 	ck_archive_wrap_pack "$archive_data_tmp" "$archive_main"
-	cp --remove-destination -flp "$archive_main" "$archive_main_cached"
+	while ! cp --remove-destination -flp "$archive_main" "$archive_main_cached"; do
+		perm_debug "$archive_main" "$archive_main_cached"
+		sleep 1
+	done
 
 	rm -rf "$archive_data_tmp"
 	rm -f "$cache_lock"
@@ -555,11 +605,11 @@ function ck_geom_wrap() {
 	local job="$1"; shift
 	local plugin="$1"; shift
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	set -e
 	set -o pipefail
@@ -588,11 +638,11 @@ function ck_plugin_master_wrap() {
 	local plugin="$1"; shift
 	local plugin_src="${1:-$plugin}"; shift || true
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	set -e
 	set -o pipefail
@@ -621,11 +671,11 @@ function ck_output_dir_rename() {
 	local dir="$1"; shift
 	local plugin="$1"; shift
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	set -e
 	set -o pipefail
@@ -639,11 +689,11 @@ function ck_output_dir_rename() {
 	IFS="$OIFS"
 
 	for __plugin in "$plugin" "${masters[@]}"; do
-		local __plugin_base="${__plugin/%.es[pm]}"
+		local __plugin_base="${__plugin/%.es[pml]}"
 		local __plugin_esm="${__plugin/%.esp/.esm}"
 		local __plugin_sanitized="${__plugin_esm//[^A-Za-z0-9_.-]/_}"
 		local __plugin_ck="${__plugin_sanitized:-${__plugin_esm:-$__plugin}}"
-		local __plugin_ck_base="${__plugin_ck/%.es[pm]}"
+		local __plugin_ck_base="${__plugin_ck/%.es[pml]}"
 		local __plugin_sub="$__plugin_esm"
 
 		# If plugin name or masters have been sanitized or flipped to an esm,
@@ -681,20 +731,14 @@ function ck_exec_wrap() {
 	# Equalized width of $cur
 	local wcur=$(printf "%02d" $cur)
 
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 	local plugin_esm="${plugin/%.esp/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pm]}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	set -e
 	set -o pipefail
-
-	if ((DEBUG)); then
-		CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
-	else
-		CKEXEC="./CreationKit.exe"
-	fi
 
 	# Sanitize any shared geometry files
 	ck_geom_wrap "$bdir" "$job" "$plugin"
@@ -755,7 +799,7 @@ function ck_exec_wrap() {
 
 	if ( \
 		cd "$bdir/$job" \
-			&& eval "$CKEXEC" ${args[*]} \
+			&& eval "$CKEXEC ${args[*]} &>$CKEXEC_OUT" \
 			&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer' "EditorWarnings.txt" \
 	);
 	then
@@ -877,14 +921,14 @@ function ck_wrap() {
 
 	# Equalized width of $cur
 	local wcur=$(printf "%02d" $cur)
-	local plugin_base="${plugin/%.es[pm]}"
+	local plugin_base="${plugin/%.es[pml]}"
 
 	set -e
 	set -o pipefail
 	set -o errtrace
 
 	rm -f "$bdir/$job/EditorWarnings.txt"
-	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'" ERR
+	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; ls -d '$bdir/$plugin.$mode.$type.$area.$wcur'.*.error &>/dev/null || cp --remove-destination -fp '$bdir/$job/EditorWarnings.txt' '$bdir/$plugin.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
 
 	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
@@ -916,7 +960,7 @@ function ck_wrap() {
 			# strictly necessary that the PSG file be compressed first.
 			if [[ -f "$bdir/$job/Data/$plugin_base - Geometry.psg" ]]; then
 				# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
-				cp --remove-destination -fp "$bdir/$job/Data/$plugin_base - Geometry.psg" "$cdir/Data/$plugin_base - Geometry.psg"
+				cp --remove-destination -flp "$bdir/$job/Data/$plugin_base - Geometry.psg" "$cdir/Data/$plugin_base - Geometry.psg"
 
 				mkdir -p "$bdir/$plugin"
 				mv "$bdir/$job/Data/$plugin_base - Geometry.psg" "$bdir/$plugin/$plugin_base - Geometry.psg"
@@ -966,7 +1010,7 @@ function ck_wrap() {
 		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
 
 		# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
-		cp --remove-destination -fp "$bdir/$job/Data/$plugin_base - Geometry.csg" "$cdir/Data/$plugin_base - Geometry.csg"
+		cp --remove-destination -flp "$bdir/$job/Data/$plugin_base - Geometry.csg" "$cdir/Data/$plugin_base - Geometry.csg"
 
 		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
 		# they should be moved after both -CompressPSG and -BuildCDX are finished.
@@ -1001,7 +1045,7 @@ function ck_wrap() {
 	# Copy plugin used for generation for reference purposes
 	if [[ -n "$plugin" && -f "$bdir/$job/Data/$plugin" ]]; then
 		mkdir -p "$bdir/$plugin"
-		cp --remove-destination -fp "$bdir/$job/Data/$plugin" "$bdir/$plugin/$plugin.$mode.$type.$area"
+		cp --remove-destination -flp "$bdir/$job/Data/$plugin" "$bdir/$plugin/$plugin.$mode.$type.$area"
 	fi
 
 	echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
@@ -1025,28 +1069,22 @@ function ck_wrap_proc() {
 		if ls -d "$bdir/$plugin/SCOL" &>/dev/null; then
 			echo "$plugin: Moving static collections..." 1>&2
 
-			mkdir -p "$odir/$plugin/Data/Meshes/SCOL"
-			ls -d "$bdir/$plugin/SCOL" | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Meshes/SCOL"/ || true
-			done
+#			mkdir -p "$odir/$plugin/Data/Meshes/SCOL"
+			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/SCOL" "$odir/$plugin/Data/Meshes"/ || true
 		fi
 
 		if ls -d "$bdir/$plugin/PreCombined".* &>/dev/null; then
 			echo "$plugin: Moving precombined..." 1>&2
 
-			mkdir -p "$odir/$plugin/Data/Meshes/PreCombined"
-			ls -d "$bdir/$plugin/PreCombined".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Meshes/PreCombined"/ || true
-			done
+#			mkdir -p "$odir/$plugin/Data/Meshes/PreCombined"
+			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/PreCombined".* "$odir/$plugin/Data/Meshes"/ || true
 		fi
 
 		if ls -d "$bdir/$plugin/Vis".* &>/dev/null; then
 			echo "$plugin: Moving previs..." 1>&2
 
-			mkdir -p "$odir/$plugin/Data/Vis"
-			ls -d "$bdir/$plugin/Vis".* | while read tmp; do
-				rsync --protect-args -aS --link-dest="$PWD/$tmp" "$tmp"/ "$odir/$plugin/Data/Vis"/ || true
-			done
+#			mkdir -p "$odir/$plugin/Data/Vis"
+			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/Vis".* "$odir/$plugin/Data"/ || true
 		fi
 
 		if ls -d "$bdir/$plugin"/*.[pc]sg &>/dev/null; then
@@ -1127,7 +1165,11 @@ function ck_log_wrap() {
 
 	# Precompute filenames rather than rely on shell globbing as they're usually
 	# non-existent when tail starts (and tail -F handles that issue on it's own).
-	local -a logs=( "$build/tmp/ctl.log" $(printf "$build/%s/EditorWarnings.txt " $(seq -s ' ' 1 $jobs)) )
+	local -a logs=( \
+		"$build/tmp/ctl.log" \
+		$(printf "$build/%s/EditorWarnings.txt " $(seq -s ' ' 1 $jobs)) \
+		$(printf "$build/%s/$CKEXEC_OUT " $(seq -s ' ' 1 $jobs)) \
+	)
 
 	echo $$ > "$build/tmp/ck_log_wrap.$wrap_mode.pid"
 
@@ -1207,7 +1249,9 @@ function ck_log_wrap() {
 				next;
 			if ($0 ~ /gen.*for.*cell/ && $0 !~ /ROOTCELL/)
 				next;
-			if ($0 ~ /D3D error|Warnings were encountered/)
+			if ($0 ~ /(Warnings|Errors) were encountered|See warnings file/)
+				next;
+			if ($0 ~ /D3D error|Reference .* attached to wrong cell for its location: Persistent cell|Unable to find reference group/)
 				next;
 			usepcnt=1;
 		} else {
@@ -1280,6 +1324,14 @@ PRESERVE_CACHE=1
 PRESERVE_BUILD=0
 PRESERVE_OUT=0
 MANUAL=0
+DEBUG=0
+CKEXEC_OUT="ckexec.out"
+
+if ((DEBUG)); then
+	CKEXEC="'/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/windbg.exe' -o -pb -pr ./CreationKit.exe"
+else
+	CKEXEC="./CreationKit.exe"
+fi
 
 if [[ "$1" == "--wrap" ]]; then
 	shift; ck_wrap "$@"; ((!$?)) || exit -1

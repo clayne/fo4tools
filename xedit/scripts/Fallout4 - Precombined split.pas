@@ -7,11 +7,11 @@
 
 unit FO4_Precombined_Split;
 const
-	Debug = True;
-//	Debug = False;
-	StopOnError = True;
-	MergeIntoOverride = True;
-	PerElementMasters = True;
+	Debug = true;
+//	Debug = false;
+	StopOnError = true;
+	MergeIntoOverride = true;
+	PerElementMasters = true;
 	InitFileSuffix = 'pcv';
 	PrecombineFileBase = 'precombine';
 	PrecombineFileSuffix = 'precombine_split';
@@ -52,6 +52,7 @@ var
 	plugin_master_queue: THashedStringList;
 
 	master_force: TStringList;
+	master_force_ignore: THashedStringList;
 	master_force_seen: THashedStringList;
 
 function Initialize: integer;
@@ -64,7 +65,7 @@ begin
 //	process_mode := 'init_cell_all_master_clean';
 //	process_mode := 'init_cell_exts_master_clean';
 //	process_mode := 'init_cell_main_master_clean';
-	process_mode := 'init_cell_ints_master_clean';
+//	process_mode := 'init_cell_ints_master_clean';
 //	process_mode := 'init_cell_other_master_clean';
 
 //	process_mode := 'init_cell_all_master_add';
@@ -74,14 +75,16 @@ begin
 //	process_mode := 'init_cell_other_master_add';
 
 //	process_mode := 'precombine_merge';
-//	process_mode := 'previs_merge';
+	process_mode := 'previs_merge';
+//	process_mode := 'precombine_extract';
+//	process_mode := 'previs_extract';
 //	process_mode := 'precombine_split';
 //	process_mode := 'previs_split';
 //	process_mode := 'final';
 //	process_mode := 'stats';
 
 	plugin_final_use := false;
-	plugin_each_use := false;
+	plugin_each_use := true;
 
 	master_force := TStringList.create;
 	master_force.add('Fallout4.esm');
@@ -91,12 +94,23 @@ begin
 	master_force.add('DLCworkshop02.esm');
 	master_force.add('DLCworkshop03.esm');
 	master_force.add('DLCNukaWorld.esm');
+	master_force.add('DLCUltraHighResolution.esm');
 	master_force.add('Unofficial Fallout 4 Patch.esp');
 	master_force.add('ReGrowth Overhaul 10.esp');
 	master_force.add('rgo_tree_noocclude.esp');
 	master_force.add('pcv-final.ints.esp');
 	master_force.add('pcv-final.main.esp');
 	master_force.add('pcv-final.other.esp');
+
+	master_force_ignore := TStringList.create;
+	master_force_ignore.add('Fallout4.esm');
+	master_force_ignore.add('DLCRobot.esm');
+	master_force_ignore.add('DLCworkshop01.esm');
+	master_force_ignore.add('DLCCoast.esm');
+	master_force_ignore.add('DLCworkshop02.esm');
+	master_force_ignore.add('DLCworkshop03.esm');
+	master_force_ignore.add('DLCNukaWorld.esm');
+	master_force_ignore.add('DLCUltraHighResolution.esm');
 
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
@@ -112,7 +126,7 @@ begin
 	pv_sig_tab[2] := 'VISI';
 
 	pc_keep_map := THashedStringList.create;
-	pc_keep_map.Sorted := True;
+	pc_keep_map.Sorted := true;
 //	pc_keep_map.add('CELL');
 //	pc_keep_map.add('LAND');
 //	pc_keep_map.add('LAYR');
@@ -126,7 +140,7 @@ begin
 //	pc_keep_map.add('WRLD');
 
 	pv_keep_map := THashedStringList.create;
-	pv_keep_map.Sorted := True;
+	pv_keep_map.Sorted := true;
 	pv_keep_map.add('ACTI');
 	pv_keep_map.add('CONT');
 	pv_keep_map.add('FLOR');
@@ -142,15 +156,15 @@ begin
 	pv_keep_map.add('TERM');
 
 	rvis_cell_cache := THashedStringList.create;
-	rvis_cell_cache.Sorted := True;
+	rvis_cell_cache.Sorted := true;
 	rvis_cell_cache.Duplicates := dupIgnore;
 
 	rvis_cell_grid_cache := THashedStringList.create;
-	rvis_cell_grid_cache.Sorted := True;
+	rvis_cell_grid_cache.Sorted := true;
 	rvis_cell_grid_cache.Duplicates := dupIgnore;
 
 	cell_cache := THashedStringList.create;
-	cell_cache.Sorted := True;
+	cell_cache.Sorted := true;
 	cell_cache.Duplicates := dupIgnore;
 
 	cell_queue := TList.create;
@@ -286,12 +300,15 @@ begin
 		Exit;
 	if not master_force_seen.indexOf(pfstr) < 0 then
 		Exit;
-	master_force_seen.add(pfstr);
+	if not master_force_ignore.indexOf(pfstr) < 0 then
+		Exit;
 
 	for i := 0 to Pred(master_force.count) do begin
 		m := plugin_file_resolve_existing(master_force[i]);
 		plugin_master_add(plugin, m, parents, false);
 	end;
+
+	master_force_seen.add(pfstr);
 
 	if sort then
 		SortMasters(plugin);
@@ -392,9 +409,9 @@ begin
 	Result := plugin;
 end;
 
-function plugin_resolve(plugin_src: IwbFile): IwbFile;
+function plugin_resolve(plugin: IwbFile): IwbFile;
 var
-	plugin, m: IInterface;
+	plugin_out, m: IInterface;
 	i: integer;
 	idx: integer;
 	mode: string;
@@ -405,14 +422,14 @@ begin
 		Result := plugin_final;
 		Exit;
 	end else if not plugin_each_use then begin
-		Result := plugin_src;
+		Result := plugin;
 		Exit;
 	end;
 
 	if plugin_final_use then begin
 		ofstr := 'final';
 	end else begin
-		ofstr := GetFileName(plugin_src);
+		ofstr := GetFileName(plugin);
 	end;
 
 	if process_mode = 'init_cell_all_master_clean' then begin
@@ -427,11 +444,11 @@ begin
 		mode := 'init'; area := 'other'; idx := 0;
 	end;
 
-	plugin := plugin_file_resolve(ofstr, mode, area, idx);
+	plugin_out := plugin_file_resolve(ofstr, mode, area, idx);
 	if plugin_final_use then
-		plugin_final := plugin;
+		plugin_final := plugin_out;
 
-	Result := plugin;
+	Result := plugin_out;
 end;
 
 procedure plugin_elem_remove(plugin: IwbFile; e: IInterface);
@@ -460,7 +477,7 @@ begin
 		elem_masters_add(plugin, e);
 
 	try
-		Result := wbCopyElementToFile(e, plugin, False, True);
+		Result := wbCopyElementToFile(e, plugin, false, true);
 	except
 		on Ex: Exception do begin
 			plugin_elem_remove(plugin, e);
@@ -528,10 +545,10 @@ var
 	i, j: integer;
 begin
 	sl := TStringList.create;
-	sl.Sorted := True;
+	sl.Sorted := true;
 	sl.Duplicates := dupIgnore;
 
-	ReportRequiredMasters(e, sl, False, True);
+	ReportRequiredMasters(e, sl, false, true);
 	for i := 0 to Pred(sl.Count) do begin
 		if sl[i] = GetFilename(plugin) then
 			continue;
@@ -563,11 +580,11 @@ var
 begin
 	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
 	if (flags and $800000) <> 0 then begin
-		Result := True;
+		Result := true;
 		Exit;
 	end;
 
-	Result := False;
+	Result := false;
 end;
 
 function elem_deleted_check(e: IInterface): Boolean;
@@ -576,19 +593,19 @@ var
 begin
 	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
 	if (flags and $20) <> 0 then begin
-		Result := True;
+		Result := true;
 		Exit;
 	end;
 
-	Result := False;
+	Result := false;
 end;
 
 procedure elem_sync(e, r: IInterface; s: TString);
 begin
 	if ElementExists(e, s) then begin
 		if not ElementExists(r, s) then
-			Add(r, s, True);
-		ElementAssign(ElementBySignature(r, s), LowInteger, ElementBySignature(e, s), False);
+			Add(r, s, true);
+		ElementAssign(ElementBySignature(r, s), LowInteger, ElementBySignature(e, s), false);
 	end else if ElementExists(r, s) then begin
 		RemoveElement(r, s);
 	end;
@@ -1176,7 +1193,7 @@ begin
 	ws := cell_world_edid(e);
 	tl := TList.create;
 	seen := THashedStringList.create;
-	seen.sorted := True;
+	seen.sorted := true;
 
 //	AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(e), Name(e)]));
 
@@ -1344,7 +1361,7 @@ var
 begin
 	t : = plugin_cell_find(plugin, e);
 	if not Assigned(t) then begin
-		t := form_copy_safe(plugin, e, true);
+		t := form_copy_safe(plugin, e, false, false);
 		if pc_clear then
 			cell_pc_clear(t);
 		if pv_clear then
@@ -1425,7 +1442,7 @@ begin
 
 		// Guard against xedit corrupting CELL parents
 		plugin_cell_copy_safe(plugin, e, true, true);
-		form_copy_safe(plugin, r, true);
+		form_copy_safe(plugin, r, false, false);
 
 		Exit;
 	end;
@@ -1454,7 +1471,7 @@ begin
 	Result := nil;
 end;
 
-function form_copy_safe(plugin: IwbFile; e: IInterface; nopv: boolean): IInterface;
+function form_copy_safe(plugin: IwbFile; e: IInterface; pc_copy, pv_copy: boolean): IInterface;
 var
 	r, d, t, v: IInterface;
 	i, j: integer;
@@ -1483,27 +1500,37 @@ begin
 				if PerElementMasters then
 					elem_masters_add(plugin, e);
 
-				r := wbCopyElementToFile(e, plugin, False, False);
+				r := wbCopyElementToFile(e, plugin, false, false);
 				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
 
 				for i := 0 to Pred(ElementCount(e)) do begin
 					t := ElementByIndex(e, i);
-					if not Assigned(t) then Continue;
+					if not Assigned(t) then
+						continue;
 
 					s := Signature(t);
-					if not Assigned(s) then Continue;
+					if not Assigned(s) then
+						continue;
 
-					if nopv then begin
+					if not pc_copy then begin
 						// If the previous deep copy failed it is extremely likely
 						// it was due to these elements and they will be copied
 						// from the prior override (see comment below).
-						if (s = 'XPRI') or (s = 'RVIS') or (s = 'VISI') then
-							Continue;
+						if not pc_sig_tab.indexOf(s) < 0 then
+							continue;
+					end;
+
+					if not pv_copy then begin
+						// If the previous deep copy failed it is extremely likely
+						// it was due to these elements and they will be copied
+						// from the prior override (see comment below).
+						if not pv_sig_tab.indexOf(s) < 0 then
+							continue;
 					end;
 
 					if not ElementExists(r, s) then
-						Add(r, s, True);
-					ElementAssign(ElementBySignature(r, s), LowInteger, t, False);
+						Add(r, s, true);
+					ElementAssign(ElementBySignature(r, s), LowInteger, t, false);
 				end;
 			except
 				on Ex: Exception do begin
@@ -1527,36 +1554,7 @@ begin
 	Result := r;
 end;
 
-// XXX: note this copies to a plugin rather than merging back into the master/override
-function previs_merge_forward(plugin: IwbFile; e, o, m: IInterface): Boolean;
-var
-	r, t: IInterface;
-begin
-	try
-		// Copy overridden plugin data as a starting base
-		r := wbCopyElementToFile(o, plugin, False, True);
-
-		// Copy previs data from current element to plugin
-		elem_pv_sync(e, r);
-
-		// Ensure any 'no previs' flags are removed if master also does not have
-		elem_previs_flag_clean(o, m);
-
-		// Copy form version info
-		elem_version_sync(e, r);
-	except
-		on Ex: Exception do begin
-			plugin_elem_remove(plugin, r);
-			Raise Exception.Create(Ex.Message);
-		end;
-	end;
-
-	Result := True;
-end;
-
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
-var
-	r, t: IInterface;
 begin
 	try
 		if PerElementMasters then
@@ -1576,7 +1574,7 @@ begin
 		end;
 	end;
 
-	Result := True;
+	Result := true;
 end;
 
 function precombine_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
@@ -1601,7 +1599,47 @@ begin
 		end;
 	end;
 
-	Result := True;
+	Result := true;
+end;
+
+// Note: this copies to a plugin rather than merging back into the master/override
+function previs_extract(plugin: IwbFile; e, o, m: IInterface): Boolean;
+var
+	r: IInterface;
+begin
+	try
+		// Copy overridden plugin data as a starting base
+		r := form_copy_safe(plugin, o, true, true);
+
+		previs_merge(plugin, e, r, m);
+	except
+		on Ex: Exception do begin
+			plugin_elem_remove(plugin, r);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+
+	Result := true;
+end;
+
+// Note: this copies to a plugin rather than merging back into the master/override
+function precombine_extract(plugin: IwbFile; e, o, m: IInterface): Boolean;
+var
+	r: IInterface;
+begin
+	try
+		// Copy overridden plugin data as a starting base
+		r := form_copy_safe(plugin, o, true, true);
+
+		precombine_merge(plugin, e, r, m);
+	except
+		on Ex: Exception do begin
+			plugin_elem_remove(plugin, r);
+			Raise Exception.Create(Ex.Message);
+		end;
+	end;
+
+	Result := true;
 end;
 
 function precombine_split(plugin: IwbFile; e, o, m: IInterface): Boolean;
@@ -1619,7 +1657,7 @@ begin
 		if PerElementMasters then
 			elem_masters_add(plugin, e);
 
-		r := wbCopyElementToFile(e, plugin, False, True);
+		r := wbCopyElementToFile(e, plugin, false, true);
 	except
 		// Deep copy failed, most likely due to bad XPRI data, attempt a per-element copy.
 		// The vast majority of the time this branch will only be taken for XPRI data.
@@ -1634,25 +1672,25 @@ begin
 //				if PerElementMasters then
 //					elem_masters_add(plugin, e);
 
-				r := wbCopyElementToFile(e, plugin, False, True);
+				r := wbCopyElementToFile(e, plugin, false, true);
 				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
 
 				for i := 0 to Pred(ElementCount(e)) do begin
 					t := ElementByIndex(e, i);
-					if not Assigned(t) then Continue;
+					if not Assigned(t) then continue;
 
 					s := Signature(t);
-					if not Assigned(s) then Continue;
+					if not Assigned(s) then continue;
 
 					// If the previous deep copy failed it is extremely likely
 					// it was due to these elements and they will be copied
 					// from the prior override (see comment below).
 					if (s = 'XPRI') or (s = 'RVIS') or (s = 'VISI') then
-						Continue;
+						continue;
 
 					if not ElementExists(r, s) then
-						Add(r, s, True);
-					ElementAssign(ElementBySignature(r, s), LowInteger, t, False);
+						Add(r, s, true);
+					ElementAssign(ElementBySignature(r, s), LowInteger, t, false);
 				end;
 			except
 				on Ex: Exception do begin
@@ -1696,7 +1734,7 @@ begin
 		end;
 	end;
 
-	Result := True;
+	Result := true;
 end;
 
 function group_desc(g: IInterface; s: string): Boolean;
@@ -2128,37 +2166,42 @@ begin
 	winning_override := isWinningOverride(e);
 
 	if not cell_filter(e, main_allow, other_allow, interior_allow, persistent_allow) then begin
-		if editable and remove then
-//AddMessage('remove: cell_filter');
+		if editable and remove then begin
+//			AddMessage('remove: cell_filter');
 			cell_remove(e);
+		end;
 		Exit;
 	end;
 
 	if stat_check and not cell_stat_check(e) then begin
-		if editable and remove then
-//AddMessage('remove: stat_check');
+		if editable and remove then begin
+//			AddMessage('remove: stat_check');
 			cell_remove(e);
+		end;
 		Exit;
 	end;
 
 	if rvis_check and not cell_rvis_overlap_check(e, false, true, require_static) then begin
-		if editable and remove then
-//AddMessage('remove: rvis_check');
+		if editable and remove then begin
+//			AddMessage('remove: rvis_check');
 			cell_remove(e);
+		end;
 		Exit;
 	end;
 
 	if non_winning_only and winning_override then begin
-		if editable and remove then
-//AddMessage('remove: non-winning-only');
+		if editable and remove then begin
+//			AddMessage('remove: non-winning-only');
 			cell_remove(e);
+		end;
 		Exit;
 	end;
 
 	if winning_only and not winning_override then begin
-		if editable and remove then
-//AddMessage('remove: winning-only');
+		if editable and remove then begin
+//			AddMessage('remove: winning-only');
 			cell_remove(e);
+		end;
 		Exit;
 	end;
 
@@ -2167,6 +2210,8 @@ begin
 	end;
 
 	if not master_force.indexOf(GetFileName(e)) < 0 then
+		Exit;
+	if not master_force_ignore.indexOf(GetFileName(e)) < 0 then
 		Exit;
 
 	// Pre-clean precombined and previs data from cells
@@ -2193,6 +2238,7 @@ begin
 		// XXX: only add if has pc/pv refrs?
 		cell_queue.add(e);
 	end else if editable and remove then begin
+		AddMessage('master_add: remove');
 		cell_remove(e);
 	end;
 end;
@@ -2210,8 +2256,6 @@ var
 begin
 	efname := GetFileName(e);
 
-plugin_each_use := true;
-
 	if plugin_final_use then begin
 		remove := false;
 		promote := true;
@@ -2222,7 +2266,7 @@ plugin_each_use := true;
 		winning_only := true;
 		non_winning_only := false;
 	end else if plugin_each_use then begin
-		remove := false;
+		remove := true;
 		promote := true;
 		refr_clean := false;
 		stat_check := true;
@@ -2233,7 +2277,7 @@ plugin_each_use := true;
 	end else begin
 		remove := true;
 		promote := true;
-		refr_clean := true;
+		refr_clean := false;
 		stat_check := true;
 		rvis_check := false;
 		require_static := false;
@@ -2243,7 +2287,8 @@ plugin_each_use := true;
 
 	// Add any forced masters
 	if Signature(e) = 'TES4' then begin
-		if (pos('master', process_mode) <> 0) then begin
+		if (pos('master', process_mode) <> 0) and not plugin_final_use then begin
+//		if (pos('master', process_mode) <> 0) and not (plugin_final_use or plugin_each_use) then begin
 			if plugin_master_queue.indexof(GetFileName(e)) < 0 then
 				plugin_master_queue.addObject(GetFileName(e), GetFile(e));
 			Exit;
@@ -2253,7 +2298,7 @@ plugin_each_use := true;
 		RemoveNode(e);
 	end;
 
-	// Non-persistent cells only (ignore them, not modify)
+	// Non-persistent cells only (ignore not modify)
 	if not cell_filter(e, true, true, true, false) then
 		Exit;
 
@@ -2349,23 +2394,21 @@ plugin_each_use := true;
 		// attempt to figure out the most recent one. This sometimes
 		// happens when generating so-called sharded data for the same
 		// plugin when using CKs command line options.
-		if ((process_mode = 'precombine_merge') or (process_mode = 'precombine_split')) and ElementExists(t, 'PCMB') then begin
+		if (pos('precombine', process_mode) <> 0) and ElementExists(t, 'PCMB') then begin
 			nv := GetElementEditValues(t, 'PCMB');
 			ts := ts_to_int(nv);
 			if ts = 0 or ts > pcmb_max then begin
 				if pcmb_max <> 0 then
-					AddMessage(Format('%s: Plugin with greater PCMB: %s (ts == %s)', [ efname, tfname, IntToHex(ts, 8) ]));
+					AddMessage(Format('%s: Plugin with greater PCMB: %s (%s > %s)', [ efname, tfname, IntToHex(ts, 8), IntToHex(pcmb_max, 8) ]));
 				pcmb_max := ts;
-				e := t;
 			end;
-		end else if ((process_mode = 'previs_merge') or (process_mode = 'previs_split')) and ElementExists(t, 'VISI') then begin
+		end else if (pos('previs', process_mode) <> 0) and ElementExists(t, 'VISI') then begin
 			nv := GetElementEditValues(t, 'VISI');
 			ts := ts_to_int(nv);
 			if ts = 0 or ts > visi_max then begin
 				if visi_max <> 0 then
-					AddMessage(Format('%s: Plugin with greater VISI: %s (ts == %s)', [ efname, tfname, IntToHex(ts, 8) ]));
+					AddMessage(Format('%s: Plugin with greater VISI: %s (%s > %s)', [ efname, tfname, IntToHex(ts, 8), IntToHex(visi_max, 8) ]));
 				visi_max := ts;
-				e := t;
 			end
 		end;
 
@@ -2384,7 +2427,7 @@ plugin_each_use := true;
 	for i := 0 to Pred(ol.count) do begin
 		o := ObjectToElement(ol[i]);
 		merge := (MergeIntoOverride and IsEditable(o));
-if true then begin
+if false then begin
 		if Debug then begin
 			if merge then begin
 				AddMessage(Format('%s: m == %s, o == %s, oc == %d, merge == %d: %s', [GetFileName(e), GetFileName(m), GetFileName(o), oc, 1, Name(e)]));
@@ -2409,10 +2452,14 @@ end;
 		try
 			if process_mode = 'precombine_merge' then begin
 				precombine_merge(plugin, e, o, m);
-			end else if process_mode = 'precombine_split' then begin
-				precombine_split(plugin, e, o, m);
 			end else if process_mode = 'previs_merge' then begin
 				previs_merge(plugin, e, o, m);
+			end else if process_mode = 'precombine_extract' then begin
+				precombine_extract(plugin, e, o, m);
+			end else if process_mode = 'previs_extract' then begin
+				previs_extract(plugin, e, o, m);
+			end else if process_mode = 'precombine_split' then begin
+				precombine_split(plugin, e, o, m);
 			end else if process_mode = 'previs_split' then begin
 				previs_split(plugin, e, o, m);
 			end else if process_mode = 'final' then begin
@@ -2469,7 +2516,7 @@ begin
 
 //		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 
-		plugin := plugin_resolve(t);
+		plugin := plugin_resolve(GetFile(t));
 		plugin_cell_rvis_master_add(plugin, t, true, false);
 
 		if plugin_master_queue.indexof(GetFileName(plugin)) < 0 then
@@ -2482,7 +2529,7 @@ begin
 	for i := 0 to Pred(plugin_master_queue.count) do begin
 		plugin := ObjectToElement(plugin_master_queue.Objects[i]);
 		plugin_master_force(plugin, true, false);
-//		SortMasters(plugin);
+		SortMasters(plugin);
 	end;
 
 	AddMessage(Format('Removed %d cells', [ cell_remove_cnt ]));
