@@ -942,8 +942,8 @@ function ck_wrap() {
 		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
 			ck_archive_wrap "$bdir" "$cdir" "$ctl_log" "$plugin" "$mode" "$type" "$area" "$area_ck" "$job"
 
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/Meshes/SCOL" "$bdir/$plugin/SCOL"
+			mkdir -p "$bdir/$plugin/Data/Meshes"
+			mv "$bdir/$job/Data/Meshes/SCOL" "$bdir/$plugin/Data/Meshes/SCOL"
 		fi
 
 		;;
@@ -962,19 +962,19 @@ function ck_wrap() {
 				# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs)
 				cp --remove-destination -flp "$bdir/$job/Data/$plugin_base - Geometry.psg" "$cdir/Data/$plugin_base - Geometry.psg"
 
-				mkdir -p "$bdir/$plugin"
-				mv "$bdir/$job/Data/$plugin_base - Geometry.psg" "$bdir/$plugin/$plugin_base - Geometry.psg"
+				mkdir -p "$bdir/$plugin/Data"
+				mv "$bdir/$job/Data/$plugin_base - Geometry.psg" "$bdir/$plugin/Data/$plugin_base - Geometry.psg"
 			fi
 
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+			mkdir -p "$bdir/$plugin/Data"
+			mv "$bdir/$job/Data/CombinedObjects.esp" "$bdir/$plugin/Data/$plugin.$mode.$type.$area.$wcur.esp"
 		fi
 
 		if [[ -d "$bdir/$job/Data/Meshes/PreCombined" ]]; then
 			ck_archive_wrap "$bdir" "$cdir" "$ctl_log" "$plugin" "$mode" "$type" "$area" "$area_ck" "$job"
 
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/PreCombined.$area.$wcur"
+			mkdir -p "$bdir/$plugin/Data/Meshes"
+			mv "$bdir/$job/Data/Meshes/PreCombined" "$bdir/$plugin/Data/Meshes/PreCombined.$area.$wcur"
 		fi
 
 		;;
@@ -985,15 +985,15 @@ function ck_wrap() {
 		# XXX: Look for any newly added or modified files instead of PreVis.esp specifically?
 		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 		if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/$plugin.$mode.$type.$area.$wcur.esp"
+			mkdir -p "$bdir/$plugin/Data"
+			mv "$bdir/$job/Data/PreVis.esp" "$bdir/$plugin/Data/$plugin.$mode.$type.$area.$wcur.esp"
 		fi
 
 		if [[ -d "$bdir/$job/Data/Vis" ]]; then
 			ck_archive_wrap "$bdir" "$cdir" "$ctl_log" "$plugin" "$mode" "$type" "$area" "$area_ck" "$job"
 
-			mkdir -p "$bdir/$plugin"
-			mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Vis.$area.$wcur"
+			mkdir -p "$bdir/$plugin/Data"
+			mv "$bdir/$job/Data/Vis" "$bdir/$plugin/Data/Vis.$area.$wcur"
 		fi
 
 		;;
@@ -1014,8 +1014,8 @@ function ck_wrap() {
 
 		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
 		# they should be moved after both -CompressPSG and -BuildCDX are finished.
-		mkdir -p "$bdir/$plugin"
-		mv -t "$bdir/$plugin" "$bdir/$job/Data/$plugin_base - Geometry.csg"
+		mkdir -p "$bdir/$plugin/Data"
+		mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base - Geometry.csg"
 
 		;;
 
@@ -1028,8 +1028,8 @@ function ck_wrap() {
 
 		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
 
-		mkdir -p "$bdir/$plugin"
-		mv -t "$bdir/$plugin" "$bdir/$job/Data/$plugin_base.cdx"
+		mkdir -p "$bdir/$plugin/Data"
+		mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base.cdx"
 
 		;;
 
@@ -1064,78 +1064,47 @@ function ck_wrap_proc() {
 	set -o pipefail
 
 	if [[ -d "$bdir/$plugin" ]]; then
-		# XXX: this is a mv which could affect a previs after a precombine if an archive isn't involved inbetween
-
-		if ls -d "$bdir/$plugin/SCOL" &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data/Meshes/SCOL" 2>/dev/null; then
 			echo "$plugin: Moving static collections..." 1>&2
-
-#			mkdir -p "$odir/$plugin/Data/Meshes/SCOL"
-			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/SCOL" "$odir/$plugin/Data/Meshes"/ || true
 		fi
 
-		if ls -d "$bdir/$plugin/PreCombined".* &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data/Meshes/PreCombined".* 2>/dev/null; then
 			echo "$plugin: Moving precombined..." 1>&2
-
-#			mkdir -p "$odir/$plugin/Data/Meshes/PreCombined"
-			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/PreCombined".* "$odir/$plugin/Data/Meshes"/ || true
 		fi
 
-		if ls -d "$bdir/$plugin/Vis".* &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data/Vis".* 2>/dev/null; then
 			echo "$plugin: Moving previs..." 1>&2
-
-#			mkdir -p "$odir/$plugin/Data/Vis"
-			rsync --protect-args -aS --link-dest="$PWD/$bdir/$plugin" "$bdir/$plugin/Vis".* "$odir/$plugin/Data"/ || true
 		fi
 
-		if ls -d "$bdir/$plugin"/*.[pc]sg &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data"/*.[pc]sg 2>/dev/null; then
 			echo "$plugin: Moving shared geometry..." 1>&2
-
-			mkdir -p "$odir/$plugin/Data"
-			mv -t "$odir/$plugin/Data" "$bdir/$plugin"/*.[pc]sg || true
 		fi
 
-		if ls -d "$bdir/$plugin"/*.cdx &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data"/*.cdx 2>/dev/null; then
 			echo "$plugin: Moving cell resource index..." 1>&2
-
-			mkdir -p "$odir/$plugin/Data"
-			mv -t "$odir/$plugin/Data" "$bdir/$plugin"/*.cdx || true
 		fi
 
-		if ls -d "$bdir/$plugin"/*.esp &>/dev/null; then
+		if ls -d "$bdir/$plugin/Data"/*.esp 2>/dev/null; then
 			echo "$plugin: Moving generated plugins..." 1>&2
-
-			mkdir -p "$odir/$plugin/Data"
-			mv -t "$odir/$plugin/Data" "$bdir/$plugin"/*.esp || true
 		fi
 
-		if (ls -d "$bdir/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null || true) | grep '' &>/dev/null; then
+		if (ls -d "$bdir/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null || true) | grep ''; then
 			echo "$plugin: Moving reference plugins..." 1>&2
-
-			mkdir -p "$odir/$plugin"
-			mv -t "$odir/$plugin" "$bdir/$plugin/$plugin".*.{all,main,ints,other} 2>/dev/null || true
 		fi
 
-		if ls -d "$bdir/$plugin"/*.dumpneededfiles*out &>/dev/null; then
+		if ls -d "$bdir/$plugin"/*.dumpneededfiles*out 2>/dev/null; then
 			echo "$plugin: Moving needed files output..." 1>&2
-
-			mkdir -p "$odir/$plugin/Data"
-			mv -t "$odir/$plugin" "$bdir/$plugin"/*.dumpneededfiles*out || true
 		fi
 
-		if ls -d "$bdir/$plugin"/EditorWarnings*.txt &>/dev/null; then
+		if ls -d "$bdir/$plugin"/EditorWarnings*.txt 2>/dev/null; then
 			echo "$plugin: Moving editor warnings output..." 1>&2
-
-			mkdir -p "$odir/$plugin"
-			mv -t "$odir/$plugin" "$bdir/$plugin"/EditorWarnings*.txt || true
 		fi
 
-		if [[ -d "$bdir/tmp/$plugin" ]]; then
+		if ls -d "$bdir/$plugin/jobs" 2>/dev/null; then
 			echo "$plugin: Moving job output..." 1>&2
-
-			mkdir -p "$odir/$plugin/job"
-			cp --remove-destination -Rfpt "$odir/$plugin/job" "$bdir/tmp/$plugin"/*
 		fi
-	fi
+	fi | sed -e "s#$bdir/$plugin#$plugin#g" \
+		| rsync --protect-args -aS -r --relative --files-from=- --link-dest="$PWD/$bdir" "$bdir" "$odir"
 
 	if ls -d "$bdir/$plugin".*.error &>/dev/null; then
 		echo "$plugin: Moving error output..." 1>&2
@@ -1382,15 +1351,14 @@ if ((!PRESERVE_BUILD)) || [[ ! -d "$BUILD" ]]; then
 	find "$BUILD" -mindepth 1 -maxdepth 1 \! -regex '.*/[0-9]+$' -print0 \
 		| xargs -tr0 rm -rf \
 		&& mkdir -p "$BUILD" || exit -1
+	# Cleanup any temporary files from prior runs
+	rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
 fi
 
 if ((!PRESERVE_OUT)) || [[ ! -d "$OUT" ]]; then
 	echo "Removing previous output data..." 1>&2
 	rm -rf "$OUT" && mkdir -p "$OUT" || exit -1
 fi
-
-# Cleanup any temporary files from prior runs
-rm -rf "$BUILD/tmp" && mkdir -p "$BUILD/tmp"
 
 # XXX: checkinplugin?
 # Could not parse command line properly.  Should be -GeneratePreCombined:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
@@ -1434,6 +1402,8 @@ precombine|previs)
 	exit -1
 	;;
 esac
+
+if false; then
 
 # Generate output file of jobs to be run by parallel
 for plugin in "$@"; do
@@ -1513,10 +1483,10 @@ if [[ ! -s "$BUILD/tmp/jobs.in" ]]; then
 fi
 
 if ((MANUAL)); then
-	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
+	PFLAGS="--res $BUILD/{5}/jobs/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --delay 2 --lb -tr -j $JOBS --colsep '\t'"
 else
 #	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --eta --shuf --lb -tr -j $JOBS --colsep '\t'"
-	PFLAGS="--res $BUILD/tmp/{5}/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --lb -tr -j $JOBS --colsep '\t'"
+	PFLAGS="--res $BUILD/{5}/jobs/{6}/{7}/{8}/{9}/{10}/{11}/ --joblog=$BUILD/tmp/jobs.log --progress --lb -tr -j $JOBS --colsep '\t'"
 fi
 
 # Note: final 'read' commands are to prevent tmux from closing each sub-window
@@ -1547,6 +1517,9 @@ if ((TMUX)); then
 else
 	parallel $PFLAGS "ckgen --wrap {} {%} $MANUAL $BUILD/tmp/ctl.log" < "$BUILD/tmp/jobs.in" || exit -1
 fi
+
+fi
+
 
 # Process output from build
 awk -F'\t' '!seen[$5]++ { print $5 }' "$BUILD/tmp/jobs.in" | while read plugin; do
