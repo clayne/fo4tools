@@ -17,7 +17,7 @@ const
 	PrecombineFileSuffix = 'precombine_split';
 	PrevisFileBase = 'previs';
 	PrevisFileSuffix = 'previs_split';
-	FinalFileBase = 'pcv-final';
+	FinalFileBase = 'pcv-final2';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 20;
 	DMarker_FID = $00000001;
@@ -31,7 +31,7 @@ const
 	F_MARKER = $800000;
 var
 	process_mode: string;
-	plugin_final_use, plugin_each_use: boolean;
+	plugin_combined_use, plugin_each_use, plugin_cell_use, stat_promote: boolean;
 	cell_remove_cnt, ref_remove_cnt: integer;
 
 	pc_sig_tab: array [0..1] of TString;
@@ -45,14 +45,14 @@ var
 	cell_cache: THashedStringList;
 	cell_queue: Tlist;
 
-	plugin_final: IInterface;
 	plugin_ignore_list: TStringList;
 
 	plugin_file_map: THashedStringList;
 	plugin_master_queue: THashedStringList;
 
+	base_master_list: THashedStringList;
+
 	master_force: TStringList;
-	master_force_ignore: THashedStringList;
 	master_force_seen: THashedStringList;
 
 function Initialize: integer;
@@ -66,7 +66,7 @@ begin
 //	process_mode := 'init_cell_exts_master_clean';
 //	process_mode := 'init_cell_main_master_clean';
 //	process_mode := 'init_cell_ints_master_clean';
-//	process_mode := 'init_cell_other_master_clean';
+	process_mode := 'init_cell_other_master_clean';
 
 //	process_mode := 'init_cell_all_master_add';
 //	process_mode := 'init_cell_exts_master_add';
@@ -75,18 +75,41 @@ begin
 //	process_mode := 'init_cell_other_master_add';
 
 //	process_mode := 'precombine_merge';
-	process_mode := 'previs_merge';
+//	process_mode := 'previs_merge';
 //	process_mode := 'precombine_extract';
 //	process_mode := 'previs_extract';
 //	process_mode := 'precombine_split';
 //	process_mode := 'previs_split';
+
+//	process_mode := 'final_all';
+//	process_mode := 'final_exts';
+//	process_mode := 'final_main';
+//	process_mode := 'final_ints';
+//	process_mode := 'final_other';
+
 //	process_mode := 'final';
 //	process_mode := 'stats';
 
-	plugin_final_use := false;
-	plugin_each_use := true;
+	plugin_combined_use := false;
+	plugin_each_use := false;
+	plugin_cell_use := false;
+	stat_promote := true;
+
+	base_master_list := THashedStringList.create;
+	base_master_list.sorted := true;
+	base_master_list.duplicates := dupIgnore;
+	base_master_list.add('Fallout4.esm');
+	base_master_list.add('DLCRobot.esm');
+	base_master_list.add('DLCworkshop01.esm');
+	base_master_list.add('DLCCoast.esm');
+	base_master_list.add('DLCworkshop02.esm');
+	base_master_list.add('DLCworkshop03.esm');
+	base_master_list.add('DLCNukaWorld.esm');
+	base_master_list.add('DLCUltraHighResolution.esm');
 
 	master_force := TStringList.create;
+	master_force.sorted := false;
+	master_force.duplicates := dupIgnore;
 	master_force.add('Fallout4.esm');
 	master_force.add('DLCRobot.esm');
 	master_force.add('DLCworkshop01.esm');
@@ -101,16 +124,6 @@ begin
 	master_force.add('pcv-final.ints.esp');
 	master_force.add('pcv-final.main.esp');
 	master_force.add('pcv-final.other.esp');
-
-	master_force_ignore := TStringList.create;
-	master_force_ignore.add('Fallout4.esm');
-	master_force_ignore.add('DLCRobot.esm');
-	master_force_ignore.add('DLCworkshop01.esm');
-	master_force_ignore.add('DLCCoast.esm');
-	master_force_ignore.add('DLCworkshop02.esm');
-	master_force_ignore.add('DLCworkshop03.esm');
-	master_force_ignore.add('DLCNukaWorld.esm');
-	master_force_ignore.add('DLCUltraHighResolution.esm');
 
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
@@ -238,7 +251,7 @@ end;
 procedure plugin_master_add(plugin: IwbFile; e: IInterface; parents, sort: boolean);
 var
 	efile, mfile: IwbFile;
-	efstr, mfstr: string;
+	efstr, pfstr: string;
 	i: integer;
 	mq, sl: THashedStringList;
 	tl: TList;
@@ -247,17 +260,17 @@ begin
 	sl := THashedStringList.create;
 	tl := TList.create;
 
+	pfstr := GetFileName(plugin);
+
 	tl.add(GetFile(e));
 	while tl.count <> 0 do begin
 		efile := ObjectToElement(tl[0]);
 		tl.delete(0);
 
 		efstr := GetFileName(efile);
-		if sl.indexOf(efstr) < 0 then begin
-			sl.add(efstr);
-		end else begin
+		if not sl.indexOf(efstr) < 0 then
 			continue;
-		end;
+		sl.add(efstr);
 
 		if parents then begin
 			// Add masters of the master being added otherwise
@@ -265,14 +278,12 @@ begin
 			// loaded and totally screw up the formid indexes.
 			for i := 0 to Pred(MasterCount(efile)) do begin
 				mfile := MasterByIndex(efile, i);
-				mfstr := GetFileName(mfile);
-
 				tl.add(mfile);
 			end;
 		end;
 
 //		if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
-		if not HasMaster(plugin, efstr) then begin
+		if (efstr <> pfstr) and not HasMaster(plugin, efstr) then begin
 			if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
 			mq.add(efstr);
 //			AddMasterIfMissing(plugin, efstr, false);
@@ -296,19 +307,18 @@ var
 	pfstr: string;
 begin
 	pfstr := GetFileName(plugin);
+	if not base_master_list.indexOf(pfstr) < 0 then
+		Exit;
 	if not master_force.indexOf(pfstr) < 0 then
 		Exit;
 	if not master_force_seen.indexOf(pfstr) < 0 then
 		Exit;
-	if not master_force_ignore.indexOf(pfstr) < 0 then
-		Exit;
+	master_force_seen.add(pfstr);
 
 	for i := 0 to Pred(master_force.count) do begin
 		m := plugin_file_resolve_existing(master_force[i]);
 		plugin_master_add(plugin, m, parents, false);
 	end;
-
-	master_force_seen.add(pfstr);
 
 	if sort then
 		SortMasters(plugin);
@@ -409,27 +419,18 @@ begin
 	Result := plugin;
 end;
 
-function plugin_resolve(plugin: IwbFile): IwbFile;
+function plugin_resolve(e: IInterface): IwbFile;
 var
-	plugin_out, m: IInterface;
+	m: IInterface;
 	i: integer;
 	idx: integer;
 	mode: string;
 	ofstr: string;
 	area: string;
 begin
-	if plugin_final_use and Assigned(plugin_final) then begin
-		Result := plugin_final;
+	if not (plugin_combined_use or plugin_each_use) then begin
+		Result := GetFile(e);
 		Exit;
-	end else if not plugin_each_use then begin
-		Result := plugin;
-		Exit;
-	end;
-
-	if plugin_final_use then begin
-		ofstr := 'final';
-	end else begin
-		ofstr := GetFileName(plugin);
 	end;
 
 	if process_mode = 'init_cell_all_master_clean' then begin
@@ -442,13 +443,28 @@ begin
 		mode := 'init'; area := 'main'; idx := 0;
 	end else if process_mode = 'init_cell_other_master_clean' then begin
 		mode := 'init'; area := 'other'; idx := 0;
+	end else if process_mode = 'final_all' then begin
+		mode := 'final'; area := 'all'; idx := 0;
+	end else if process_mode = 'final_exts' then begin
+		mode := 'final'; area := 'exts'; idx := 0;
+	end else if process_mode = 'final_ints' then begin
+		mode := 'final'; area := 'ints'; idx := 0;
+	end else if process_mode = 'final_main' then begin
+		mode := 'final'; area := 'main'; idx := 0;
+	end else if process_mode = 'final_other' then begin
+		mode := 'final'; area := 'other'; idx := 0;
 	end;
 
-	plugin_out := plugin_file_resolve(ofstr, mode, area, idx);
-	if plugin_final_use then
-		plugin_final := plugin_out;
+	if plugin_combined_use then begin
+		ofstr := area;
+	end else if plugin_each_use then begin
+		ofstr := GetFileName(e);
+		if plugin_cell_use then begin
+			ofstr := ofstr + '.' + IntToHex(FormID(e), 8);
+		end;
+	end;
 
-	Result := plugin_out;
+	Result := plugin_file_resolve(ofstr, mode, area, idx);
 end;
 
 procedure plugin_elem_remove(plugin: IwbFile; e: IInterface);
@@ -483,16 +499,6 @@ begin
 			plugin_elem_remove(plugin, e);
 			Raise Exception.Create(Ex.Message);
 		end;
-	end;
-end;
-
-function ts_to_int(ts: string): integer;
-begin
-	Result := 0;
-	if Assigned(ts) and length(ts) >= 5 then begin
-//		AddMessage('ts: ' + ts);
-		Result := StrToInt('$' + ts[4] + ts[5] + ts[1] + ts[2]);
-//		AddMessage('result: ' + IntToStr(Result));
 	end;
 end;
 
@@ -568,9 +574,9 @@ begin
 	mflags := GetElementNativeValues(m, 'Record Header\Record Flags');
 
 	// If record has 'no previs' set but master does not, remove it
-	if ((flags and $80) <> 0) and ((mflags and $80) = 0) then begin
+	if ((flags and F_NOPREVIS) <> 0) and ((mflags and F_NOPREVIS) = 0) then begin
 		AddMessage('Warning: disabling explicitly set "no previs" flag: ' + FullPath(e));
-		SetElementNativeValues(e, 'Record Header\Record Flags', flags - $80);
+		SetElementNativeValues(e, 'Record Header\Record Flags', flags - F_NOPREVIS);
 	end;
 end;
 
@@ -579,7 +585,7 @@ var
 	flags: cardinal;
 begin
 	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $800000) <> 0 then begin
+	if (flags and F_MARKER) <> 0 then begin
 		Result := true;
 		Exit;
 	end;
@@ -592,7 +598,7 @@ var
 	flags: cardinal;
 begin
 	flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-	if (flags and $20) <> 0 then begin
+	if (flags and F_DELETED) <> 0 then begin
 		Result := true;
 		Exit;
 	end;
@@ -1327,7 +1333,7 @@ begin
 
 		// Skip persistent worldspace cells (which never have precombines/previs)
 		flags := GetElementNativeValues(e, 'Record Header\Record Flags');
-		is_persistent := ((flags and $400) <> 0);
+		is_persistent := ((flags and F_PERSISTENT) <> 0);
 		if is_persistent and not persistent_allow then
 			Exit;
 	end
@@ -1361,7 +1367,7 @@ var
 begin
 	t : = plugin_cell_find(plugin, e);
 	if not Assigned(t) then begin
-		t := form_copy_safe(plugin, e, false, false);
+		t := form_copy_safe(plugin, e, (not pc_clear), (not pv_clear));
 		if pc_clear then
 			cell_pc_clear(t);
 		if pv_clear then
@@ -1735,6 +1741,61 @@ begin
 	end;
 
 	Result := true;
+end;
+
+function ts_to_int(ts: string): integer;
+begin
+	Result := 0;
+	if Assigned(ts) and length(ts) >= 5 then begin
+//		AddMessage('ts: ' + ts);
+		Result := StrToInt('$' + ts[4] + ts[5] + ts[1] + ts[2]);
+//		AddMessage('result: ' + IntToStr(Result));
+	end;
+end;
+
+function override_timestamp_latest(e: IInterface; s: signature): IInterface;
+var
+	m, t: IInterface;
+	i, oc: integer;
+	nv: string;
+	ts, ts_max: integer;
+	efname, tfname: string;
+begin
+	m := MasterOrSelf(e);
+	oc := OverrideCount(m);
+	ts := 0;
+	ts_max := 0;
+
+	Result := nil;
+
+	for i := Pred(oc) downto -1 do begin
+		if i < 0 then begin
+			t := m;
+		end else begin
+			t := OverrideByIndex(m, i);
+		end;
+
+		tfname := GetFileName(t);
+		efname := GetFileName(e);
+
+		// For overrides which have mixed timestamps for the same cell
+		// attempt to figure out the most recent one. This sometimes
+		// happens when generating so-called sharded data for the same
+		// plugin when using CKs command line options.
+		if ElementExists(t, s) then begin
+			nv := GetElementEditValues(t, s);
+			ts := ts_to_int(nv);
+		end else begin
+			ts := 0;
+		end;
+
+		if ts = 0 or ts > ts_max then begin
+			if ts_max <> 0 then
+				AddMessage(Format('%s: Plugin with greater %s: %s (%s > %s)', [ efname, tfname, s, IntToHex(ts, 8), IntToHex(ts_max, 8) ]));
+			ts_max := ts;
+			Result := t;
+		end;
+	end;
 end;
 
 function group_desc(g: IInterface; s: string): Boolean;
@@ -2189,18 +2250,22 @@ begin
 		Exit;
 	end;
 
+	// XXX: This really means keep only non-winning overrides,
+	// XXX: aka preparing as a master for generation only.
 	if non_winning_only and winning_override then begin
 		if editable and remove then begin
 //			AddMessage('remove: non-winning-only');
-			cell_remove(e);
+//			cell_remove(e);
 		end;
 		Exit;
 	end;
 
+	// XXX: This really means only *add* winning overrides,
+	// XXX: aka preparing for generated esps per plugin.
 	if winning_only and not winning_override then begin
 		if editable and remove then begin
 //			AddMessage('remove: winning-only');
-			cell_remove(e);
+//			cell_remove(e);
 		end;
 		Exit;
 	end;
@@ -2209,9 +2274,9 @@ begin
 		cell_refr_clean(e);
 	end;
 
-	if not master_force.indexOf(GetFileName(e)) < 0 then
+	if not base_master_list.indexOf(GetFileName(e)) < 0 then
 		Exit;
-	if not master_force_ignore.indexOf(GetFileName(e)) < 0 then
+	if not master_force.indexOf(GetFileName(e)) < 0 then
 		Exit;
 
 	// Pre-clean precombined and previs data from cells
@@ -2245,7 +2310,7 @@ end;
 
 function Process(e: IInterface): integer;
 var
-	o, m, t, r, plugin: IInterface;
+	o, m, t, r, w, plugin: IInterface;
 	tfname, efname: string;
 	idx, i, j, oc: integer;
 	ts, pcmb_max, visi_max: integer;
@@ -2254,9 +2319,7 @@ var
 	ol: TList;
 	promote, remove, winning_only, non_winning_only, refr_clean, stat_check, rvis_check, require_static: boolean;
 begin
-	efname := GetFileName(e);
-
-	if plugin_final_use then begin
+	if plugin_combined_use then begin
 		remove := false;
 		promote := true;
 		refr_clean := false;
@@ -2269,7 +2332,7 @@ begin
 		remove := true;
 		promote := true;
 		refr_clean := false;
-		stat_check := true;
+		stat_check := false;
 		rvis_check := false;
 		require_static := false;
 		winning_only := false;
@@ -2278,7 +2341,7 @@ begin
 		remove := true;
 		promote := true;
 		refr_clean := false;
-		stat_check := true;
+		stat_check := false;
 		rvis_check := false;
 		require_static := false;
 		winning_only := false;
@@ -2287,8 +2350,8 @@ begin
 
 	// Add any forced masters
 	if Signature(e) = 'TES4' then begin
-		if (pos('master', process_mode) <> 0) and not plugin_final_use then begin
-//		if (pos('master', process_mode) <> 0) and not (plugin_final_use or plugin_each_use) then begin
+		if (pos('master', process_mode) <> 0) and not plugin_combined_use then begin
+//		if (pos('master', process_mode) <> 0) and not (plugin_combined_use or plugin_each_use) then begin
 			if plugin_master_queue.indexof(GetFileName(e)) < 0 then
 				plugin_master_queue.addObject(GetFileName(e), GetFile(e));
 			Exit;
@@ -2363,12 +2426,22 @@ begin
 		Exit;
 	end;
 
+	if process_mode = 'final_main' then begin
+		if not base_master_list.indexOf(GetFileName(e)) < 0 then
+			Exit;
+		plugin := plugin_resolve(e);
+		plugin_cell_copy_safe(plugin, WinningOverride(e), false, false);
+		Exit;
+	end;
+
 	if process_mode = 'precombine_merge' then begin
+		efname := GetFileName(e);
 		if pos('.precombine', efname) = 0 then
 			Exit;
 	end;
 
 	if process_mode = 'previs_merge' then begin
+		efname := GetFileName(e);
 		if pos('.previs', efname) = 0 then
 			Exit;
 	end;
@@ -2377,9 +2450,7 @@ begin
 	m := MasterOrSelf(e);
 	oc := OverrideCount(m);
 	ol := TList.create;
-	ts := 0;
-	pcmb_max := 0;
-	visi_max := 0;
+
 	for i := Pred(oc) downto -1 do begin
 		if i < 0 then begin
 			t := m;
@@ -2389,28 +2460,6 @@ begin
 
 		tfname := GetFileName(t);
 		efname := GetFileName(e);
-
-		// For overrides which have mixed timestamps for the same cell
-		// attempt to figure out the most recent one. This sometimes
-		// happens when generating so-called sharded data for the same
-		// plugin when using CKs command line options.
-		if (pos('precombine', process_mode) <> 0) and ElementExists(t, 'PCMB') then begin
-			nv := GetElementEditValues(t, 'PCMB');
-			ts := ts_to_int(nv);
-			if ts = 0 or ts > pcmb_max then begin
-				if pcmb_max <> 0 then
-					AddMessage(Format('%s: Plugin with greater PCMB: %s (%s > %s)', [ efname, tfname, IntToHex(ts, 8), IntToHex(pcmb_max, 8) ]));
-				pcmb_max := ts;
-			end;
-		end else if (pos('previs', process_mode) <> 0) and ElementExists(t, 'VISI') then begin
-			nv := GetElementEditValues(t, 'VISI');
-			ts := ts_to_int(nv);
-			if ts = 0 or ts > visi_max then begin
-				if visi_max <> 0 then
-					AddMessage(Format('%s: Plugin with greater VISI: %s (%s > %s)', [ efname, tfname, IntToHex(ts, 8), IntToHex(visi_max, 8) ]));
-				visi_max := ts;
-			end
-		end;
 
 		// XXX: consider allowing precombine_merge files in previs mode
 		if (tfname = efname) or (pos(tfname, efname) = 0) then
@@ -2424,15 +2473,23 @@ begin
 		Exit;
 	end;
 
+	if (pos('precombine', process_mode) <> 0) then begin
+		t := override_timestamp_latest(e, 'PCMB');
+	end else if (pos('previs', process_mode) <> 0) then begin
+		t := override_timestamp_latest(e, 'VISI');
+	end;
+
 	for i := 0 to Pred(ol.count) do begin
 		o := ObjectToElement(ol[i]);
 		merge := (MergeIntoOverride and IsEditable(o));
 if false then begin
 		if Debug then begin
 			if merge then begin
-				AddMessage(Format('%s: m == %s, o == %s, oc == %d, merge == %d: %s', [GetFileName(e), GetFileName(m), GetFileName(o), oc, 1, Name(e)]));
+				AddMessage(Format('%s: m == %s, o == %s, t == %s, oc == %d, merge == %d: %s',
+					[GetFileName(e), GetFileName(m), GetFileName(o), GetFileName(t), oc, 1, Name(e)]));
 			end else begin
-				AddMessage(Format('%s: m == %s, o == %s, oc == %d, merge == %d: %s', [GetFileName(e), GetFileName(m), GetFileName(o), oc, 0, Name(e)]));
+				AddMessage(Format('%s: m == %s, o == %s, t == %s, oc == %d, merge == %d: %s',
+					[GetFileName(e), GetFileName(m), GetFileName(o), GetFileName(t), oc, 0, Name(e)]));
 			end;
 		end;
 end;
@@ -2451,23 +2508,21 @@ end;
 
 		try
 			if process_mode = 'precombine_merge' then begin
-				precombine_merge(plugin, e, o, m);
+				precombine_merge(plugin, t, o, m);
 			end else if process_mode = 'previs_merge' then begin
-				previs_merge(plugin, e, o, m);
+				previs_merge(plugin, t, o, m);
 			end else if process_mode = 'precombine_extract' then begin
-				precombine_extract(plugin, e, o, m);
+				precombine_extract(plugin, t, o, m);
 			end else if process_mode = 'previs_extract' then begin
-				previs_extract(plugin, e, o, m);
+				previs_extract(plugin, t, o, m);
 			end else if process_mode = 'precombine_split' then begin
-				precombine_split(plugin, e, o, m);
+				precombine_split(plugin, t, o, m);
 			end else if process_mode = 'previs_split' then begin
-				previs_split(plugin, e, o, m);
-			end else if process_mode = 'final' then begin
-				precombine_previs_final(plugin, e);
+				previs_split(plugin, t, o, m);
 			end;
 		except
 			on Ex: Exception do begin
-				AddMessage('Failed to copy: ' + FullPath(e));
+				AddMessage('Failed to proc: ' + FullPath(t));
 				AddMessage('        reason: ' + Ex.Message);
 
 				ol.free;
@@ -2494,12 +2549,14 @@ begin
 
 //		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 
-		plugin := plugin_resolve(GetFile(t));
-		plugin_cell_stat_master_add(plugin, t, true, false);
-		if plugin_final_use or plugin_each_use then begin
+		plugin := plugin_resolve(t);
+
+		if stat_promote then begin
 			stat_refr_promote(plugin, t, true);
 			plugin_master_add(plugin, t, true, false);
 		end;
+
+		plugin_cell_stat_master_add(plugin, t, true, false);
 
 		if plugin_master_queue.indexof(GetFileName(plugin)) < 0 then
 			plugin_master_queue.addObject(GetFileName(plugin), plugin);
@@ -2516,7 +2573,7 @@ begin
 
 //		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 
-		plugin := plugin_resolve(GetFile(t));
+		plugin := plugin_resolve(t);
 		plugin_cell_rvis_master_add(plugin, t, true, false);
 
 		if plugin_master_queue.indexof(GetFileName(plugin)) < 0 then

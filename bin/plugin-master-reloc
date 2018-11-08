@@ -87,6 +87,7 @@ sub main {
 	my $complete = 0;
 	my $recurse = 0;
 	my $hex = 0;
+	my $include_self = 0;
 	my $overwrite = 0;
 	my $sub_smart = 1;
 	my @sub;
@@ -110,6 +111,7 @@ sub main {
 		'r|recurse+' => \$recurse,
 		'S|smart-sub+' => \$sub_smart,
 		's|sub=s' => \@sub,
+		'include-self' => \$include_self,
 		'H|hex+' => \$hex,
         ) && (!$help && ($ret = 1));
 
@@ -341,12 +343,17 @@ sub main {
 		$mout = [ $mout_tmp ];
 	}
 
+	%seen = ();
 	my $head;
 	foreach my $ent (@$mout) {
 		my ($path, $dirname, $basename, $mproc) = map $ent->{$_}, qw(path dirname basename mproc);
 		next if ($unlink{$path});
 
 		printf STDERR ("%s%s:\n", $head++ ? "\n" : "", $path) if ($verbose);
+
+		if ($include_self) {
+			push @$mproc, { offset => 0, master => $basename, plugin => $basename };
+		}
 
 		for (my $i = 0; $i < @$mproc; $i++) {
 			my ($offset, $master, $plugin) = map $mproc->[$i]{$_}, qw(offset master plugin);
@@ -359,8 +366,10 @@ sub main {
 					$i, $master, $plugin ne $basename ? " ($plugin)" : "");
 			} elsif (!$esp_to_esm && !$esm_to_esp) {
 				if (!$quick) {
+					next unless (!$seen{join('.', $path, $master)}++);
 					printf STDOUT ("%s\t%s\n", $path, $master);
 				} else {
+					next unless (!$seen{$master}++);
 					printf STDOUT ("%s\n", $master);
 				}
 			}
