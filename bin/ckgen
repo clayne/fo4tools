@@ -1385,33 +1385,30 @@ function ck_gen() {
 		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
 		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
 	else
-#		PFLAGS_GEN="--res $bdir/{5}/jobs/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.log --eta --shuf --lb -tr -j $jobs --colsep '\t'"
 		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --lb -tr -j $jobs --colsep '\t'"
 		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --lb -tr -j $jobs --colsep '\t'"
 	fi
 
 	if ((!proc_only)); then
-		eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $manual '$ctl_log'" < "$args"
-		if [[ $? -eq 255 ]]; then
+		if eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $manual '$ctl_log'" < "$args"; then
+			if ! read; then
+				echo "read_ret = $?" 1>&2
+			fi
+		elif (($? == 255)); then
 			touch "$ctl_err"
-			error=1
-		else
-			read
+			return 1
 		fi
 	fi
 
 	# XXX: Could be done in a better way
-	if ((!error)); then
-		eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $manual '$ctl_log'" < "$args"
-		if [[ $? -eq 255 ]]; then
-			touch "$ctl_err"
-			error=1
-		else
-			read
+	if eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $manual '$ctl_log'" < "$args"; then
+		if ! read; then
+			echo "read_ret = $?" 1>&2
 		fi
+	elif (($? == 255)); then
+		touch "$ctl_err"
+		return 1
 	fi
-
-	cat "$bdir/tmp/ck_log_wrap".*.pid | xargs -r kill || true
 
 	return $error
 }
@@ -1629,7 +1626,7 @@ if ((TMUX)); then
 		split -p 40 \
 		"ckgen --log-wrap '$BUILD' all $JOBS" ';' \
 		split -p 50 \
-		"ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $MANUAL $PROC_ONLY" ';' \
+		"bash -x ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $MANUAL $PROC_ONLY 2>&1 | tee /tmp/ckgen.wtf.out || true; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
 		set-option status-left "#(ckgen --status '$PWD/$BUILD')" ';' \
 		set-option status-interval 1 ';' \
 		set-option status-right '' ';' \

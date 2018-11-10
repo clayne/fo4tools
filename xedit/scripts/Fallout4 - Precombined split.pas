@@ -66,7 +66,7 @@ begin
 //	process_mode := 'init_cell_exts_master_clean';
 //	process_mode := 'init_cell_main_master_clean';
 //	process_mode := 'init_cell_ints_master_clean';
-	process_mode := 'init_cell_other_master_clean';
+//	process_mode := 'init_cell_other_master_clean';
 
 //	process_mode := 'init_cell_all_master_add';
 //	process_mode := 'init_cell_exts_master_add';
@@ -75,7 +75,7 @@ begin
 //	process_mode := 'init_cell_other_master_add';
 
 //	process_mode := 'precombine_merge';
-//	process_mode := 'previs_merge';
+	process_mode := 'previs_merge';
 //	process_mode := 'precombine_extract';
 //	process_mode := 'previs_extract';
 //	process_mode := 'precombine_split';
@@ -199,6 +199,10 @@ begin
 	plugin_master_queue := THashedStringList.create;
 	plugin_master_queue.sorted := false;
 	plugin_master_queue.duplicates := dupIgnore;
+
+	for i := 0 to Pred(ParamCount) do begin
+		AddMessage(Format('param[%d] == %s', [ i, ParamStr(i) ]));
+	end;
 
 	cell_remove_cnt := 0;
 	ref_remove_cnt := 0;
@@ -686,6 +690,11 @@ begin
 	Result := Assigned(cell_refr_rvis_first(e, false, false));
 end;
 
+function cell_navm_check(e: IInterface): boolean;
+begin
+	Result := Assigned(cell_navm_first(e, false, false));
+end;
+
 function cell_refr_stat_all(e: IInterface; ref_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
@@ -712,12 +721,10 @@ begin
 				continue;
 
 			// deleted references should be considered matching
-			if elem_deleted_check(t) then begin
-				b := BaseRecord(MasterOrSelf(t));
-			end else begin
-				b := BaseRecord(t);
-			end;
+			if elem_deleted_check(t) then
+				t := MasterOrSelf(t);
 
+			b := BaseRecord(t);
 			s := Signature(b);
 			if pc_keep_map.indexof(s) < 0 then
 				continue;
@@ -747,7 +754,7 @@ begin
 	end;
 end;
 
-function cell_refr_ent_filter(e: IInterface; filter: THashedStringList; ref_check, cell_check, precombined_only: boolean): IInterface;
+function cell_refr_ent_filter(e: IInterface; filter: THashedStringList; error_check, cell_check, precombined_only: boolean): IInterface;
 var
 	t, b: IInterface;
 	i: integer;
@@ -761,12 +768,10 @@ begin
 			continue;
 
 		// deleted references should be considered matching
-		if elem_deleted_check(t) then begin
-			b := BaseRecord(MasterOrSelf(t));
-		end else begin
-			b := BaseRecord(t);
-		end;
+		if elem_deleted_check(t) then
+			t := MasterOrSelf(t);
 
+		b := BaseRecord(t);
 		s := Signature(b);
 		if (filter.indexof(s) < 0) then
 			continue;
@@ -782,7 +787,7 @@ begin
 		end;
 
 		// ignore refs with problems
-		if ref_check then begin
+		if error_check then begin
 			if not elem_error_check(t) then
 				continue;
 		end;
@@ -800,7 +805,43 @@ begin
 	Result := nil;
 end;
 
-function cell_refr_rvis_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
+function cell_navm_ent_filter(e: IInterface; error_check, cell_check: boolean): IInterface;
+var
+	t, b: IInterface;
+	i: integer;
+	s: string;
+begin
+	for i := 0 to Pred(ElementCount(e)) do begin
+		t := ElementByIndex(e, i);
+		s := Signature(t);
+
+		if (s <> 'NAVM') then
+			continue;
+
+		// deleted references should be considered matching
+		if elem_deleted_check(t) then
+			t := MasterOrSelf(t);
+
+		// ignore refs with problems
+		if error_check then begin
+			if not elem_error_check(t) then
+				continue;
+		end;
+
+		// ignore refs outside of the cell xedit thinks they should be in
+		if cell_check then begin
+			if not elem_cell_check(t) then
+				continue;
+		end;
+
+		Result := t;
+		Exit;
+	end;
+
+	Result := nil;
+end;
+
+function cell_refr_rvis_first(e: IInterface; error_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j, k: integer;
@@ -843,8 +884,7 @@ begin
 			2: begin filter := pv_keep_map; precombined_only := false; end;
 			end;
 
-			t := cell_refr_ent_filter(r, filter, ref_check, cell_check, precombined_only);
-
+			t := cell_refr_ent_filter(r, filter, error_check, cell_check, precombined_only);
 			if Assigned(t) then begin
 //				if i = 1 then
 //					AddMessage('PERSISTENT: ' + FullPath(t));
@@ -858,11 +898,14 @@ begin
 	Result := nil;
 end;
 
-function cell_refr_stat_first(e: IInterface; ref_check, cell_check: boolean): IInterface;
+function cell_refr_stat_first(e: IInterface; error_check, cell_check: boolean): IInterface;
 var
 	cg, rcg, r, t, b: IInterface;
 	i, j: integer;
 	s: string;
+	children: array[0..1] of IInterface;
+	filter: THashedStringList;
+	precombined_only: boolean;
 begin
 	if Signature(e) <> 'CELL' then
 		Exit;
@@ -879,12 +922,9 @@ begin
 	for i := 0 to Pred(ElementCount(cg)) do begin
 		r := ElementByIndex(cg, i);
 		case GroupType(r) of
-		9: children[0] := r; //temporary
+		9: children[0] := r; // temporary
 		8: children[1] := r; // persistent
 		end;
-
-	if GroupType(r) = 8 then
-		AddMessage(FullPath(r));
 	end;
 
 	// Prioritize statics references over non-statics
@@ -900,8 +940,7 @@ begin
 			1: begin filter := pc_keep_map; precombined_only := false; end;
 			end;
 
-			t := cell_refr_ent_filter(r, filter, ref_check, cell_check, precombined_only);
-
+			t := cell_refr_ent_filter(r, filter, error_check, cell_check, precombined_only);
 			if Assigned(t) then begin
 //				if i = 1 then
 //					AddMessage('PERSISTENT: ' + FullPath(t));
@@ -909,6 +948,39 @@ begin
 				Result := t;
 				Exit;
 			end;
+		end;
+	end;
+
+	Result := nil;
+end;
+
+function cell_navm_first(e: IInterface; error_check, cell_check: boolean): IInterface;
+var
+	cg, rcg, r, t, b: IInterface;
+	i, j, k: integer;
+	s: string;
+begin
+	if Signature(e) <> 'CELL' then
+		Exit;
+
+	cg := ChildGroup(e);
+	if not Assigned(cg) then
+		Exit;
+//	AddMessage('cg: ' + FullPath(cg));
+
+	for i := 0 to Pred(ElementCount(cg)) do begin
+		r := ElementByIndex(cg, i);
+		if not Assigned(r) then
+			continue;
+//		AddMessage('r: ' + FullPath(r));
+
+		t := cell_navm_ent_filter(r, error_check, cell_check);
+		if Assigned(t) then begin
+//			if i = 1 then
+//				AddMessage('PERSISTENT: ' + FullPath(t));
+//			AddMessage('t: ' + FullPath(t));
+			Result := t;
+			Exit;
 		end;
 	end;
 
@@ -1562,6 +1634,9 @@ end;
 
 function previs_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 begin
+	if Debug then
+		AddMessage(Format('%s: previs_merge: %s', [GetFileName(plugin), Name(e)]));
+
 	try
 		if PerElementMasters then
 			elem_masters_add(plugin, e);
@@ -1587,6 +1662,9 @@ function precombine_merge(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
 begin
+	if Debug then
+		AddMessage(Format('%s: precombine_merge: %s', [GetFileName(plugin), Name(e)]));
+
 	try
 		if PerElementMasters then
 			elem_masters_add(plugin, e);
@@ -1613,6 +1691,9 @@ function previs_extract(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r: IInterface;
 begin
+	if Debug then
+		AddMessage(Format('%s: previs_extract: %s', [GetFileName(plugin), Name(e)]));
+
 	try
 		// Copy overridden plugin data as a starting base
 		r := form_copy_safe(plugin, o, true, true);
@@ -1633,6 +1714,9 @@ function precombine_extract(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r: IInterface;
 begin
+	if Debug then
+		AddMessage(Format('%s: precombine_extract: %s', [GetFileName(plugin), Name(e)]));
+
 	try
 		// Copy overridden plugin data as a starting base
 		r := form_copy_safe(plugin, o, true, true);
@@ -1654,6 +1738,9 @@ var
 	s: TString;
 	i, j: integer;
 begin
+	if Debug then
+		AddMessage(Format('%s: precombine_split: %s', [GetFileName(plugin), Name(e)]));
+
 	try
 		// XXX: xEdit will choke on delocalized plugins containing strings like '$Farm05Location'
 		// XXX: due to it wrongly interpreting it as a hex/integer value and will also disallow copying
@@ -2311,12 +2398,12 @@ end;
 function Process(e: IInterface): integer;
 var
 	o, m, t, r, w, plugin: IInterface;
-	tfname, efname: string;
+	tfname, efname, efoname: string;
 	idx, i, j, oc: integer;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
 	nv: string;
-	ol: TList;
+	ol, ml: TList;
 	promote, remove, winning_only, non_winning_only, refr_clean, stat_check, rvis_check, require_static: boolean;
 begin
 	if plugin_combined_use then begin
@@ -2436,20 +2523,25 @@ begin
 
 	if process_mode = 'precombine_merge' then begin
 		efname := GetFileName(e);
-		if pos('.precombine', efname) = 0 then
+		idx := pos('.precombine', efname);
+		if idx = 0 then
 			Exit;
+		efoname := copy(efname, 1, idx - 1);
 	end;
 
 	if process_mode = 'previs_merge' then begin
 		efname := GetFileName(e);
-		if pos('.previs', efname) = 0 then
+		idx := pos('.previs', efname);
+		if idx = 0 then
 			Exit;
+		efoname := copy(efname, 1, idx - 1);
 	end;
 
 	// | [0] master | [1] override | [2] *override* | [3] element | ...
 	m := MasterOrSelf(e);
 	oc := OverrideCount(m);
 	ol := TList.create;
+	ml := TList.create;
 
 	for i := Pred(oc) downto -1 do begin
 		if i < 0 then begin
@@ -2462,22 +2554,58 @@ begin
 		efname := GetFileName(e);
 
 		// XXX: consider allowing precombine_merge files in previs mode
-		if (tfname = efname) or (pos(tfname, efname) = 0) then
-			continue;
-
-		ol.add(t);
+		if (tfname <> efname) and (pos(tfname, efname) <> 0) then begin
+			ol.add(t);
+		end else if (pos('.precombine', tfname) = 0) and (pos('.previs', tfname) = 0) then begin
+			ml.add(t);
+		end;
 	end;
 
 	if ol.count = 0 then begin
-		AddMessage('ol.count == 0: ' + FullPath(e));
-		Exit;
+		plugin := plugin_file_resolve_existing(efoname);
+		if not Assigned(plugin) then begin
+			AddMessage('Unable to resolve plugin for: ' + efoname);
+			ml.free;
+			ol.free;
+			Exit;
+		end else if ml.count = 0 then begin
+			AddMessage('Unable to resolve parent cell for: ' + FullPath(e));
+			ml.free;
+			ol.free;
+			Exit;
+		end;
+
+		for i := 0 to Pred(ml.count) do begin
+			t := ObjectToElement(ml[i]);
+			if GetLoadOrder(GetFile(t)) < GetLoadOrder(plugin) then
+				break;
+		end;
+
+//		if Debug then
+//			AddMessage(Format('%s: cloning parent cell: :%s', [ efname, FullPath(t) ]));
+
+		if Assigned(plugin_cell_find(plugin, t)) then begin
+			AddMessage('Assertion failed: plugin already contains cell');
+			ml.free;
+			ol.free;
+			Exit;
+		end;
+
+		t := plugin_cell_copy_safe(plugin, t, false, false);
+		ol.add(t);
 	end;
 
+	ml.free;
+
+if false then begin
 	if (pos('precombine', process_mode) <> 0) then begin
 		t := override_timestamp_latest(e, 'PCMB');
 	end else if (pos('previs', process_mode) <> 0) then begin
 		t := override_timestamp_latest(e, 'VISI');
 	end;
+end;
+
+t := e;
 
 	for i := 0 to Pred(ol.count) do begin
 		o := ObjectToElement(ol[i]);
@@ -2508,21 +2636,21 @@ end;
 
 		try
 			if process_mode = 'precombine_merge' then begin
-				precombine_merge(plugin, t, o, m);
+				precombine_merge(plugin, e, o, m);
 			end else if process_mode = 'previs_merge' then begin
-				previs_merge(plugin, t, o, m);
+				previs_merge(plugin, e, o, m);
 			end else if process_mode = 'precombine_extract' then begin
-				precombine_extract(plugin, t, o, m);
+				precombine_extract(plugin, e, o, m);
 			end else if process_mode = 'previs_extract' then begin
-				previs_extract(plugin, t, o, m);
+				previs_extract(plugin, e, o, m);
 			end else if process_mode = 'precombine_split' then begin
-				precombine_split(plugin, t, o, m);
+				precombine_split(plugin, e, o, m);
 			end else if process_mode = 'previs_split' then begin
-				previs_split(plugin, t, o, m);
+				previs_split(plugin, e, o, m);
 			end;
 		except
 			on Ex: Exception do begin
-				AddMessage('Failed to proc: ' + FullPath(t));
+				AddMessage('Failed to proc: ' + FullPath(e));
 				AddMessage('        reason: ' + Ex.Message);
 
 				ol.free;
