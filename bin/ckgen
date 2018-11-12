@@ -279,7 +279,7 @@ function ck_clone() {
 
 	# Hardlink cached archives (if any) into build-dir (this won't affect the original archives)
 	if [[ -d "$cdir/Data" ]]; then
-		rsync -aSH --link-dest="$sdir/$cdir/Data" "$sdir/$cdir/Data"/ "$bdir/$job/Data"/
+		rsync -aSH --link-dest="$PWD/$cdir/Data" "$cdir/Data"/ "$bdir/$job/Data"/
 	fi
 
 	# Move any esms into place as they should be considered the most up to date.
@@ -613,6 +613,7 @@ function ck_exec_wrap() {
 	local max="$1"; shift
 	local job="$1"; shift
 	local manual=$1; shift;
+	local ctl_log="$1"; shift
 	local target
 	local -a args
 
@@ -664,6 +665,7 @@ function ck_exec_wrap() {
 		args=( -$target:"$file_ck" $type $area_ck $cur $max )
 
 		[[ -d "$bdir/$job/Data/Vis" ]] && rm -rf "$bdir/$job/Data/Vis"
+		[[ -f "$bdir/$job/Data/$file_base - Geometry.csg" ]] && rm -f "$bdir/$job/Data/$file_base - Geometry.csg"
 
 		for ext in csg psg; do
 			if [[ "$file_base" != "$file_ck_base" && -f "$bdir/$job/Data/$file_base - Geometry.$ext" ]]; then
@@ -700,6 +702,8 @@ function ck_exec_wrap() {
 
 	# If in manual mode, respect the $mode functionality, but start CK interactively.
 	((manual)) && args=()
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "LOADING"
 
 	if ( \
 		cd "$bdir/$job" \
@@ -848,11 +852,11 @@ function ck_archive_wrap() {
 		;;
 	esac
 
+	local archive_main_plugin="$bdir/$plugin/Data/$plugin_base - $archive_type.ba2"
 	local archive_main_cached="$cdir/Data/$plugin_base - $archive_type.ba2"
-	local archive_main="$sdir/Data/$plugin_base - $archive_type.ba2"
+	local archive_main_orig="$sdir/Data/$plugin_base - $archive_type.ba2"
 	local cleaned_marker="$cdir/tmp/$plugin.$mode.cleaned"
 	local cache_lock="$cdir/tmp/$plugin.lock"
-	local modified=0
 
 	# Multiple jobs may be generating data which is stored in the
 	# same backing archive. As such, it should be lock-controlled
@@ -887,19 +891,22 @@ function ck_archive_wrap() {
 	if [[ -f "$archive_main_cached" ]]; then
 		archive_src="$archive_main_cached"
 	elif [[ -f "$archive_main" ]]; then
-		archive_src="$archive_main"
+		archive_src="$archive_main_orig"
 	fi
 
 	rm -rf "$archive_data_tmp"
 	mkdir -p "$archive_data_tmp"
 
 	# It's common that an archive being updated may not exist yet.
-	[[ -f "$archive_src" ]] && ck_archive_unpack "$archive_src" "$archive_data_tmp"
+	if [[ -f "$archive_src" ]]; then
+		ck_archive_unpack "$archive_src" "$archive_data_tmp"
+	fi
 
 	# Remove archived data for the same type being updated
 	# to prevent cruft - but only do it once in case of
 	# concurrent runs (shards, etc).
-	if [[ ! -f "$cleaned_marker" || "$cleaned_marker" -nt "$archive_src" ]]; then
+#	if [[ ! -f "$cleaned_marker" || "$cleaned_marker" -nt "$archive_src" ]]; then
+	if [[ ! -f "$cleaned_marker" ]]; then
 		rm -rf "$archive_data_tmp/$ddir"
 		touch "$cleaned_marker"
 	fi
@@ -911,10 +918,14 @@ function ck_archive_wrap() {
 
 	ck_archive_pack "$archive_data_tmp" "$archive_main_cached"
 
+	while ! cp --remove-destination -flp "$archive_main_cached" "$archive_main_plugin"; do
+		sleep $((1 + (RANDOM % 4)))
+	done
+
+	ls -lai "$archive_main_cached" "$archive_main_plugin" 1>&2 2>/dev/null || true
+
 	rm -rf "$archive_data_tmp"
 	rm -f "$cache_lock"
-
-	ls -lai "$archive_main_cached" 1>&2 2>/dev/null || true
 
 	return 0
 }
@@ -957,7 +968,7 @@ function ck_wrap() {
 	# to the output directory.
 	case "$mode" in
 	scol)
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		if [[ -d "$bdir/$job/Data/Meshes/SCOL" ]]; then
 			mkdir -p "$bdir/$plugin/Data/Meshes"
@@ -971,7 +982,7 @@ function ck_wrap() {
 		;;
 
 	precombine)
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
@@ -1001,7 +1012,7 @@ function ck_wrap() {
 		;;
 
 	previs)
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		# XXX: Look for any newly added or modified files instead of PreVis.esp specifically?
 		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
@@ -1030,7 +1041,7 @@ function ck_wrap() {
 		# is highly convenient as it avoids having to copy CombinedObjects.esp to
 		# a temporary file with the same file base.
 
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
 		# they should be moved after both -CompressPSG and -BuildCDX are finished.
@@ -1046,7 +1057,7 @@ function ck_wrap() {
 		# Additionally, if a plugin makes use of both shared-geom and non-shared
 		# geom precombines the cdx file must be updated to reflect that.
 
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		mkdir -p "$bdir/$plugin/Data"
 		mv -t "$bdir/$plugin/Data" "$bdir/$job/Data/$plugin_base.cdx"
@@ -1054,7 +1065,7 @@ function ck_wrap() {
 		;;
 
 	needed)
-		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual"
+		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
 		mkdir -p "$bdir/$plugin"
 		mv "$bdir/$job/dumpneededfiles.out" "$bdir/$plugin/$file.$mode.$type.$area.$wcur.dumpneededfiles.out"
@@ -1161,7 +1172,7 @@ function ck_proc() {
 			echo "$plugin: Moving static collections..." 1>&2
 		fi
 
-		if ls -d --quoting-style=literal "$bdir/$plugin/Data/Meshes/PreCombined".* 2>/dev/null; then
+		if ls -d "$bdir/$plugin/Data/Meshes/PreCombined".* 2>/dev/null; then
 			echo "$plugin: Moving precombined..." 1>&2
 		fi
 
@@ -1175,6 +1186,10 @@ function ck_proc() {
 
 		if ls -d "$bdir/$plugin/Data"/*.cdx 2>/dev/null; then
 			echo "$plugin: Moving cell resource index..." 1>&2
+		fi
+
+		if ls -d "$bdir/$plugin/Data"/*.ba2 2>/dev/null; then
+			echo "$plugin: Moving archive..." 1>&2
 		fi
 
 		if ls -d "$bdir/$plugin/Data"/*.esp 2>/dev/null; then
@@ -1208,6 +1223,8 @@ function ck_proc() {
 	touch "$bdir/tmp/$plugin.processed"
 
 	rm -f "$proc_lock"
+
+	ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "SUCCESS"
 
 	return 0
 }
@@ -1500,7 +1517,7 @@ fi
 # Could not parse command line properly.  Should be -GeneratePreVisData:<ESMFilename> [clean,filtered] [all,main,ints,other] [currentset(1-totalsetcount)] [totalsetcount]
 MODE="$1"; shift
 case "$MODE" in
-needed|scol|cdx)
+needed|scol|csg|cdx)
 	SHARDS=1
 	SHARDS_FORCE=1
 	;;
@@ -1600,7 +1617,7 @@ done | perl -e '
 	}
 
 	# Sort by count of CELL records within a plugin
-	my $ckgen_dir = "Data/ckgen";
+	my $ckgen_dir = (-d "Data/ckgen" ? "Data/ckgen" : "");
 	open(my $fd, "-|", "find Data/*.es[mpl] $ckgen_dir -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
 	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
 	close($fd);
@@ -1626,7 +1643,7 @@ if ((TMUX)); then
 		split -p 40 \
 		"ckgen --log-wrap '$BUILD' all $JOBS" ';' \
 		split -p 50 \
-		"bash -x ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $MANUAL $PROC_ONLY 2>&1 | tee /tmp/ckgen.wtf.out || true; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
+		"ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $MANUAL $PROC_ONLY 2>&1 || true; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
 		set-option status-left "#(ckgen --status '$PWD/$BUILD')" ';' \
 		set-option status-interval 1 ';' \
 		set-option status-right '' ';' \
@@ -1635,9 +1652,9 @@ if ((TMUX)); then
 		set-window-option window-status-current-format '' \
 		&& [[ ! -f "$BUILD/tmp/gen.err" ]] \
 		|| exit -1
+#		set-option status off ';' \
 #		set-option alternate-screen off ';' \
-#		"set-option status off" ';' \
-#		"set -g terminal-overrides 'xterm*:smcup@:rmcup@'" \
+#		set -g terminal-overrides 'xterm*:smcup@:rmcup@' \
 else
 	ckgen --gen "$BUILD" "$BUILD/tmp/jobs.in" "$BUILD/tmp/gen.err" "$BUILD/tmp/ctl.log" $JOBS $MANUAL
 fi

@@ -43,7 +43,8 @@ var
 	rvis_cell_grid_cache: THashedStringList;
 
 	cell_cache: THashedStringList;
-	cell_queue: Tlist;
+	cell_queue: TList;
+	cell_queue_seen: THashedStringList;
 
 	plugin_ignore_list: TStringList;
 
@@ -54,6 +55,7 @@ var
 
 	master_force: TStringList;
 	master_force_seen: THashedStringList;
+	master_exclude: TStringList;
 
 function Initialize: integer;
 var
@@ -62,20 +64,20 @@ begin
 //	process_mode := 'init_master_refr_clean';
 //	process_mode := 'init_master_cell_rvis_clean';
 
-//	process_mode := 'init_cell_all_master_clean';
-//	process_mode := 'init_cell_exts_master_clean';
-//	process_mode := 'init_cell_main_master_clean';
-//	process_mode := 'init_cell_ints_master_clean';
-//	process_mode := 'init_cell_other_master_clean';
-
 //	process_mode := 'init_cell_all_master_add';
 //	process_mode := 'init_cell_exts_master_add';
 //	process_mode := 'init_cell_main_master_add';
 //	process_mode := 'init_cell_ints_master_add';
 //	process_mode := 'init_cell_other_master_add';
 
-//	process_mode := 'precombine_merge';
-	process_mode := 'previs_merge';
+//	process_mode := 'init_cell_all_master_clean';
+//	process_mode := 'init_cell_exts_master_clean';
+//	process_mode := 'init_cell_main_master_clean';
+//	process_mode := 'init_cell_ints_master_clean';
+//	process_mode := 'init_cell_other_master_clean';
+
+	process_mode := 'precombine_merge';
+//	process_mode := 'previs_merge';
 //	process_mode := 'precombine_extract';
 //	process_mode := 'previs_extract';
 //	process_mode := 'precombine_split';
@@ -90,10 +92,13 @@ begin
 //	process_mode := 'final';
 //	process_mode := 'stats';
 
+	stat_promote := true;
 	plugin_combined_use := false;
 	plugin_each_use := false;
-	plugin_cell_use := false;
-	stat_promote := true;
+	plugin_cell_use := true;
+
+	if plugin_cell_use then
+		plugin_each_use := true;
 
 	base_master_list := THashedStringList.create;
 	base_master_list.sorted := true;
@@ -128,6 +133,18 @@ begin
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
 	master_force_seen.duplicates := dupIgnore;
+
+	master_exclude := TStringList.create;
+	master_exclude.sorted := true;
+	master_exclude.duplicates := dupIgnore;
+
+	if pos('final', process_mode) = 1 then begin
+		plugin_combined_use := true;
+		plugin_each_use := false;
+		master_exclude.add('pcv-final.ints.esp');
+		master_exclude.add('pcv-final.main.esp');
+		master_exclude.add('pcv-final.other.esp');
+	end;
 
 	// Precombine specific signatures
 	pc_sig_tab[0] := 'XCRI';
@@ -181,6 +198,10 @@ begin
 	cell_cache.Duplicates := dupIgnore;
 
 	cell_queue := TList.create;
+
+	cell_queue_seen := THashedStringList.create;
+	cell_queue_seen.sorted := true;
+	cell_queue_seen.duplicates := dupIgnore;
 
 	plugin_ignore_list := TStringList.create;
 	plugin_ignore_list.sorted := true;
@@ -260,9 +281,9 @@ var
 	mq, sl: THashedStringList;
 	tl: TList;
 begin
-	mq := TStringList.create;
-	sl := THashedStringList.create;
 	tl := TList.create;
+	sl := THashedStringList.create;
+	mq := TStringList.create;
 
 	pfstr := GetFileName(plugin);
 
@@ -288,20 +309,26 @@ begin
 
 //		if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
 		if (efstr <> pfstr) and not HasMaster(plugin, efstr) then begin
-			if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
-			mq.add(efstr);
-//			AddMasterIfMissing(plugin, efstr, false);
+			if master_exclude.indexOf(efstr) < 0 then begin
+				if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
+				mq.add(efstr);
+			end;
 		end;
 	end;
 
-	if (mq.count <> 0) then
-		AddMasters(plugin, mq);
+	for i := 0 to Pred(mq.count) do begin
+		AddMasterIfMissing(plugin, mq[i], sort);
+	end;
+
+//	if (mq.count <> 0) then
+//		AddMasters(plugin, mq);
+
 	if sort then
 		SortMasters(plugin);
 
-	tl.free;
-	sl.free;
 	mq.free;
+	sl.free;
+	tl.free;
 end;
 
 procedure plugin_master_force(plugin: IwbFile; parents, sort: boolean);
@@ -312,6 +339,8 @@ var
 begin
 	pfstr := GetFileName(plugin);
 	if not base_master_list.indexOf(pfstr) < 0 then
+		Exit;
+	if not master_exclude.indexOf(pfstr) < 0 then
 		Exit;
 	if not master_force.indexOf(pfstr) < 0 then
 		Exit;
@@ -555,7 +584,7 @@ var
 	i, j: integer;
 begin
 	sl := TStringList.create;
-	sl.Sorted := true;
+	sl.Sorted := false;
 	sl.Duplicates := dupIgnore;
 
 	ReportRequiredMasters(e, sl, false, true);
@@ -564,8 +593,10 @@ begin
 			continue;
 
 		tfile := plugin_file_resolve_existing(sl[i]);
-		plugin_master_add(plugin, tfile, true, true);
+		plugin_master_add(plugin, tfile, true, false);
 	end;
+
+	SortMasters(plugin);
 
 	sl.free;
 end;
@@ -657,6 +688,22 @@ begin
 	Result := Format('%s,%d,%d', [ world_str, x, y ]);
 end;
 
+function cell_queue_add(e: IInterface): boolean;
+var
+	key: string;
+begin
+	key := IntToStr(FormID(e));
+	if not cell_queue_seen.indexOf(key) < 0 then begin
+		Result := false;
+		Exit;
+	end;
+
+	cell_queue_seen.add(key);
+	cell_queue.add(e);
+
+	Result := true;
+end;
+
 procedure cell_remove(e: IInterface);
 var
 	cxy: TwbGridCell;
@@ -674,7 +721,8 @@ begin
 	if not idx < 0 then
 		cell_queue.delete(idx);
 
-	AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+	if Debug then
+		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
 	RemoveNode(e);
 
 	Inc(cell_remove_cnt);
@@ -2113,7 +2161,7 @@ begin
 	if remove then begin
 		cell_remove(e);
 //	end else begin
-//		cell_queue.add(e);
+//		cell_queue_add(e);
 	end;
 
 end;
@@ -2370,7 +2418,7 @@ begin
 	cell_pc_clear(e);
 	cell_pv_clear(e);
 
-	cell_queue.add(e);
+	cell_queue_add(e);
 end;
 
 procedure master_add(e: IInterface; main_allow, other_allow, interior_allow, persistent_allow, promote, remove: boolean);
@@ -2388,7 +2436,7 @@ begin
 			stat_refr_promote(GetFile(e), e, true);
 
 		// XXX: only add if has pc/pv refrs?
-		cell_queue.add(e);
+		cell_queue_add(e);
 	end else if editable and remove then begin
 		AddMessage('master_add: remove');
 		cell_remove(e);
@@ -2402,7 +2450,7 @@ var
 	idx, i, j, oc: integer;
 	ts, pcmb_max, visi_max: integer;
 	merge: boolean;
-	nv: string;
+	key, nv, s: string;
 	ol, ml: TList;
 	promote, remove, winning_only, non_winning_only, refr_clean, stat_check, rvis_check, require_static: boolean;
 begin
@@ -2513,11 +2561,15 @@ begin
 		Exit;
 	end;
 
-	if process_mode = 'final_main' then begin
+	if pos('final', process_mode) = 1 then begin
+		e := WinningOverride(e);
 		if not base_master_list.indexOf(GetFileName(e)) < 0 then
 			Exit;
-		plugin := plugin_resolve(e);
-		plugin_cell_copy_safe(plugin, WinningOverride(e), false, false);
+		if not cell_queue_add(e) then
+			Exit;
+
+		AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
+
 		Exit;
 	end;
 
@@ -2669,6 +2721,39 @@ var
 	i, j, k: integer;
 	rc, rct: integer;
 begin
+	if pos('final', process_mode) = 1 then begin
+		// XXX: Add masters before copying due to an xedit issue
+		// XXX: with formid corruption when intermixed.
+
+		AddMessage('Adding masters to final plugin');
+		for i := 0 to Pred(cell_queue.count) do begin
+			t := ObjectToElement(cell_queue[i]);
+			if not Assigned(t) then
+				continue;
+
+			plugin := plugin_resolve(t);
+			plugin_master_add(plugin, t, true, true);
+
+			if ((i + 1 = cell_queue.count) or ((i + 1) mod (trunc(cell_queue.count / 10) + 1) = 0)) then
+				AddMessage(Format('Remain: %d cells (%d/%d)', [ cell_queue.count - (i + 1), i + 1, cell_queue.count ]));
+		end;
+
+		AddMessage('Copying cells to final plugin');
+		for i := 0 to Pred(cell_queue.count) do begin
+			t := ObjectToElement(cell_queue[i]);
+			if not Assigned(t) then
+				continue;
+
+			plugin := plugin_resolve(t);
+			plugin_cell_copy_safe(plugin, t, false, false);
+
+			if ((i + 1 = cell_queue.count) or ((i + 1) mod (trunc(cell_queue.count / 10) + 1) = 0)) then
+				AddMessage(Format('Remain: %d cells (%d/%d)', [ cell_queue.count - (i + 1), i + 1, cell_queue.count ]));
+		end;
+
+		Exit;
+	end;
+
 	AddMessage(Format('Adding cell masters for %d cells', [ cell_queue.count ]));
 	for i := 0 to Pred(cell_queue.count) do begin
 		t := ObjectToElement(cell_queue[i]);
@@ -2724,6 +2809,7 @@ begin
 	rvis_cell_cache.free;
 	rvis_cell_grid_cache.free;
 
+	cell_queue_seen.free;
 	cell_queue.free;
 	cell_cache.free;
 
