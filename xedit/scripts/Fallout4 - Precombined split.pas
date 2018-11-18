@@ -17,7 +17,7 @@ const
 	PrecombineFileSuffix = 'precombine_split';
 	PrevisFileBase = 'previs';
 	PrevisFileSuffix = 'previs_split';
-	FinalFileBase = 'pcv-final2';
+	FinalFileBase = 'pcv-final';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 20;
 	DMarker_FID = $00000001;
@@ -30,8 +30,10 @@ const
 	F_VISIBLE_DISTANT = $8000;
 	F_MARKER = $800000;
 var
+	process_area: string;
 	process_mode: string;
-	plugin_combined_use, plugin_each_use, plugin_cell_use, stat_promote: boolean;
+	plugin_combined_use, plugin_base_use, plugin_each_use, plugin_cell_use: boolean;
+	stat_promote, stat_promote_all: boolean;
 	cell_remove_cnt, ref_remove_cnt: integer;
 
 	pc_sig_tab: array [0..1] of TString;
@@ -57,10 +59,39 @@ var
 	master_force_seen: THashedStringList;
 	master_exclude: TStringList;
 
-function Initialize: integer;
+function opts_parse: boolean;
 var
-	i: integer;
+	i, idx: integer;
+	s, p, v: string;
 begin
+	for i := 0 to ParamCount do begin
+		s := ParamStr(i);
+		AddMessage(Format('param[%d] == %s', [ i, s ]));
+
+		if pos('--pcv', s) = 0 then
+			continue;
+
+		idx := pos('=', s) or pos(':', s);
+		if idx = 0 then
+			continue;
+
+		p := copy(s, 3, idx - 3);
+		v := copy(s, idx + 1, length(s) - idx);
+
+		AddMessage('p == ' + p);
+		AddMessage('v == ' + v);
+
+		if p = 'pcv-mode' then begin
+			process_mode := v;
+		end else if p = 'pcv-area' then begin
+			process_area := v;
+		end;
+	end;
+end;
+
+function Initialize: integer;
+begin
+
 //	process_mode := 'init_master_refr_clean';
 //	process_mode := 'init_master_cell_rvis_clean';
 
@@ -76,7 +107,7 @@ begin
 //	process_mode := 'init_cell_ints_master_clean';
 //	process_mode := 'init_cell_other_master_clean';
 
-	process_mode := 'precombine_merge';
+//	process_mode := 'precombine_merge';
 //	process_mode := 'previs_merge';
 //	process_mode := 'precombine_extract';
 //	process_mode := 'previs_extract';
@@ -93,12 +124,11 @@ begin
 //	process_mode := 'stats';
 
 	stat_promote := true;
-	plugin_combined_use := false;
+	stat_promote_all := false;
+	plugin_combined_use := true;
+	plugin_base_use := true;
 	plugin_each_use := false;
-	plugin_cell_use := true;
-
-	if plugin_cell_use then
-		plugin_each_use := true;
+	plugin_cell_use := false;
 
 	base_master_list := THashedStringList.create;
 	base_master_list.sorted := true;
@@ -123,12 +153,12 @@ begin
 	master_force.add('DLCworkshop03.esm');
 	master_force.add('DLCNukaWorld.esm');
 	master_force.add('DLCUltraHighResolution.esm');
-	master_force.add('Unofficial Fallout 4 Patch.esp');
 	master_force.add('ReGrowth Overhaul 10.esp');
 	master_force.add('rgo_tree_noocclude.esp');
-	master_force.add('pcv-final.ints.esp');
-	master_force.add('pcv-final.main.esp');
-	master_force.add('pcv-final.other.esp');
+//	master_force.add('Unofficial Fallout 4 Patch.esp');
+//	master_force.add('pcv-final.ints.esp');
+//	master_force.add('pcv-final.main.esp');
+//	master_force.add('pcv-final.other.esp');
 
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
@@ -137,6 +167,11 @@ begin
 	master_exclude := TStringList.create;
 	master_exclude.sorted := true;
 	master_exclude.duplicates := dupIgnore;
+
+	opts_parse;
+
+	if plugin_cell_use then
+		plugin_each_use := true;
 
 	if pos('final', process_mode) = 1 then begin
 		plugin_combined_use := true;
@@ -220,10 +255,6 @@ begin
 	plugin_master_queue := THashedStringList.create;
 	plugin_master_queue.sorted := false;
 	plugin_master_queue.duplicates := dupIgnore;
-
-	for i := 0 to Pred(ParamCount) do begin
-		AddMessage(Format('param[%d] == %s', [ i, ParamStr(i) ]));
-	end;
 
 	cell_remove_cnt := 0;
 	ref_remove_cnt := 0;
@@ -466,7 +497,9 @@ begin
 		Exit;
 	end;
 
-	if process_mode = 'init_cell_all_master_clean' then begin
+	if process_mode = 'init_cell_master_clean' then begin
+		mode := 'init'; area := process_area; idx := 0;
+	end else if process_mode = 'init_cell_all_master_clean' then begin
 		mode := 'init'; area := 'all'; idx := 0;
 	end else if process_mode = 'init_cell_exts_master_clean' then begin
 		mode := 'init'; area := 'exts'; idx := 0;
@@ -583,6 +616,9 @@ var
 	rfstr: string;
 	i, j: integer;
 begin
+	plugin_master_add(plugin, e, true, true);
+
+if false then begin
 	sl := TStringList.create;
 	sl.Sorted := false;
 	sl.Duplicates := dupIgnore;
@@ -599,6 +635,8 @@ begin
 	SortMasters(plugin);
 
 	sl.free;
+end;
+
 end;
 
 procedure elem_previs_flag_clean(e, m: IInterface);
@@ -692,7 +730,7 @@ function cell_queue_add(e: IInterface): boolean;
 var
 	key: string;
 begin
-	key := IntToStr(FormID(e));
+	key := GetFileName(e) + ':' + IntToStr(FormID(e));
 	if not cell_queue_seen.indexOf(key) < 0 then begin
 		Result := false;
 		Exit;
@@ -1686,8 +1724,8 @@ begin
 		AddMessage(Format('%s: previs_merge: %s', [GetFileName(plugin), Name(e)]));
 
 	try
-		if PerElementMasters then
-			elem_masters_add(plugin, e);
+//		if PerElementMasters then
+//			elem_masters_add(plugin, e);
 
 		// Copy previs data from current element to plugin
 		elem_pv_sync(e, o);
@@ -1714,8 +1752,8 @@ begin
 		AddMessage(Format('%s: precombine_merge: %s', [GetFileName(plugin), Name(e)]));
 
 	try
-		if PerElementMasters then
-			elem_masters_add(plugin, e);
+//		if PerElementMasters then
+//			elem_masters_add(plugin, e);
 
 		// Merge precombine data from current element to overridden plugin
 		elem_pc_sync(e, o);
@@ -1867,7 +1905,7 @@ begin
 //		Remove(ElementBySignature(e, 'XPRI'));
 
 		// Promote static references from any containing cells to generated plugin
-		stat_refr_promote(plugin, r, true);
+		stat_refr_promote(plugin, r, stat_promote_all);
 	except
 		on Ex: Exception do begin
 			Remove(r);
@@ -2409,14 +2447,22 @@ begin
 		cell_refr_clean(e);
 	end;
 
-	if not base_master_list.indexOf(GetFileName(e)) < 0 then
-		Exit;
-	if not master_force.indexOf(GetFileName(e)) < 0 then
-		Exit;
+	if not plugin_base_use then begin
+		if not base_master_list.indexOf(GetFileName(e)) < 0 then begin
+//			AddMessage('exit: base_master');
+			Exit;
+		end;
+		if not master_force.indexOf(GetFileName(e)) < 0 then begin
+//			AddMessage('exit: master_force');
+			Exit;
+		end;
+	end;
 
 	// Pre-clean precombined and previs data from cells
-	cell_pc_clear(e);
-	cell_pv_clear(e);
+	if not plugin_combined_use then begin
+		cell_pc_clear(e);
+		cell_pv_clear(e);
+	end;
 
 	cell_queue_add(e);
 end;
@@ -2433,7 +2479,7 @@ begin
 	// General add masters for all non-persistent cells
 	if cell_filter(e, main_allow, other_allow, interior_allow, persistent_allow) then begin
 		if editable and promote and not cell_refr_rvis_check(e) then
-			stat_refr_promote(GetFile(e), e, true);
+			stat_refr_promote(GetFile(e), e, stat_promote_all);
 
 		// XXX: only add if has pc/pv refrs?
 		cell_queue_add(e);
@@ -2453,6 +2499,7 @@ var
 	key, nv, s: string;
 	ol, ml: TList;
 	promote, remove, winning_only, non_winning_only, refr_clean, stat_check, rvis_check, require_static: boolean;
+	main_allow, other_allow, interior_allow, persistent_allow: boolean;
 begin
 	if plugin_combined_use then begin
 		remove := false;
@@ -2461,7 +2508,7 @@ begin
 		stat_check := false;
 		rvis_check := false;
 		require_static := false;
-		winning_only := true;
+		winning_only := false;
 		non_winning_only := false;
 	end else if plugin_each_use then begin
 		remove := true;
@@ -2508,6 +2555,30 @@ begin
 //	end;
 
 	// master clean
+
+	if process_mode = 'init_cell_master_clean' then begin
+		main_allow := false;
+		other_allow := false;
+		interior_allow := false;
+		persistent_allow := false;
+		if process_area = 'main' then begin
+			main_allow := true;
+		end else if process_area = 'other' then begin
+			other_allow := true;
+		end else if process_area = 'ints' then begin
+			interior_allow := true;
+		end else if process_area = 'exts' then begin
+			main_allow := true;
+			other_allow := true;
+		end else if process_area = 'all' then begin
+			main_allow := true;
+			other_allow := true;
+			interior_allow := true;
+		end;
+
+		master_clean(e, main_allow, other_allow, interior_allow, persistent_allow, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end;
 
 	if process_mode = 'init_cell_all_master_clean' then begin
 		master_clean(e, true, true, true, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
@@ -2765,7 +2836,7 @@ begin
 		plugin := plugin_resolve(t);
 
 		if stat_promote then begin
-			stat_refr_promote(plugin, t, true);
+			stat_refr_promote(plugin, t, stat_promote_all);
 			plugin_master_add(plugin, t, true, false);
 		end;
 

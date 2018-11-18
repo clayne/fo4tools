@@ -108,6 +108,7 @@ function ck_ini_rewrite() {
 		}
 	}END{
 #		shash["Memory"]["bEnableMemoryTracking"]=1;
+#		shash["DistantLOD"]["bUpdateDistantRefDataOnLoad"]=1;
 #		shash["General"]["bChangingLotsOfBaseObjects"]=1;
 #		shash["General"]["bAllowClearOldestBufferedExterior"]=1;
 #		shash["General"]["bMinimizeCachedExteriors"]=1;
@@ -123,15 +124,14 @@ function ck_ini_rewrite() {
 #		shash["General"]["bUsePreCulledObjects"]=1;
 #		shash["General"]["bCleanUpInvalidFormsOnLoad"]=0;
 #		shash["General"]["bFixAIPackagesOnLoad"]=0;
-#		shash["DistantLOD"]["bUpdateDistantRefDataOnLoad"]=1;
 		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
 		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
 		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
 		shash["General"]["iMaxUmbraBakeThreads"]=threads;
-		shash["General"]["bSkipValidateForms"]=1;
-		shash["General"]["bSkipValidateInfos"]=1;
-		shash["General"]["bSkipProgramFlows"]=1;
-		shash["General"]["bSkipInitializationFlows"]=1;
+#		shash["General"]["bSkipValidateForms"]=1;
+#		shash["General"]["bSkipValidateInfos"]=1;
+#		shash["General"]["bSkipProgramFlows"]=1;
+#		shash["General"]["bSkipInitializationFlows"]=1;
 		shash["General"]["bThrowProcessCompleteExceptions"]=0;
 		shash["General"]["iNumHWThreads"]=threads;
 		shash["General"]["iMaxJobThreads"]=threads;
@@ -143,11 +143,11 @@ function ck_ini_rewrite() {
 		shash["General"]["bUseVersionControl"]=0;
 		shash["General"]["bBackgroundLoading"]=1;
 		shash["Pathfinding"]["bFixNavmeshInfosOnLoad"]=0;
-		shash["BackgroundLoad"]["bBackgroundCellLoads"]=1;
-		shash["BackgroundLoad"]["bUseBackgroundFileLoader"]=1;
+#		shash["BackgroundLoad"]["bBackgroundCellLoads"]=1;
+#		shash["BackgroundLoad"]["bUseBackgroundFileLoader"]=1;
 		shash["Archive"]["bInvalidateOlderFiles"]=1;
 		shash["Archive"]["sResourceDataDirsFinal"]="";
-		shash["Audio"]["bEnableAudio"]=0;
+#		shash["Audio"]["bEnableAudio"]=0;
 		shash["General"]["sFile Path"]=wpwd;
 
 		for (i = 1; i <= slidx; i++) {
@@ -221,6 +221,7 @@ function ck_clone() {
 		--exclude "${odir}*" \
 		--exclude "${bdir}*" \
 		--exclude "${cdir}*" \
+		--exclude [sS]SCOL* \
 		--exclude [pP]reCombined* \
 		--exclude [vV]is* \
 		--exclude [iI]nterface \
@@ -239,9 +240,8 @@ function ck_clone() {
 		--exclude log.txt \
 		--exclude EditorWarnings.txt \
 		--exclude dumpneededfiles.out \
-		--exclude output.tome \
-		--exclude input.scene \
-		--exclude input.scene.json \
+		--exclude output.tome* \
+		--exclude input.scene* \
 		--exclude CombinedObjects.esp \
 		--exclude PreVis.esp \
 		--exclude 'CreationKit*.ini' \
@@ -252,6 +252,7 @@ function ck_clone() {
 		--exclude 'x3d*.dll' \
 		--exclude 'd3d*.dll' \
 		--exclude 'la_d3d*.dll' \
+		--exclude 'IpHlpAPI.dll' \
 		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Sounds*.ba2'} \
 		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Textures*.ba2'} \
 		${EXCLUDE_AUTOMATED_AUX:+--exclude '*Voices*.ba2'} \
@@ -635,9 +636,6 @@ function ck_exec_wrap() {
 	set -e
 	set -o pipefail
 
-	# Sanitize archive filename and embedded filenames within archive
-	ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
-
 	# Sanitize masters to be compatible with ck args (no spaces) and archives
 	ck_plugin_master_wrap "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
 
@@ -647,6 +645,9 @@ function ck_exec_wrap() {
 		args=( -$target:"$file_ck" x64 )
 
 		[[ -d "$bdir/$job/Data/Meshes/SCOL" ]] && rm -rf "$bdir/$job/Data/Meshes/SCOL"
+
+		# Sanitize archive filename and embedded filenames within archive
+		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	precombine)
@@ -658,6 +659,9 @@ function ck_exec_wrap() {
 		for ext in csg psg; do
 			[[ -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext" ]] && rm -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext"
 		done
+
+		# Sanitize archive filename and embedded filenames within archive
+		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	previs)
@@ -675,6 +679,9 @@ function ck_exec_wrap() {
 				done
 			fi
 		done
+
+		# Sanitize archive filename and embedded filenames within archive
+		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	csg)
@@ -855,7 +862,7 @@ function ck_archive_wrap() {
 	local archive_main_plugin="$bdir/$plugin/Data/$plugin_base - $archive_type.ba2"
 	local archive_main_cached="$cdir/Data/$plugin_base - $archive_type.ba2"
 	local archive_main_orig="$sdir/Data/$plugin_base - $archive_type.ba2"
-	local cleaned_marker="$cdir/tmp/$plugin.$mode.cleaned"
+	local cleaned_marker="$cdir/tmp/$plugin.$mode.$type.cleaned"
 	local cache_lock="$cdir/tmp/$plugin.lock"
 
 	# Multiple jobs may be generating data which is stored in the
@@ -890,7 +897,7 @@ function ck_archive_wrap() {
 
 	if [[ -f "$archive_main_cached" ]]; then
 		archive_src="$archive_main_cached"
-	elif [[ -f "$archive_main" ]]; then
+	elif [[ -f "$archive_main_orig" ]]; then
 		archive_src="$archive_main_orig"
 	fi
 
@@ -1411,7 +1418,7 @@ function ck_gen() {
 			if ! read; then
 				echo "read_ret = $?" 1>&2
 			fi
-		elif (($? == 255)); then
+		elif [[ $? -eq 255 ]]; then
 			touch "$ctl_err"
 			return 1
 		fi
@@ -1422,7 +1429,7 @@ function ck_gen() {
 		if ! read; then
 			echo "read_ret = $?" 1>&2
 		fi
-	elif (($? == 255)); then
+	elif [[ $? -eq 255 ]]; then
 		touch "$ctl_err"
 		return 1
 	fi

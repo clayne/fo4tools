@@ -6,6 +6,7 @@ __fo4tools_ps1() {
 	p="${PWD/Fallout 4\/*/Fallout 4}"; p="${p/Fallout4\/*/Fallout4}"
 	fo4prof=$(readlink.exe -en "$p")
 	fo4prof=${fo4prof#*.}
+	fo4prof=${fo4prof/\/*}
 
 	[[ -n "$fo4prof" ]] && printf -- ' (%s)' "$fo4prof"
 }

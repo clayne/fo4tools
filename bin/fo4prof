@@ -22,7 +22,7 @@ delete() {
 
 	for p in "$@"; do
 		rm -rf "$PROGDIR/Fallout 4.$p" "$USERDIR/Fallout4.$p" "$DATADIR/Fallout4.$p"
-		((VERSION_CONTROL)) && net share "Merging.$p" /delete
+		((VERSION_CONTROL)) && net share "Merging.$p" /delete || true
 	done
 }
 
@@ -96,19 +96,19 @@ new() {
 
 	# Clone shared directory using hard links only so as to effectively share
 	# the files between profiles but consume no additional disk space.
-	[[ -d "$PROGDIR_SHARED" ]] && rsync -avSPH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
+	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
 
 	# XXX: This shouldn't be needed twice but without it Fallout4.exe isn't being synced
-	[[ -d "$PROGDIR_SHARED" ]] && rsync -avSPH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
+	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
 
-	[[ -d "$USERDIR_SHARED" ]] && rsync -avSPH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
-	[[ -d "$DATADIR_SHARED" ]] && rsync -avSPH --link-dest="$DATADIR_SHARED_BASE" "$DATADIR_SHARED"/ "$DATADIR/Fallout4.$PROFILE"/
+	[[ -d "$USERDIR_SHARED" ]] && rsync -aSH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
+	[[ -d "$DATADIR_SHARED" ]] && rsync -aSH --link-dest="$DATADIR_SHARED_BASE" "$DATADIR_SHARED"/ "$DATADIR/Fallout4.$PROFILE"/
 
 	# For the template directories, hard copy (and overwrite) into profile directory.
 	# Any modifications to these files will be per-profile and explicitly not shared.
-	[[ -d "$PROGDIR_TEMPLATE" ]] && rsync -avSPH "$PROGDIR_TEMPLATE"/ "$PROGDIR/Fallout 4.$PROFILE"/
-	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -avSPH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
-	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -avSPH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
+	[[ -d "$PROGDIR_TEMPLATE" ]] && rsync -aSH "$PROGDIR_TEMPLATE"/ "$PROGDIR/Fallout 4.$PROFILE"/
+	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -aSH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
+	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -aSH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
 
 	# Convert paths in templated CreationKit.ini to be per-profile specific.
 	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
@@ -140,10 +140,10 @@ new() {
 		$USER=1
 		EOF
 
-		mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup" 
-		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
-
+		mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup"
 		cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
+
+		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
 	fi
 
 #	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
@@ -165,11 +165,11 @@ fi
 case "$MODE" in
 list)
 	list "$@" ;;
-use|flip)
+switch|use|flip)
 	use "$@" ;;
-new|clone)
+create|new|clone)
 	new "$@" ;;
-delete|clean)
+rm|delete|clean)
 	delete "$@" ;;
 *)
 	echo "Invalid mode: $MODE" 1>&2
