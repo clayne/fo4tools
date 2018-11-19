@@ -33,6 +33,8 @@ var
 	process_area: string;
 	process_mode: string;
 	plugin_combined_use, plugin_base_use, plugin_each_use, plugin_cell_use: boolean;
+	winning_only, non_winning_only, stat_check, rvis_check: boolean;
+	remove, refr_clean, pc_clear, pv_clear: boolean;
 	stat_promote, stat_promote_all: boolean;
 	cell_remove_cnt, ref_remove_cnt: integer;
 
@@ -59,6 +61,24 @@ var
 	master_force_seen: THashedStringList;
 	master_exclude: TStringList;
 
+function bool_to_str(b: boolean): string;
+begin
+	if not b then begin
+		Result := 'false';
+	end else begin
+		Result := 'true';
+	end;
+end;
+
+function str_to_bool(s: string): boolean;
+begin
+	if s = '0' or s = 'false' then begin
+		Result := false;
+	end else begin
+		Result := true;
+	end;
+end;
+
 function opts_parse: boolean;
 var
 	i, idx: integer;
@@ -72,115 +92,94 @@ begin
 			continue;
 
 		idx := pos('=', s) or pos(':', s);
-		if idx = 0 then
-			continue;
-
-		p := copy(s, 3, idx - 3);
-		v := copy(s, idx + 1, length(s) - idx);
-
-		AddMessage('p == ' + p);
-		AddMessage('v == ' + v);
-
-		if p = 'pcv-mode' then begin
-			process_mode := v;
-		end else if p = 'pcv-area' then begin
-			process_area := v;
+		if idx <> 0 then begin
+			// --pcv-<opt>
+			p := copy(s, 7, idx - 7);
+			v := copy(s, idx + 1, length(s) - idx);
+		end else begin
+			p := copy(s, 7, length(s) - 7 + 1);
+			v := '1';
 		end;
+
+//		AddMessage('p == ' + p);
+//		AddMessage('v == ' + v);
+
+		if p = 'mode' then begin
+			process_mode := v;
+		end else if p = 'area' then begin
+			process_area := v;
+		end else if p = 'remove' then begin
+			remove := str_to_bool(v);
+		end else if p = 'refr-clean' then begin
+			refr_clean := str_to_bool(v);
+		end else if p = 'stat-check' then begin
+			stat_check := str_to_bool(v);
+		end else if p = 'rvis-check' then begin
+			rvis_check := str_to_bool(v);
+		end else if p = 'pc_clear' then begin
+			pc_clear := str_to_bool(v);
+		end else if p = 'pv_clear' then begin
+			pv_clear := str_to_bool(v);
+		end else if p = 'winning-only' then begin
+			winning_only := str_to_bool(v);
+		end else if p = 'non-winning-only' then begin
+			non_winning_only := str_to_bool(v);
+		end else if p = 'stat-promote' then begin
+			stat_promote := str_to_bool(v);
+		end else if p = 'stat-promote-all' then begin
+			stat_promote_all := str_to_bool(v);
+		end else if p = 'plugin-combined-use' then begin
+			plugin_combined_use := str_to_bool(v);
+		end else if p = 'plugin-base-use' then begin
+			plugin_base_use := str_to_bool(v);
+		end else if p = 'plugin-each-use' then begin
+			plugin_each_use := str_to_bool(v);
+		end else if p = 'plugin-cell-use' then begin
+			plugin_cell_use := str_to_bool(v);
+		end else if p = 'base-master-list' then begin
+			base_master_list.clear;
+			base_master_list.delimiter := ',';
+			base_master_list.delimitedtext := v;
+		end else if p = 'master-force-list' then begin
+			master_force.clear;
+			master_force.delimiter := ',';
+			master_force.delimitedtext := v;
+		end else if p = 'master-exclude-list' then begin
+			master_exclude.clear;
+			master_exclude.delimiter := ',';
+			master_exclude.delimitedtext := v;
+		end;
+	end;
+
+	AddMessage(Format('%s == %s', [ 'process_mode', process_mode ]));
+	AddMessage(Format('%s == %s', [ 'process_area', process_area ]));
+	AddMessage(Format('%s == %s', [ 'remove', bool_to_str(remove) ]));
+	AddMessage(Format('%s == %s', [ 'refr_clean', bool_to_str(refr_clean) ]));
+	AddMessage(Format('%s == %s', [ 'stat_check', bool_to_str(stat_check) ]));
+	AddMessage(Format('%s == %s', [ 'rvis_check', bool_to_str(rvis_check) ]));
+	AddMessage(Format('%s == %s', [ 'pc_clear', bool_to_str(pc_clear) ]));
+	AddMessage(Format('%s == %s', [ 'pv_clear', bool_to_str(pv_clear) ]));
+	AddMessage(Format('%s == %s', [ 'winning_only', bool_to_str(winning_only) ]));
+	AddMessage(Format('%s == %s', [ 'non_winning_only', bool_to_str(non_winning_only) ]));
+	AddMessage(Format('%s == %s', [ 'stat_promote', bool_to_str(stat_promote) ]));
+	AddMessage(Format('%s == %s', [ 'stat_promote_all', bool_to_str(stat_promote_all) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_combined_use', bool_to_str(plugin_combined_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_base_use', bool_to_str(plugin_base_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_each_use', bool_to_str(plugin_each_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_cell_use', bool_to_str(plugin_cell_use) ]));
+	for i := 0 to Pred(base_master_list.count) do begin
+		AddMessage(Format('%s[%d] == %s', [ 'base_master_list', i, base_master_list[i] ]));
+	end;
+	for i := 0 to Pred(master_force.count) do begin
+		AddMessage(Format('%s[%d] == %s', [ 'master_force', i, master_force[i] ]));
+	end;
+	for i := 0 to Pred(master_exclude.count) do begin
+		AddMessage(Format('%s[%d] == %s', [ 'master_exclude', i, master_exclude[i] ]));
 	end;
 end;
 
 function Initialize: integer;
 begin
-
-//	process_mode := 'init_master_refr_clean';
-//	process_mode := 'init_master_cell_rvis_clean';
-
-//	process_mode := 'init_cell_all_master_add';
-//	process_mode := 'init_cell_exts_master_add';
-//	process_mode := 'init_cell_main_master_add';
-//	process_mode := 'init_cell_ints_master_add';
-//	process_mode := 'init_cell_other_master_add';
-
-//	process_mode := 'init_cell_all_master_clean';
-//	process_mode := 'init_cell_exts_master_clean';
-//	process_mode := 'init_cell_main_master_clean';
-//	process_mode := 'init_cell_ints_master_clean';
-//	process_mode := 'init_cell_other_master_clean';
-
-//	process_mode := 'precombine_merge';
-//	process_mode := 'previs_merge';
-//	process_mode := 'precombine_extract';
-//	process_mode := 'previs_extract';
-//	process_mode := 'precombine_split';
-//	process_mode := 'previs_split';
-
-//	process_mode := 'final_all';
-//	process_mode := 'final_exts';
-//	process_mode := 'final_main';
-//	process_mode := 'final_ints';
-//	process_mode := 'final_other';
-
-//	process_mode := 'final';
-//	process_mode := 'stats';
-
-	stat_promote := true;
-	stat_promote_all := false;
-	plugin_combined_use := true;
-	plugin_base_use := true;
-	plugin_each_use := false;
-	plugin_cell_use := false;
-
-	base_master_list := THashedStringList.create;
-	base_master_list.sorted := true;
-	base_master_list.duplicates := dupIgnore;
-	base_master_list.add('Fallout4.esm');
-	base_master_list.add('DLCRobot.esm');
-	base_master_list.add('DLCworkshop01.esm');
-	base_master_list.add('DLCCoast.esm');
-	base_master_list.add('DLCworkshop02.esm');
-	base_master_list.add('DLCworkshop03.esm');
-	base_master_list.add('DLCNukaWorld.esm');
-	base_master_list.add('DLCUltraHighResolution.esm');
-
-	master_force := TStringList.create;
-	master_force.sorted := false;
-	master_force.duplicates := dupIgnore;
-	master_force.add('Fallout4.esm');
-	master_force.add('DLCRobot.esm');
-	master_force.add('DLCworkshop01.esm');
-	master_force.add('DLCCoast.esm');
-	master_force.add('DLCworkshop02.esm');
-	master_force.add('DLCworkshop03.esm');
-	master_force.add('DLCNukaWorld.esm');
-	master_force.add('DLCUltraHighResolution.esm');
-	master_force.add('ReGrowth Overhaul 10.esp');
-	master_force.add('rgo_tree_noocclude.esp');
-//	master_force.add('Unofficial Fallout 4 Patch.esp');
-//	master_force.add('pcv-final.ints.esp');
-//	master_force.add('pcv-final.main.esp');
-//	master_force.add('pcv-final.other.esp');
-
-	master_force_seen := THashedStringList.create;
-	master_force_seen.sorted := true;
-	master_force_seen.duplicates := dupIgnore;
-
-	master_exclude := TStringList.create;
-	master_exclude.sorted := true;
-	master_exclude.duplicates := dupIgnore;
-
-	opts_parse;
-
-	if plugin_cell_use then
-		plugin_each_use := true;
-
-	if pos('final', process_mode) = 1 then begin
-		plugin_combined_use := true;
-		plugin_each_use := false;
-		master_exclude.add('pcv-final.ints.esp');
-		master_exclude.add('pcv-final.main.esp');
-		master_exclude.add('pcv-final.other.esp');
-	end;
-
 	// Precombine specific signatures
 	pc_sig_tab[0] := 'XCRI';
 	pc_sig_tab[1] := 'PCMB';
@@ -258,6 +257,105 @@ begin
 
 	cell_remove_cnt := 0;
 	ref_remove_cnt := 0;
+
+//	process_mode := 'init_master_refr_clean';
+//	process_mode := 'init_master_cell_rvis_clean';
+
+//	process_mode := 'init_cell_all_master_add';
+//	process_mode := 'init_cell_exts_master_add';
+//	process_mode := 'init_cell_main_master_add';
+//	process_mode := 'init_cell_ints_master_add';
+//	process_mode := 'init_cell_other_master_add';
+
+//	process_mode := 'init_cell_all_master_clean';
+//	process_mode := 'init_cell_exts_master_clean';
+//	process_mode := 'init_cell_main_master_clean';
+//	process_mode := 'init_cell_ints_master_clean';
+//	process_mode := 'init_cell_other_master_clean';
+
+//	process_mode := 'precombine_merge';
+//	process_mode := 'previs_merge';
+//	process_mode := 'precombine_extract';
+//	process_mode := 'previs_extract';
+//	process_mode := 'precombine_split';
+//	process_mode := 'previs_split';
+
+//	process_mode := 'final_all';
+//	process_mode := 'final_exts';
+//	process_mode := 'final_main';
+//	process_mode := 'final_ints';
+//	process_mode := 'final_other';
+
+//	process_mode := 'final';
+//	process_mode := 'stats';
+
+	stat_promote := true;
+	stat_promote_all := false;
+	plugin_combined_use := true;
+	plugin_base_use := true;
+	plugin_each_use := false;
+	plugin_cell_use := false;
+	refr_clean := false;
+	pc_clear := true;
+	pv_clear := true;
+	remove := true;
+	winning_only := false;
+	non_winning_only := false;
+	stat_check := false;
+	rvis_check := false;
+
+	base_master_list := THashedStringList.create;
+	base_master_list.sorted := false;
+	base_master_list.duplicates := dupIgnore;
+	base_master_list.add('Fallout4.esm');
+	base_master_list.add('DLCRobot.esm');
+	base_master_list.add('DLCworkshop01.esm');
+	base_master_list.add('DLCCoast.esm');
+	base_master_list.add('DLCworkshop02.esm');
+	base_master_list.add('DLCworkshop03.esm');
+	base_master_list.add('DLCNukaWorld.esm');
+	base_master_list.add('DLCUltraHighResolution.esm');
+
+	master_force := TStringList.create;
+	master_force.sorted := false;
+	master_force.duplicates := dupIgnore;
+	master_force.add('Fallout4.esm');
+	master_force.add('DLCRobot.esm');
+	master_force.add('DLCworkshop01.esm');
+	master_force.add('DLCCoast.esm');
+	master_force.add('DLCworkshop02.esm');
+	master_force.add('DLCworkshop03.esm');
+	master_force.add('DLCNukaWorld.esm');
+	master_force.add('DLCUltraHighResolution.esm');
+	master_force.add('ReGrowth Overhaul 10.esp');
+	master_force.add('rgo_tree_noocclude.esp');
+//	master_force.add('Unofficial Fallout 4 Patch.esp');
+//	master_force.add('pcv-final.ints.esp');
+//	master_force.add('pcv-final.main.esp');
+//	master_force.add('pcv-final.other.esp');
+
+	master_force_seen := THashedStringList.create;
+	master_force_seen.sorted := true;
+	master_force_seen.duplicates := dupIgnore;
+
+	master_exclude := TStringList.create;
+	master_exclude.sorted := true;
+	master_exclude.duplicates := dupIgnore;
+
+	opts_parse;
+//Result := true; Exit;
+
+	if plugin_cell_use then
+		plugin_each_use := true;
+
+	if pos('final', process_mode) = 1 then begin
+		plugin_combined_use := true;
+		plugin_each_use := false;
+		master_exclude.add('pcv-final.ints.esp');
+		master_exclude.add('pcv-final.main.esp');
+		master_exclude.add('pcv-final.other.esp');
+	end;
+
 end;
 
 function winning_override(e: IInterface; ignore_generated: boolean): IInterface;
@@ -1361,7 +1459,7 @@ begin
 
 //	AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(e), Name(e)]));
 
-        cxy := GetGridCell(e);
+	cxy := GetGridCell(e);
 	for ix := -offset to offset do begin
 		for iy := -offset to offset do begin
 			e := cell_resolve(ws, cxy.x + ix, cxy.y + iy);
@@ -2456,12 +2554,12 @@ begin
 //			AddMessage('exit: master_force');
 			Exit;
 		end;
-	end;
 
-	// Pre-clean precombined and previs data from cells
-	if not plugin_combined_use then begin
-		cell_pc_clear(e);
-		cell_pv_clear(e);
+		// Pre-clean precombined and previs data from cells
+		if pc_clear then
+			cell_pc_clear(e);
+		if pv_clear then
+			cell_pv_clear(e);
 	end;
 
 	cell_queue_add(e);
@@ -2498,12 +2596,11 @@ var
 	merge: boolean;
 	key, nv, s: string;
 	ol, ml: TList;
-	promote, remove, winning_only, non_winning_only, refr_clean, stat_check, rvis_check, require_static: boolean;
+	remove, require_static: boolean;
 	main_allow, other_allow, interior_allow, persistent_allow: boolean;
 begin
 	if plugin_combined_use then begin
 		remove := false;
-		promote := true;
 		refr_clean := false;
 		stat_check := false;
 		rvis_check := false;
@@ -2512,7 +2609,6 @@ begin
 		non_winning_only := false;
 	end else if plugin_each_use then begin
 		remove := true;
-		promote := true;
 		refr_clean := false;
 		stat_check := false;
 		rvis_check := false;
@@ -2521,7 +2617,6 @@ begin
 		non_winning_only := false;
 	end else begin
 		remove := true;
-		promote := true;
 		refr_clean := false;
 		stat_check := false;
 		rvis_check := false;
@@ -2600,19 +2695,19 @@ begin
 	// master add
 
 	if process_mode = 'init_cell_all_master_add' then begin
-		master_add(e, true, true, true, false, promote, remove);
+		master_add(e, true, true, true, false, stat_promote, remove);
 		Exit;
 	end else if process_mode = 'init_cell_exts_master_add' then begin
-		master_add(e, true, true, false, false, promote, remove);
+		master_add(e, true, true, false, false, stat_promote, remove);
 		Exit;
 	end else if process_mode = 'init_cell_ints_master_add' then begin
-		master_add(e, false, false, true, false, promote, remove);
+		master_add(e, false, false, true, false, stat_promote, remove);
 		Exit;
 	end else if process_mode = 'init_cell_main_master_add' then begin
-		master_add(e, true, false, false, false, promote, remove);
+		master_add(e, true, false, false, false, stat_promote, remove);
 		Exit;
 	end else if process_mode = 'init_cell_other_master_add' then begin
-		master_add(e, false, true, false, false, promote, remove);
+		master_add(e, false, true, false, false, stat_promote, remove);
 		Exit;
 	end;
 
