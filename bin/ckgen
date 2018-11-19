@@ -1414,27 +1414,25 @@ function ck_gen() {
 	fi
 
 	if ((!proc_only)); then
-		if eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $manual '$ctl_log'" < "$args"; then
-			if ! read; then
-				echo "read_ret = $?" 1>&2
-			fi
-		elif [[ $? -eq 255 ]]; then
+		eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $manual '$ctl_log'" < "$args" || ret=$?
+		if ((ret == 255)); then
 			touch "$ctl_err"
 			return 1
+		elif ! read; then
+			echo "read_ret = $?" 1>&2
 		fi
 	fi
 
 	# XXX: Could be done in a better way
-	if eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $manual '$ctl_log'" < "$args"; then
-		if ! read; then
-			echo "read_ret = $?" 1>&2
-		fi
-	elif [[ $? -eq 255 ]]; then
+	eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $manual '$ctl_log'" < "$args" || ret=$?
+	if ((ret == 255)); then
 		touch "$ctl_err"
 		return 1
+	elif ! read; then
+		echo "read_ret = $?" 1>&2
 	fi
 
-	return $error
+	return 0
 }
 
 TMUX=1
