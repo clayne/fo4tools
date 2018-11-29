@@ -116,22 +116,22 @@ function ck_ini_rewrite() {
 #		shash["General"]["bOnlyQueueCellsWhenRefsLoaded"]=1;
 #		shash["General"]["bOutputCombinedGeomDataWhenTinting"]=1;
 #		shash["General"]["bForcePreCombinedObject32bitExport"]=0;
-#		shash["General"]["bCheckDLCCombinedKeys"]=0;
-#		shash["General"]["bFixDLCCombinedKeys"]=0;
+		shash["General"]["bCheckDLCCombinedKeys"]=0;
+		shash["General"]["bFixDLCCombinedKeys"]=0;
 #		shash["General"]["bOnlyLoadCombinable3D"]=1;
 #		shash["General"]["bOnlyLoadPreVis3D"]=1;
 #		shash["General"]["bUseCombinedObjects"]=1;
 #		shash["General"]["bUsePreCulledObjects"]=1;
 #		shash["General"]["bCleanUpInvalidFormsOnLoad"]=0;
 #		shash["General"]["bFixAIPackagesOnLoad"]=0;
-		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
-		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
-		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
-		shash["General"]["iMaxUmbraBakeThreads"]=threads;
 #		shash["General"]["bSkipValidateForms"]=1;
 #		shash["General"]["bSkipValidateInfos"]=1;
 #		shash["General"]["bSkipProgramFlows"]=1;
 #		shash["General"]["bSkipInitializationFlows"]=1;
+		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
+		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
+		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
+		shash["General"]["iMaxUmbraBakeThreads"]=threads;
 		shash["General"]["bThrowProcessCompleteExceptions"]=0;
 		shash["General"]["iNumHWThreads"]=threads;
 		shash["General"]["iMaxJobThreads"]=threads;
@@ -311,13 +311,13 @@ fi
 	# The actual use case is rather specific in where a large amount of
 	# masters are involved and handle limits are being hit in CK, which
 	# prevents generation of any data.
-	if [[ -d "$bdir/$job/Data/ckgen" ]]; then
+	if [[ -d "$bdir/$job/ckgen.data" ]]; then
 		# Multiple finds are used to workaround cp complaining about files it just
 		# overwrote. rsync is not an option because it sorts the input list.
 
-		# Copy of plugins from Data/ckgen/*
+		# Copy of plugins from ckgen.data/*
 		(find \
-			"$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -329,10 +329,10 @@ fi
 			done
 		done || return 1
 
-		# Copy of plugins specifically setup as masters from Data/ckgen/master/*
+		# Copy of plugins specifically setup as masters from ckgen.data/master/*
 		(find \
-			"$bdir/$job/Data/ckgen"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
-			"$bdir/$job/Data/ckgen/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
+			"$bdir/$job/ckgen.data/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f '!' -name "${plugin/.es[pml]*/.es[pml]}*" -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -419,6 +419,11 @@ function ck_archive_rewrite() {
 			done
 		fi
 
+		# For every master a given plugin has (and itself), check the plugin's main
+		# archive for embedded directory names that need to be sanitized. If it's
+		# a directory matching a master, ensure esp is changed to esm, but if it's
+		# a directory matching the plugin itself, ensure full sanitization as CK is
+		# loading it by that name.
 		plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file" | while read __file; do
 			local __file_base="${__file/%.es[pml]}"
 			local __file_esm="${__file/%.esp/.esm}"
@@ -432,6 +437,7 @@ function ck_archive_rewrite() {
 			# should be used - otherwise the esm-extension name should be used
 			# as esp masters are simply flipped to esm extensions.
 			if [[ "$__file" == "$__file_ck" ]]; then
+				# Sanitized name same as original, skip.
 				continue
 			elif [[ "$__file" == "$file" ]]; then
 				__file_sub="$__file_ck"
@@ -500,7 +506,7 @@ function ck_needed_filter() {
 	sed -e "s#${from}#${to}#g" | tr -d '[\r\0\031]' | tr '\\' '/'
 }
 
-function ck_plugin_master_wrap() {
+function ck_plugin_master_rewrite() {
 	set -x
 
 	local bdir="$1"; shift
@@ -637,7 +643,7 @@ function ck_exec_wrap() {
 	set -o pipefail
 
 	# Sanitize masters to be compatible with ck args (no spaces) and archives
-	ck_plugin_master_wrap "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
+	ck_plugin_master_rewrite "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
 
 	case "$mode" in
 	scol)
@@ -737,7 +743,7 @@ function ck_exec_wrap() {
 	fi
 
 	# If the plugin was copied to an esm, switch esm masters back to esp masters
-	ck_plugin_master_wrap "$bdir" "$job" "esm-to-esp" "$plugin" "$file"
+	ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file"
 
 	# Restore original archive and remove temporaries
 	ck_archive_rewrite "$bdir" "$job" "restore" "$plugin" "$file"
@@ -755,7 +761,7 @@ function ck_exec_wrap() {
 		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 		if [[ -f "$bdir/$job/Data/CombinedObjects.esp" ]]; then
 			# If the plugin was copied to an esm, switch esm masters back to esp masters
-			ck_plugin_master_wrap "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "CombinedObjects.esp"
+			ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "CombinedObjects.esp"
 
 			# If run in clean mode a shared geometry psg file will be produced that
 			# should be compressed with CreationKit.exe -CompressPSG:<plugin_base>.
@@ -776,7 +782,7 @@ function ck_exec_wrap() {
 		# XXX: Look for any newly added or modified files instead of CombinedObjects.esp specifically?
 		# XXX: Might be useful for cases where manual mode is used and a different plugin is saved.
 		if [[ -f "$bdir/$job/Data/PreVis.esp" ]]; then
-			ck_plugin_master_wrap "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "PreVis.esp"
+			ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file" "PreVis.esp"
 		fi
 
 		if [[ -d "$bdir/$job/Data/Vis" ]]; then
@@ -1540,25 +1546,25 @@ precombine|previs)
 		echo "Invalid type: $TYPE" 1>&2
 		exit -1
 	fi
-
-	AREA=( ${AREA//,/ } )
-	for area in ${AREA[*]}; do
-		case "$area" in
-		ALL) AREA=( main ints other ) ;;
-		ALL@*) AREA=( main@${area/*@} ints@${area/*@} other@${area/*@} ) ;;
-		all|all@*|main|main@*|ints|ints@*|other|other@*) ;;
-		*)
-			echo "Invalid area: $area" 1>&2
-			exit -1
-			;;
-		esac
-	done
 	;;
 *)
 	echo "Invalid mode: $MODE" 1>&2
 	exit -1
 	;;
 esac
+
+AREA=( ${AREA//,/ } )
+for area in ${AREA[*]}; do
+	case "$area" in
+	ALL) AREA=( main ints other ) ;;
+	ALL@*) AREA=( main@${area/*@} ints@${area/*@} other@${area/*@} ) ;;
+	all|all@*|main|main@*|ints|ints@*|other|other@*) ;;
+	*)
+		echo "Invalid area: $area" 1>&2
+		exit -1
+		;;
+	esac
+done
 
 # Generate output file of jobs to be run by parallel
 for plugin in "$@"; do
@@ -1622,7 +1628,7 @@ done | perl -e '
 	}
 
 	# Sort by count of CELL records within a plugin
-	my $ckgen_dir = (-d "Data/ckgen" ? "Data/ckgen" : "");
+	my $ckgen_dir = (-d "ckgen.data" ? "ckgen.data" : "");
 	open(my $fd, "-|", "find Data/*.es[mpl] $ckgen_dir -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
 	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
 	close($fd);

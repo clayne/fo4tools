@@ -308,6 +308,8 @@ Even using the intermediary CombinedObjects.esp doesn't matter, as long as it ha
 
 Also, -BuildCDX might want to be done after everything has been generated (PC+PV) as the output differs based on the contents of the esp or esm.
 
+Update: it appears that any plugin flagged as an esm with modified precombines NEEDS a cdx, even without psg style precombines. Hiding the cdx and removing the esm flag also produces a working outcome - which means the cdx is of importance to master flagged plugins regardless of precombine style.
+
 ---
 Worldspace exterior counts:
 
@@ -586,7 +588,7 @@ General difficulties:
 6. CK likes to trash the master id of XPRI formids if more than 2 masters are used.
 7. xEdit doesn't allow more than 254 plugins so even if the plugins in the list aren't actually going to be loaded there's still an issue with generating more plugins than the maximum load order can handle.
 8. xEdit has a bug where if during the process of copying an element if masters are somehow added around the same time then it can produce broken worldspace references that have the wrong load order formid. Still investigating.
-9. DLCs like DLCCoast and DLCNukaWorld don't like previs generation with a synthetic plugin that only overrides refs in cells that contain statics - the overrides must target all cells. I suspect this has something to do with world borders but it still seems like a bug.
+9. DLCs like DLCCoast and DLCNukaWorld don't like previs generation with a synthetic plugin that only overrides refs in cells that contain statics - the overrides must target all cells. I suspect this has something to do with world borders but it still seems like a bug. Might be an issue with overlapped refs vs ALL synthetic refs instead OR could be an issue with using DLCUltraHighResolution.esm as a master. Also seen with having regrowth in the middle of the master order. Very strange bug.
 
 ---
 

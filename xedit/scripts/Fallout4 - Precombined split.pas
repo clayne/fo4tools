@@ -17,7 +17,7 @@ const
 	PrecombineFileSuffix = 'precombine_split';
 	PrevisFileBase = 'previs';
 	PrevisFileSuffix = 'previs_split';
-	FinalFileBase = 'pcv-final';
+	FinalFileSuffix = 'pcv.final';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 20;
 	DMarker_FID = $00000001;
@@ -29,17 +29,19 @@ const
 	F_IGNORED = $1000;
 	F_VISIBLE_DISTANT = $8000;
 	F_MARKER = $800000;
+	VIS_OFFSET = 1;
+	VIS_WIDTH = 3;
 var
 	process_area: string;
 	process_mode: string;
 	plugin_combined_use, plugin_base_use, plugin_each_use, plugin_cell_use: boolean;
 	winning_only, non_winning_only, stat_check, rvis_check: boolean;
 	remove, refr_clean, pc_clear, pv_clear: boolean;
-	stat_promote, stat_promote_all: boolean;
+	stat_promote, stat_promote_all, stat_promote_marker_prefer, stat_promote_marker_door: boolean;
 	cell_remove_cnt, ref_remove_cnt: integer;
 
-	pc_sig_tab: array [0..1] of TString;
-	pv_sig_tab: array [0..2] of TString;
+	pc_sig_tab: array [0..1] of string;
+	pv_sig_tab: array [0..2] of string;
 	pc_keep_map: THashedStringList;
 	pv_keep_map: THashedStringList;
 
@@ -128,6 +130,10 @@ begin
 			stat_promote := str_to_bool(v);
 		end else if p = 'stat-promote-all' then begin
 			stat_promote_all := str_to_bool(v);
+		end else if p = 'stat-promote-marker-prefer' then begin
+			stat_promote_marker_prefer := str_to_bool(v);
+		end else if p = 'stat-promote-marker-door' then begin
+			stat_promote_marker_door := str_to_bool(v);
 		end else if p = 'plugin-combined-use' then begin
 			plugin_combined_use := str_to_bool(v);
 		end else if p = 'plugin-base-use' then begin
@@ -163,6 +169,8 @@ begin
 	AddMessage(Format('%s == %s', [ 'non_winning_only', bool_to_str(non_winning_only) ]));
 	AddMessage(Format('%s == %s', [ 'stat_promote', bool_to_str(stat_promote) ]));
 	AddMessage(Format('%s == %s', [ 'stat_promote_all', bool_to_str(stat_promote_all) ]));
+	AddMessage(Format('%s == %s', [ 'stat_promote_marker_prefer', bool_to_str(stat_promote_marker_prefer) ]));
+	AddMessage(Format('%s == %s', [ 'stat_promote_marker_door', bool_to_str(stat_promote_marker_door) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_combined_use', bool_to_str(plugin_combined_use) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_base_use', bool_to_str(plugin_base_use) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_each_use', bool_to_str(plugin_each_use) ]));
@@ -245,7 +253,7 @@ begin
 	plugin_ignore_list.add(PrecombineFileSuffix);
 	plugin_ignore_list.add(PrevisFileBase);
 	plugin_ignore_list.add(PrevisFileSuffix);
-	plugin_ignore_list.add(FinalFileBase);
+	plugin_ignore_list.add(FinalFileSuffix);
 
 	plugin_file_map := THashedStringList.create;
 	plugin_file_map.sorted := true;
@@ -291,8 +299,10 @@ begin
 
 	stat_promote := true;
 	stat_promote_all := false;
-	plugin_combined_use := true;
-	plugin_base_use := true;
+	stat_promote_marker_prefer := false;
+	stat_promote_marker_door := true;
+	plugin_combined_use := false;
+	plugin_base_use := false;
 	plugin_each_use := false;
 	plugin_cell_use := false;
 	refr_clean := false;
@@ -326,13 +336,13 @@ begin
 	master_force.add('DLCworkshop02.esm');
 	master_force.add('DLCworkshop03.esm');
 	master_force.add('DLCNukaWorld.esm');
-	master_force.add('DLCUltraHighResolution.esm');
+//	master_force.add('DLCUltraHighResolution.esm');
+
 	master_force.add('ReGrowth Overhaul 10.esp');
 	master_force.add('rgo_tree_noocclude.esp');
-//	master_force.add('Unofficial Fallout 4 Patch.esp');
-//	master_force.add('pcv-final.ints.esp');
-//	master_force.add('pcv-final.main.esp');
-//	master_force.add('pcv-final.other.esp');
+	master_force.add('main.pcv.esp');
+	master_force.add('ints.pcv.esp');
+	master_force.add('other.pcv.esp');
 
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
@@ -343,7 +353,6 @@ begin
 	master_exclude.duplicates := dupIgnore;
 
 	opts_parse;
-//Result := true; Exit;
 
 	if plugin_cell_use then
 		plugin_each_use := true;
@@ -351,11 +360,10 @@ begin
 	if pos('final', process_mode) = 1 then begin
 		plugin_combined_use := true;
 		plugin_each_use := false;
-		master_exclude.add('pcv-final.ints.esp');
-		master_exclude.add('pcv-final.main.esp');
-		master_exclude.add('pcv-final.other.esp');
+		master_exclude.add('main.pcv.esp');
+		master_exclude.add('ints.pcv.esp');
+		master_exclude.add('other.pcv.esp');
 	end;
-
 end;
 
 function winning_override(e: IInterface; ignore_generated: boolean): IInterface;
@@ -486,7 +494,7 @@ begin
 		SortMasters(plugin);
 end;
 
-function plugin_file_resolve_existing(pfile: TString): IInterface;
+function plugin_file_resolve_existing(pfile: string): IInterface;
 var
 	t: IInterface;
 	i, idx: integer;
@@ -510,7 +518,7 @@ begin
 	Result := nil; Exit;
 end;
 
-function plugin_file_resolve_existing_idx(pfile: TString): integer;
+function plugin_file_resolve_existing_idx(pfile: string): integer;
 var
 	t: IInterface;
 	idx: integer;
@@ -527,7 +535,7 @@ end;
 function plugin_file_resolve(ofstr, mode, area: string; idx: integer): IInterface;
 var
 	plugin, m: IInterface;
-	b, s, pfile: TString;
+	b, s, pfile: string;
 	i: integer;
 begin
 	// Attempt to locate existing plugin for the same file or create a new one
@@ -542,8 +550,8 @@ begin
 			b := ofstr;
 			s := PrevisFileSuffix;
 		end else if mode = 'final' then begin
-			b := FinalFileBase;
-			s := ofstr;
+			b := ofstr;
+			s := FinalFileSuffix;
 		end else begin
 			Exit;
 		end;
@@ -607,6 +615,8 @@ begin
 		mode := 'init'; area := 'main'; idx := 0;
 	end else if process_mode = 'init_cell_other_master_clean' then begin
 		mode := 'init'; area := 'other'; idx := 0;
+	end else if process_mode = 'final' then begin
+		mode := 'final'; area := process_area; idx := 0;
 	end else if process_mode = 'final_all' then begin
 		mode := 'final'; area := 'all'; idx := 0;
 	end else if process_mode = 'final_exts' then begin
@@ -643,7 +653,7 @@ begin
 			t := OverrideByIndex(e, i);
 		end;
 
-		if GetFileName(t) <> GetFileName(plugin) then
+		if not Equals(plugin, GetFile(t)) then
 			continue;
 
 		Remove(t);
@@ -777,7 +787,7 @@ begin
 	Result := false;
 end;
 
-procedure elem_sync(e, r: IInterface; s: TString);
+procedure elem_sync(e, r: IInterface; s: string);
 begin
 	if ElementExists(e, s) then begin
 		if not ElementExists(r, s) then
@@ -1326,9 +1336,9 @@ begin
 	end;
 end;
 
+// Determine rvis cell for a given cell based on either the
+// value of the RVIS element or, if missing, coordinates.
 function cell_rvis_cell(e: IInterface): IInterface;
-const
-	VIS_WIDTH = 3;
 var
 	r, t, w: IInterface;
 	rxy: TwbGridCell;
@@ -1441,7 +1451,10 @@ end;
 	Result := r;
 end;
 
-
+// Return a list of all rvis cells for a given input cell. Since CK
+// calculates +/-1,1 for each input cell, border cells may result in
+// the generation of up to 4 rvis cells, even though the cell itself
+// is only part of a single rvis cell.
 function cell_rvis_rvis_grid(e: IInterface; offset: integer): TList;
 var
 	tl, tll: TList;
@@ -1457,11 +1470,12 @@ begin
 	seen := THashedStringList.create;
 	seen.sorted := true;
 
-//	AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(e), Name(e)]));
+//	AddMessage(Format('cell_rvis_rvis_grid: %s: %s (source)', [GetFileName(e), Name(e)]));
 
 	cxy := GetGridCell(e);
 	for ix := -offset to offset do begin
 		for iy := -offset to offset do begin
+//			AddMessage(Format('cell_rvis_rvis_grid: %s: %s, checking: %d, %d', [GetFileName(e), Name(e), cxy.x + ix, cxy.y + iy]));
 			e := cell_resolve(ws, cxy.x + ix, cxy.y + iy);
 			if not Assigned(e) then
 				continue;
@@ -1475,20 +1489,19 @@ begin
 				continue;
 			seen.add(key);
 
-//			AddMessage(Format('cell_rvis_rvis_grid: %s: %s', [GetFileName(r), Name(r)]));
+//			AddMessage(Format('cell_rvis_rvis_grid: %s: %s (rvis)', [GetFileName(r), Name(r)]));
 			tl.add(r);
 		end;
 	end;
-//	AddMessage(' ');
 
 	seen.free;
 
 	Result := tl;
 end;
 
+// For all rvis cells involved with a given input cell, resolve every
+// cell within each 3x3 rvis grid.
 function cell_rvis_cell_grid(e: IInterface): TList;
-const
-	RVIS_OFFSET = 1;
 var
 	tl, rgl, rvl: TList;
 	r, t: IInterface;
@@ -1498,7 +1511,7 @@ var
 	s, ws, key: string;
 begin
 	ws := cell_world_edid(e);
-	rvl := cell_rvis_rvis_grid(e, RVIS_OFFSET);
+	rvl := cell_rvis_rvis_grid(e, VIS_OFFSET);
 	rgl := TList.create;
 
 	for i := 0 to Pred(rvl.count) do begin
@@ -1527,15 +1540,18 @@ end;
 		tl.add(r);
 
 		// Get the coordinates of the RVIS cell and find all
-		// adjacent cells in the grid.
+		// directly and 1 greater adjacent cells in the grid.
+		// Cells 1 cell outside of the given RVIS cell are
+		// considered involved due to the way CK considers
+		// which RVIS cells to generate (see cell_rvis_rvis_grid).
 		cxy := GetGridCell(r);
-		for jx := -1 to 1 do begin
-			for jy := -1 to 1 do begin
+		for jx := (-1 - VIS_OFFSET) to (1 + VIS_OFFSET) do begin
+			for jy := (-1 - VIS_OFFSET) to (1 + VIS_OFFSET) do begin
 				x := cxy.x + jx;
 				y := cxy.y + jy;
 				t := cell_resolve(ws, x, y);
 				if not Assigned(t) then begin
-//					AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,'NULL']));
+//					AddMessage(Format('cell_rvis_cell_grid: %s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,'nil']));
 					continue;
 				end;
 
@@ -1544,7 +1560,7 @@ end;
 				if (jx = 0) and (jy = 0) then
 					continue;
 
-//				AddMessage(Format('%s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,FullPath(t)]));
+//				AddMessage(Format('cell_rvis_cell_grid: %s: rvxy(%d,%d): %d,%d :: %s', [FullPath(r),cxy.x,cxy.y,x,y,FullPath(t)]));
 				tl.add(t);
 			end;
 		end;
@@ -1603,7 +1619,7 @@ var
 begin
 	for i := 0 to Pred(length(pc_sig_tab)) do begin
 		if ElementExists(e, pc_sig_tab[i]) then
-			Remove(ElementBySignature(e, pc_sig_tab[i]));
+			RemoveElement(e, ElementBySignature(e, pv_sig_tab[i]));
 	end;
 end;
 
@@ -1613,7 +1629,8 @@ var
 begin
 	for i := 0 to Pred(length(pv_sig_tab)) do begin
 		if ElementExists(e, pv_sig_tab[i]) then
-			Remove(ElementBySignature(e, pv_sig_tab[i]));
+			RemoveElement(e, ElementBySignature(e, pv_sig_tab[i]));
+//			Remove(ElementBySignature(e, pv_sig_tab[i]));
 	end;
 end;
 
@@ -1638,7 +1655,6 @@ var
 	t, r, b: IInterface;
 	i: integer;
 begin
-	// Guard against xedit corrupting CELL parents
 	t := plugin_cell_copy_safe(plugin, e, true, true);
 	r := Add(t, 'REFR', true);
 	b := Add(r, 'NAME', true);
@@ -1652,13 +1668,21 @@ var
 	t, r, b: IInterface;
 	i: integer;
 begin
-	// Guard against xedit corrupting CELL parents
 	t := plugin_cell_copy_safe(plugin, e, true, true);
 	r := Add(t, 'REFR', true);
 	b := Add(r, 'NAME', true);
 	SetNativeValue(b, XMarker_FID);
 
 //	AddMessage(FullPath(r));
+end;
+
+procedure marker_refr_promote(plugin: IwbFile; e: IInterface);
+begin
+	if stat_promote_marker_door then begin
+		dmarker_refr_promote(plugin, e);
+	end else begin
+		xmarker_refr_promote(plugin, e);
+	end;
 end;
 
 procedure stat_refr_promote(plugin: IwbFile; e: IInterface; marker_fallback: boolean);
@@ -1676,6 +1700,12 @@ begin
 	// If the references were not duplicated then all dependent data would have to be
 	// merged back into each plugin before it could be used with -generateprevisdata.
 
+	if marker_fallback and stat_promote_marker_prefer then begin
+//		AddMessage('stat_refr_promote: marker_fallback: ' + FullPath(e));
+		marker_refr_promote(plugin, e);
+		Exit;
+	end;
+
 	m := MasterOrSelf(e);
 	oc := OverrideCount(m);
 	for i := Pred(oc) downto -1 do begin
@@ -1691,20 +1721,20 @@ begin
 		// Do not go past the current plugin for this element
 		if GetLoadOrder(GetFile(t)) > GetLoadOrder(GetFile(e)) then
 			continue;
-		if Equals(GetFile(t), GetFile(plugin)) then
-			continue;
 
 		r := cell_refr_rvis_first(t, true, true);
 //		AddMessage('stat_refr_promote: r: ' + FullPath(r));
-		if not Assigned(r) then continue;
+		if not Assigned(r) then begin
+			continue;
+		end else if not Equals(GetFile(t), GetFile(plugin)) then begin
+			if Debug then begin
+//				AddMessage(Format('%s: Copying: %s', [GetFileName(e), Name(r)]))
+			end;
 
-		if Debug then begin
-//			AddMessage(Format('%s: Copying: %s', [GetFileName(e), Name(r)]))
+			// Guard against xedit corrupting CELL parents
+			plugin_cell_copy_safe(plugin, e, true, true);
+			form_copy_safe(plugin, r, false, false);
 		end;
-
-		// Guard against xedit corrupting CELL parents
-		plugin_cell_copy_safe(plugin, e, true, true);
-		form_copy_safe(plugin, r, false, false);
 
 		Exit;
 	end;
@@ -1713,18 +1743,24 @@ begin
 	// known marker.
 	if marker_fallback then begin
 //		AddMessage('stat_refr_promote: marker_fallback: ' + FullPath(e));
-		dmarker_refr_promote(plugin, e);
+		marker_refr_promote(plugin, e);
 	end;
 end;
 
 function plugin_cell_find(plugin: IwbFile; e: IInterface): IInterface;
 var
-	t: IInterface;
+	t, m: IInterface;
 	i: integer;
 begin
-	for i := 0 to Pred(OverrideCount(e)) do begin
-		t := OverrideByIndex(e, i);
-		if Equals(GetFile(t), plugin) then begin
+	m := MasterOrSelf(e);
+	for i := Pred(OverrideCount(m)) downto -1 do begin
+		if i < 0 then begin
+			t := m;
+		end else begin
+			t := OverrideByIndex(m, i);
+		end;
+
+		if Equals(plugin, GetFile(t)) then begin
 			Result := t;
 			Exit;
 		end;
@@ -1919,8 +1955,8 @@ end;
 function precombine_split(plugin: IwbFile; e, o, m: IInterface): Boolean;
 var
 	r, t: IInterface;
-	s: TString;
 	i, j: integer;
+	s: string;
 begin
 	if Debug then
 		AddMessage(Format('%s: precombine_split: %s', [GetFileName(plugin), Name(e)]));
@@ -2210,6 +2246,8 @@ begin
 	if not Assigned(rgl) then
 		Exit;
 
+//	AddMessage('plugin_cell_rvis_master_add: e: ' + FullPath(e));
+
 	for i := 0 to Pred(rgl.count) do begin
 		tl := TList(rgl[i]);
 		if not Assigned(tl) then
@@ -2234,6 +2272,8 @@ begin
 					r := OverrideByIndex(m, k);
 				end;
 
+//				AddMessage('plugin_cell_rvis_master_add: r: ' + FullPath(r));
+
 				// Do not go past the current plugin for this element
 				if GetLoadOrder(GetFile(r)) >= GetLoadOrder(GetFile(e)) then
 					break;
@@ -2251,13 +2291,18 @@ begin
 				if not HasMaster(plugin, GetFileName(r)) then begin
 					AddMessage(Format('VIS: [%d][%d][%d] %s needs master: %s (rvis: %d,%d :: e: %s :: r: %s)', [i,j,k+1,GetFileName(plugin),GetFileName(r),rvx,rvy,Name(e),Name(r)]));
 				end;
+
+				// Add master and parent masters regardless of the
+				// above check (XXX: Figure out why it cannot be
+				// in the conditional).
 				plugin_master_add(plugin, r, true, false);
 
 //				AddMessage(Format('[%d][%d][%d] %s', [i,j,k+1,FullPath(r)]));
 			end;
 		end;
 
-//		tl.free;
+		// XXX: Should not be freed if caching is in use
+		tl.free;
 	end;
 
 	rgl.free;
@@ -2409,8 +2454,8 @@ var
 begin
 	for i := 0 to Pred(ReferencedByCount(e)) do begin
 		r := ReferencedByIndex(e, i);
-AddMessage('e: ' + FullPath(e));
-AddMessage('r: ' + FullPath(r));
+//AddMessage('e: ' + FullPath(e));
+//AddMessage('r: ' + FullPath(r));
 		if Signature(r) = s then begin
 			Result := true;
 			Exit;
@@ -2505,20 +2550,24 @@ begin
 		Exit;
 	end;
 
-	if stat_check and not cell_stat_check(e) then begin
-		if editable and remove then begin
-//			AddMessage('remove: stat_check');
-			cell_remove(e);
+	if stat_check then begin
+		if not cell_stat_check(e) then begin
+			if editable and remove then begin
+//				AddMessage('remove: stat_check');
+				cell_remove(e);
+			end;
+			Exit;
 		end;
-		Exit;
 	end;
 
-	if rvis_check and not cell_rvis_overlap_check(e, false, true, require_static) then begin
-		if editable and remove then begin
-//			AddMessage('remove: rvis_check');
-			cell_remove(e);
+	if rvis_check then begin
+		if not cell_rvis_overlap_check(e, false, true, require_static) then begin
+			if editable and remove then begin
+//				AddMessage('remove: rvis_check');
+				cell_remove(e);
+			end;
+			Exit;
 		end;
-		Exit;
 	end;
 
 	// XXX: This really means keep only non-winning overrides,
@@ -2600,7 +2649,7 @@ var
 	main_allow, other_allow, interior_allow, persistent_allow: boolean;
 begin
 	if plugin_combined_use then begin
-		remove := false;
+		remove := true;
 		refr_clean := false;
 		stat_check := false;
 		rvis_check := false;
@@ -2629,13 +2678,19 @@ begin
 	if Signature(e) = 'TES4' then begin
 		if (pos('master', process_mode) <> 0) and not plugin_combined_use then begin
 //		if (pos('master', process_mode) <> 0) and not (plugin_combined_use or plugin_each_use) then begin
-			if plugin_master_queue.indexof(GetFileName(e)) < 0 then
-				plugin_master_queue.addObject(GetFileName(e), GetFile(e));
-			Exit;
+			if not base_master_list.indexOf(GetFileName(e)) < 0 then
+				Exit;
+			if not master_force.indexOf(GetFileName(e)) < 0 then
+				Exit;
+			if not plugin_master_queue.indexof(GetFileName(e)) < 0 then
+				Exit;
+			plugin_master_queue.addObject(GetFileName(e), GetFile(e));
 		end;
 	end else if remove and (Signature(e) = 'RFGP') then begin
-		AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-		RemoveNode(e);
+		if IsEditable(e) then begin
+			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
+			RemoveNode(e);
+		end;
 	end;
 
 	// Non-persistent cells only (ignore not modify)
@@ -2731,10 +2786,8 @@ begin
 		e := WinningOverride(e);
 		if not base_master_list.indexOf(GetFileName(e)) < 0 then
 			Exit;
-		if not cell_queue_add(e) then
-			Exit;
-
-		AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
+		if cell_queue_add(e) then
+			AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
 
 		Exit;
 	end;
