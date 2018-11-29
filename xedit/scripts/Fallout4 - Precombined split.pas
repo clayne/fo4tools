@@ -1619,7 +1619,7 @@ var
 begin
 	for i := 0 to Pred(length(pc_sig_tab)) do begin
 		if ElementExists(e, pc_sig_tab[i]) then
-			RemoveElement(e, ElementBySignature(e, pv_sig_tab[i]));
+			RemoveElement(e, ElementBySignature(e, pc_sig_tab[i]));
 	end;
 end;
 
@@ -1630,7 +1630,6 @@ begin
 	for i := 0 to Pred(length(pv_sig_tab)) do begin
 		if ElementExists(e, pv_sig_tab[i]) then
 			RemoveElement(e, ElementBySignature(e, pv_sig_tab[i]));
-//			Remove(ElementBySignature(e, pv_sig_tab[i]));
 	end;
 end;
 
