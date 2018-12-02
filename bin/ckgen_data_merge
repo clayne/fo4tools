@@ -1,0 +1,57 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+OUT="ckgen.out"
+BASE=0
+
+cd "/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4" || exit -1
+
+OIFS="$IFS"; IFS="
+"
+PLUGIN=( $(
+cat "$@" | fgrep '*' | tr -d '*' | tr -d '\r' | while read plugin; do
+	if ((!BASE)); then
+		case "$plugin" in
+		"main.pcv.esp") continue ;;
+		"ints.pcv.esp") continue ;;
+		"other.pcv.esp") continue ;;
+		"rgo_tree_noocclude.esp") continue ;;
+		"ReGrowth Overhaul 10.esp") continue ;;
+		esac
+	fi
+
+	echo "$plugin"
+done) )
+IFS="$OIFS"
+
+rm -rf "$OUT/merged"
+
+for plugin in "${PLUGIN[@]}"; do
+	for area in all ints main other; do
+	(
+		for mode in SCOL PreCombined Vis; do
+			case "$mode" in
+			SCOL)		odir="Meshes/SCOL" ;;
+			PreCombined)	odir="Meshes/Precombined" ;;
+			Vis)		odir="Vis" ;;
+			esac
+
+			mdir="$OUT/merged/$area/Data/$odir"
+#			mdir="$OUT/merged/Data/$odir"
+			mkdir -p "$mdir"
+
+			(find "$OUT/$plugin"* -maxdepth 3 -type d -name "${mode}.filtered.${area}.*" 2>/dev/null || true) \
+				| while read sdir
+			do
+				# ckgen.out/Knockout Framework.esm/Data/Meshes/PreCombined.filtered.ints.01
+				# ckgen.out/Knockout Framework.esm/Data/Vis.filtered.ints.01
+
+				echo "$plugin $area $mode $sdir" 1>&2
+				rsync -aSH --link-dest="$PWD/$sdir" "$sdir"/ "$mdir"/
+			done
+		done
+	) &
+	done; wait
+done

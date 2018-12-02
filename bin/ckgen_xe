@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+PLUGIN_FILE="plugins.test.resort"
+CKGEN_DATA="ckgen.data"
+PIDS=()
+
+trap "kill \${PIDS[*]} &>/dev/null || true" SIGINT
+
+cd "/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4" || exit -1
+
+AREA=()
+XEDIT_ARGS=()
+for i in "$@"; do
+	if [[ "$i" =~ ^--pcv ]]; then
+		XEDIT_ARGS+=( "$i" )
+	else
+		AREA+=( "$i" )
+	fi
+done
+
+if [[ "${#AREA[@]}" -eq 0 ]]; then
+	AREA=( main ints other )
+fi
+
+for i in "${AREA[@]}"; do
+	./fo4edit.exe \
+		-iknowwhatimdoing \
+		-allowmasterfilesedit \
+		-P:"$(cygpath -aw "$CKGEN_DATA/$i/$PLUGIN_FILE")" \
+		-D:"$(cygpath -aw "$CKGEN_DATA/$i")" \
+		--pcv-area="${i/.test}" \
+		"${XEDIT_ARGS[@]}" &
+	PIDS+=( $! )
+echo "${PIDS[@]}"
+done; wait
