@@ -290,9 +290,9 @@ function ck_clone() {
 		rm -rf "$bdir/$job/Data/Merging"
 	fi
 
+if false; then
 	# Clone plugin specific archive so that later archive rewrites don't run into
 	# concurrent access issues (e.g. Permission denied).
-if false; then
 	find "$bdir/$job/Data" -maxdepth 1 -mindepth 1 -type f -name "$plugin_base - *.ba2" | while read tmp; do
 		while ! cp --remove-destination -fp "$tmp" "$tmp.$$"; do
 			perm_debug "$tmp" "$tmp.$$"
@@ -642,6 +642,9 @@ function ck_exec_wrap() {
 	set -e
 	set -o pipefail
 
+	# Sanitize archive filename and embedded filenames within archive
+	ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
+
 	# Sanitize masters to be compatible with ck args (no spaces) and archives
 	ck_plugin_master_rewrite "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
 
@@ -651,9 +654,6 @@ function ck_exec_wrap() {
 		args=( -$target:"$file_ck" x64 )
 
 		[[ -d "$bdir/$job/Data/Meshes/SCOL" ]] && rm -rf "$bdir/$job/Data/Meshes/SCOL"
-
-		# Sanitize archive filename and embedded filenames within archive
-		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	precombine)
@@ -665,9 +665,6 @@ function ck_exec_wrap() {
 		for ext in csg psg; do
 			[[ -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext" ]] && rm -f "$bdir/$job/Data/$file_ck_base - Geometry.$ext"
 		done
-
-		# Sanitize archive filename and embedded filenames within archive
-		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	previs)
@@ -685,9 +682,6 @@ function ck_exec_wrap() {
 				done
 			fi
 		done
-
-		# Sanitize archive filename and embedded filenames within archive
-		ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
 
 		;;
 	csg)
@@ -1341,6 +1335,8 @@ function ck_log_wrap() {
 			if ($0 ~ /(Warnings|Errors) were encountered|See warnings file/)
 				next;
 			if ($0 ~ /D3D error|Reference .* attached to wrong cell for its location: Persistent cell|Unable to find reference group/)
+				next;
+			if ($0 ~ /Multibound for ref.*outside.*extents/)
 				next;
 			usepcnt=1;
 		} else {

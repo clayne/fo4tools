@@ -601,3 +601,6 @@ test with various ini's disabled
 test with removing CK prefs
 test frm close with xedit scripting to get around empty dialog box on script finish.
 
+test with plugin timestamps matching plugin or master load order
+change plugin-master-reloc to preserve timestamps even on modification
+

@@ -36,8 +36,9 @@ var
 	process_mode: string;
 	plugin_combined_use, plugin_base_use, plugin_each_use, plugin_cell_use: boolean;
 	winning_only, non_winning_only, stat_check, rvis_check: boolean;
-	remove, refr_clean, pc_clear, pv_clear: boolean;
+	remove, rfgp_remove, refr_clean, promote_winning_only, pc_clear, pv_clear: boolean;
 	stat_promote, stat_promote_all, stat_promote_marker_prefer, stat_promote_marker_door: boolean;
+	stat_master_add, rvis_master_add: boolean;
 	cell_remove_cnt, ref_remove_cnt: integer;
 
 	pc_sig_tab: array [0..1] of string;
@@ -53,15 +54,18 @@ var
 	cell_queue_seen: THashedStringList;
 
 	plugin_ignore_list: TStringList;
+	plugin_cell_master_exclude_list: THashedStringList;
 
 	plugin_file_map: THashedStringList;
 	plugin_master_queue: THashedStringList;
+	plugin_process_list: THashedStringList;
+	plugin_use_list: THashedStringList;
 
-	base_master_list: THashedStringList;
+	master_base_list: THashedStringList;
 
-	master_force: TStringList;
+	master_force_list: TStringList;
 	master_force_seen: THashedStringList;
-	master_exclude: TStringList;
+	master_exclude_list: TStringList;
 
 function bool_to_str(b: boolean): string;
 begin
@@ -74,7 +78,7 @@ end;
 
 function str_to_bool(s: string): boolean;
 begin
-	if s = '0' or s = 'false' then begin
+	if (s = '0') or (s = 'false') then begin
 		Result := false;
 	end else begin
 		Result := true;
@@ -112,6 +116,8 @@ begin
 			process_area := v;
 		end else if p = 'remove' then begin
 			remove := str_to_bool(v);
+		end else if p = 'rfgp-remove' then begin
+			rfgp_remove := str_to_bool(v);
 		end else if p = 'refr-clean' then begin
 			refr_clean := str_to_bool(v);
 		end else if p = 'stat-check' then begin
@@ -126,6 +132,8 @@ begin
 			winning_only := str_to_bool(v);
 		end else if p = 'non-winning-only' then begin
 			non_winning_only := str_to_bool(v);
+		end else if p = 'promote-winning-only' then begin
+			promote_winning_only := str_to_bool(v);
 		end else if p = 'stat-promote' then begin
 			stat_promote := str_to_bool(v);
 		end else if p = 'stat-promote-all' then begin
@@ -142,24 +150,56 @@ begin
 			plugin_each_use := str_to_bool(v);
 		end else if p = 'plugin-cell-use' then begin
 			plugin_cell_use := str_to_bool(v);
-		end else if p = 'base-master-list' then begin
-			base_master_list.clear;
-			base_master_list.delimiter := ',';
-			base_master_list.delimitedtext := v;
+		end else if p = 'stat-master-add' then begin
+			stat_master_add := str_to_bool(v);
+		end else if p = 'rvis-master-add' then begin
+			rvis_master_add := str_to_bool(v);
+		end else if p = 'master-base-list' then begin
+			master_base_list.clear;
+			master_base_list.strictdelimiter := true;
+			master_base_list.delimiter := ',';
+			master_base_list.delimitedtext := v;
 		end else if p = 'master-force-list' then begin
-			master_force.clear;
-			master_force.delimiter := ',';
-			master_force.delimitedtext := v;
+			master_force_list.clear;
+			master_force_list.strictdelimiter := true;
+			master_force_list.delimiter := ',';
+			master_force_list.delimitedtext := v;
 		end else if p = 'master-exclude-list' then begin
-			master_exclude.clear;
-			master_exclude.delimiter := ',';
-			master_exclude.delimitedtext := v;
+			master_exclude_list.clear;
+			master_exclude_list.strictdelimiter := true;
+			master_exclude_list.delimiter := ',';
+			master_exclude_list.delimitedtext := v;
+		end else if p = 'plugin-process-list' then begin
+			plugin_process_list := THashedStringList.create;
+			plugin_process_list.sorted := true;
+			plugin_process_list.strictdelimiter := true;
+			plugin_process_list.delimiter := ',';
+			plugin_process_list.delimitedtext := v;
+		end else if p = 'plugin-use-list' then begin
+			plugin_use_list := THashedStringList.create;
+			plugin_use_list.sorted := true;
+			plugin_use_list.strictdelimiter := true;
+			plugin_use_list.delimiter := ',';
+			plugin_use_list.delimitedtext := v;
+		end else if p = 'plugin-ignore-list' then begin
+			plugin_ignore_list := THashedStringList.create;
+			plugin_ignore_list.sorted := true;
+			plugin_ignore_list.strictdelimiter := true;
+			plugin_ignore_list.delimiter := ',';
+			plugin_ignore_list.delimitedtext := v;
+		end else if p = 'plugin-cell-master-exclude-list' then begin
+			plugin_cell_master_exclude_list := THashedStringList.create;
+			plugin_cell_master_exclude_list.sorted := true;
+			plugin_cell_master_exclude_list.strictdelimiter := true;
+			plugin_cell_master_exclude_list.delimiter := ',';
+			plugin_cell_master_exclude_list.delimitedtext := v;
 		end;
 	end;
 
 	AddMessage(Format('%s == %s', [ 'process_mode', process_mode ]));
 	AddMessage(Format('%s == %s', [ 'process_area', process_area ]));
 	AddMessage(Format('%s == %s', [ 'remove', bool_to_str(remove) ]));
+	AddMessage(Format('%s == %s', [ 'rfgp_remove', bool_to_str(rfgp_remove) ]));
 	AddMessage(Format('%s == %s', [ 'refr_clean', bool_to_str(refr_clean) ]));
 	AddMessage(Format('%s == %s', [ 'stat_check', bool_to_str(stat_check) ]));
 	AddMessage(Format('%s == %s', [ 'rvis_check', bool_to_str(rvis_check) ]));
@@ -167,6 +207,7 @@ begin
 	AddMessage(Format('%s == %s', [ 'pv_clear', bool_to_str(pv_clear) ]));
 	AddMessage(Format('%s == %s', [ 'winning_only', bool_to_str(winning_only) ]));
 	AddMessage(Format('%s == %s', [ 'non_winning_only', bool_to_str(non_winning_only) ]));
+	AddMessage(Format('%s == %s', [ 'promote_winning_only', bool_to_str(promote_winning_only) ]));
 	AddMessage(Format('%s == %s', [ 'stat_promote', bool_to_str(stat_promote) ]));
 	AddMessage(Format('%s == %s', [ 'stat_promote_all', bool_to_str(stat_promote_all) ]));
 	AddMessage(Format('%s == %s', [ 'stat_promote_marker_prefer', bool_to_str(stat_promote_marker_prefer) ]));
@@ -175,15 +216,50 @@ begin
 	AddMessage(Format('%s == %s', [ 'plugin_base_use', bool_to_str(plugin_base_use) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_each_use', bool_to_str(plugin_each_use) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_cell_use', bool_to_str(plugin_cell_use) ]));
-	for i := 0 to Pred(base_master_list.count) do begin
-		AddMessage(Format('%s[%d] == %s', [ 'base_master_list', i, base_master_list[i] ]));
+
+	if Assigned(master_base_list) then begin
+		for i := 0 to Pred(master_base_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'master_base_list', i, master_base_list[i] ]));
+		end;
 	end;
-	for i := 0 to Pred(master_force.count) do begin
-		AddMessage(Format('%s[%d] == %s', [ 'master_force', i, master_force[i] ]));
+
+	if Assigned(master_force_list) then begin
+		for i := 0 to Pred(master_force_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'master_force_list', i, master_force_list[i] ]));
+		end;
 	end;
-	for i := 0 to Pred(master_exclude.count) do begin
-		AddMessage(Format('%s[%d] == %s', [ 'master_exclude', i, master_exclude[i] ]));
+
+	if Assigned(master_exclude_list) then begin
+		for i := 0 to Pred(master_exclude_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'master_exclude_list', i, master_exclude_list[i] ]));
+		end;
 	end;
+
+	if Assigned(plugin_process_list) then begin
+		for i := 0 to Pred(plugin_process_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_process_list', i, plugin_process_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_use_list) then begin
+		for i := 0 to Pred(plugin_use_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_use_list', i, plugin_use_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_ignore_list) then begin
+		for i := 0 to Pred(plugin_ignore_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_ignore_list', i, plugin_ignore_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_cell_master_exclude_list) then begin
+		for i := 0 to Pred(plugin_cell_master_exclude_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_cell_master_exclude_list', i, plugin_cell_master_exclude_list[i] ]));
+		end;
+	end;
+
+	Result := true;
 end;
 
 function Initialize: integer;
@@ -245,6 +321,7 @@ begin
 	cell_queue_seen.sorted := true;
 	cell_queue_seen.duplicates := dupIgnore;
 
+if false then begin
 	plugin_ignore_list := TStringList.create;
 	plugin_ignore_list.sorted := true;
 	plugin_ignore_list.duplicates := dupIgnore;
@@ -254,6 +331,7 @@ begin
 	plugin_ignore_list.add(PrevisFileBase);
 	plugin_ignore_list.add(PrevisFileSuffix);
 	plugin_ignore_list.add(FinalFileSuffix);
+end;
 
 	plugin_file_map := THashedStringList.create;
 	plugin_file_map.sorted := true;
@@ -263,40 +341,15 @@ begin
 	plugin_master_queue.sorted := false;
 	plugin_master_queue.duplicates := dupIgnore;
 
+	plugin_process_list := nil;
+	plugin_use_list := nil;
+	plugin_ignore_list := nil;
+	plugin_cell_master_exclude_list := nil;
+
 	cell_remove_cnt := 0;
 	ref_remove_cnt := 0;
 
-//	process_mode := 'init_master_refr_clean';
-//	process_mode := 'init_master_cell_rvis_clean';
-
-//	process_mode := 'init_cell_all_master_add';
-//	process_mode := 'init_cell_exts_master_add';
-//	process_mode := 'init_cell_main_master_add';
-//	process_mode := 'init_cell_ints_master_add';
-//	process_mode := 'init_cell_other_master_add';
-
-//	process_mode := 'init_cell_all_master_clean';
-//	process_mode := 'init_cell_exts_master_clean';
-//	process_mode := 'init_cell_main_master_clean';
-//	process_mode := 'init_cell_ints_master_clean';
-//	process_mode := 'init_cell_other_master_clean';
-
-//	process_mode := 'precombine_merge';
-//	process_mode := 'previs_merge';
-//	process_mode := 'precombine_extract';
-//	process_mode := 'previs_extract';
-//	process_mode := 'precombine_split';
-//	process_mode := 'previs_split';
-
-//	process_mode := 'final_all';
-//	process_mode := 'final_exts';
-//	process_mode := 'final_main';
-//	process_mode := 'final_ints';
-//	process_mode := 'final_other';
-
-//	process_mode := 'final';
-//	process_mode := 'stats';
-
+	promote_winning_only := false;
 	stat_promote := true;
 	stat_promote_all := false;
 	stat_promote_marker_prefer := false;
@@ -305,64 +358,74 @@ begin
 	plugin_base_use := false;
 	plugin_each_use := false;
 	plugin_cell_use := false;
+	stat_master_add := true;
+	rvis_master_add := true;
 	refr_clean := false;
 	pc_clear := true;
 	pv_clear := true;
+	rfgp_remove := true;
 	remove := true;
 	winning_only := false;
 	non_winning_only := false;
 	stat_check := false;
 	rvis_check := false;
 
-	base_master_list := THashedStringList.create;
-	base_master_list.sorted := false;
-	base_master_list.duplicates := dupIgnore;
-	base_master_list.add('Fallout4.esm');
-	base_master_list.add('DLCRobot.esm');
-	base_master_list.add('DLCworkshop01.esm');
-	base_master_list.add('DLCCoast.esm');
-	base_master_list.add('DLCworkshop02.esm');
-	base_master_list.add('DLCworkshop03.esm');
-	base_master_list.add('DLCNukaWorld.esm');
-	base_master_list.add('DLCUltraHighResolution.esm');
+	master_base_list := THashedStringList.create;
+	master_base_list.sorted := false;
+	master_base_list.duplicates := dupIgnore;
+	master_base_list.add('Fallout4.esm');
+	master_base_list.add('DLCRobot.esm');
+	master_base_list.add('DLCworkshop01.esm');
+	master_base_list.add('DLCCoast.esm');
+	master_base_list.add('DLCworkshop02.esm');
+	master_base_list.add('DLCworkshop03.esm');
+	master_base_list.add('DLCNukaWorld.esm');
+//	master_base_list.add('DLCUltraHighResolution.esm');
 
-	master_force := TStringList.create;
-	master_force.sorted := false;
-	master_force.duplicates := dupIgnore;
-	master_force.add('Fallout4.esm');
-	master_force.add('DLCRobot.esm');
-	master_force.add('DLCworkshop01.esm');
-	master_force.add('DLCCoast.esm');
-	master_force.add('DLCworkshop02.esm');
-	master_force.add('DLCworkshop03.esm');
-	master_force.add('DLCNukaWorld.esm');
-//	master_force.add('DLCUltraHighResolution.esm');
+	master_force_list := TStringList.create;
+	master_force_list.sorted := false;
+	master_force_list.duplicates := dupIgnore;
+	master_force_list.add('Fallout4.esm');
+	master_force_list.add('DLCRobot.esm');
+	master_force_list.add('DLCworkshop01.esm');
+	master_force_list.add('DLCCoast.esm');
+	master_force_list.add('DLCworkshop02.esm');
+	master_force_list.add('DLCworkshop03.esm');
+	master_force_list.add('DLCNukaWorld.esm');
+//	master_force_list.add('DLCUltraHighResolution.esm');
 
-	master_force.add('ReGrowth Overhaul 10.esp');
-	master_force.add('rgo_tree_noocclude.esp');
-	master_force.add('main.pcv.esp');
-	master_force.add('ints.pcv.esp');
-	master_force.add('other.pcv.esp');
+	master_force_list.add('ReGrowth Overhaul 10.esp');
+	master_force_list.add('rgo_tree_noocclude.esp');
+//	master_force_list.add('main.pcv.esp');
+//	master_force_list.add('ints.pcv.esp');
+//	master_force_list.add('other.pcv.esp');
 
 	master_force_seen := THashedStringList.create;
 	master_force_seen.sorted := true;
 	master_force_seen.duplicates := dupIgnore;
 
-	master_exclude := TStringList.create;
-	master_exclude.sorted := true;
-	master_exclude.duplicates := dupIgnore;
+	master_exclude_list := TStringList.create;
+	master_exclude_list.sorted := true;
+	master_exclude_list.duplicates := dupIgnore;
 
-	opts_parse;
+	// Parse all command line options, optionally overriding various
+	// defaults and lists.
+	if not opts_parse then begin
+		AddMessage('Error processing command line options');
+		Result := true;
+		Exit;
+	end;
 
-	if plugin_cell_use then
+	if plugin_cell_use then begin
 		plugin_each_use := true;
+	end;
 
 	if pos('final', process_mode) = 1 then begin
 		plugin_combined_use := true;
 		plugin_each_use := false;
-		master_exclude.add('main.pcv.esp');
-		master_exclude.add('ints.pcv.esp');
-		master_exclude.add('other.pcv.esp');
+		master_exclude_list.add('main.pcv.esp');
+		master_exclude_list.add('ints.pcv.esp');
+		master_exclude_list.add('other.pcv.esp');
 	end;
 end;
 
@@ -446,7 +509,7 @@ begin
 
 //		if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
 		if (efstr <> pfstr) and not HasMaster(plugin, efstr) then begin
-			if master_exclude.indexOf(efstr) < 0 then begin
+			if master_exclude_list.indexOf(efstr) < 0 then begin
 				if Debug then AddMessage(Format('%s: Adding master: %s: %s', [GetFileName(plugin), efstr, Name(e)]));
 				mq.add(efstr);
 			end;
@@ -475,23 +538,39 @@ var
 	pfstr: string;
 begin
 	pfstr := GetFileName(plugin);
-	if not base_master_list.indexOf(pfstr) < 0 then
+	if not master_base_list.indexOf(pfstr) < 0 then
 		Exit;
-	if not master_exclude.indexOf(pfstr) < 0 then
+	if not master_exclude_list.indexOf(pfstr) < 0 then
 		Exit;
-	if not master_force.indexOf(pfstr) < 0 then
+	if not master_force_list.indexOf(pfstr) < 0 then
 		Exit;
 	if not master_force_seen.indexOf(pfstr) < 0 then
 		Exit;
 	master_force_seen.add(pfstr);
 
-	for i := 0 to Pred(master_force.count) do begin
-		m := plugin_file_resolve_existing(master_force[i]);
-		plugin_master_add(plugin, m, parents, false);
+	for i := 0 to Pred(master_force_list.count) do begin
+		m := plugin_file_resolve_existing(master_force_list[i]);
+		if Assigned(m) then
+			plugin_master_add(plugin, m, parents, false);
 	end;
 
 	if sort then
 		SortMasters(plugin);
+end;
+
+procedure plugin_master_force_queue(plugin: IwbFile);
+var
+	fname: string;
+begin
+	fname := GetFileName(plugin);
+
+	if not master_base_list.indexOf(fname) < 0 then
+		Exit;
+	if not master_force_list.indexOf(fname) < 0 then
+		Exit;
+	if not plugin_master_queue.indexof(fname) < 0 then
+		Exit;
+	plugin_master_queue.addObject(fname, plugin);
 end;
 
 function plugin_file_resolve_existing(pfile: string): IInterface;
@@ -2533,6 +2612,7 @@ end;
 
 procedure master_clean(e: IInterface; main_allow, other_allow, interior_allow, persistent_allow, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove: boolean);
 var
+	m: IInterface;
 	winning_override, editable: boolean;
 begin
 	if Signature(e) <> 'CELL' then
@@ -2589,25 +2669,43 @@ begin
 		Exit;
 	end;
 
-	if refr_clean then begin
+	// Pre-clean precombined and previs data from cells
+	if editable and pc_clear then
+		cell_pc_clear(e);
+	if editable and pv_clear then
+		cell_pv_clear(e);
+	if editable and refr_clean then begin
 		cell_refr_clean(e);
 	end;
 
 	if not plugin_base_use then begin
-		if not base_master_list.indexOf(GetFileName(e)) < 0 then begin
-//			AddMessage('exit: base_master');
+		if not master_base_list.indexOf(GetFileName(e)) < 0 then begin
+//			AddMessage('exit: master_base_list');
 			Exit;
 		end;
-		if not master_force.indexOf(GetFileName(e)) < 0 then begin
-//			AddMessage('exit: master_force');
+		if not master_force_list.indexOf(GetFileName(e)) < 0 then begin
+//			AddMessage('exit: master_force_list');
 			Exit;
 		end;
+	end;
 
-		// Pre-clean precombined and previs data from cells
-		if pc_clear then
-			cell_pc_clear(e);
-		if pv_clear then
-			cell_pv_clear(e);
+	if Assigned(plugin_use_list) then begin
+		if plugin_use_list.indexOf(GetFileName(e)) < 0 then begin
+//			AddMessage('exit: plugin_use_list');
+			Exit;
+		end;
+	end;
+
+	if Assigned(plugin_cell_master_exclude_list) then begin
+		m := MasterOrSelf(e);
+		if not plugin_cell_master_exclude_list.indexOf(GetFileName(m)) < 0 then begin
+//			AddMessage('exit: plugin_cell_master_exclude_list');
+			Exit;
+		end;
+	end;
+
+	if promote_winning_only and not winning_override then begin
+		e := WinningOverride(e);
 	end;
 
 	cell_queue_add(e);
@@ -2635,162 +2733,15 @@ begin
 	end;
 end;
 
-function Process(e: IInterface): integer;
+procedure precombine_previs_merge(e: IInterface);
 var
 	o, m, t, r, w, plugin: IInterface;
-	tfname, efname, efoname: string;
-	idx, i, j, oc: integer;
-	ts, pcmb_max, visi_max: integer;
-	merge: boolean;
-	key, nv, s: string;
 	ol, ml: TList;
-	remove, require_static: boolean;
-	main_allow, other_allow, interior_allow, persistent_allow: boolean;
+	merge: boolean;
+	tfname, efname, efoname: string;
+	ts, pcmb_max, visi_max: integer;
+	idx, i, j, oc: integer;
 begin
-	if plugin_combined_use then begin
-		remove := true;
-		refr_clean := false;
-		stat_check := false;
-		rvis_check := false;
-		require_static := false;
-		winning_only := false;
-		non_winning_only := false;
-	end else if plugin_each_use then begin
-		remove := true;
-		refr_clean := false;
-		stat_check := false;
-		rvis_check := false;
-		require_static := false;
-		winning_only := false;
-		non_winning_only := false;
-	end else begin
-		remove := true;
-		refr_clean := false;
-		stat_check := false;
-		rvis_check := false;
-		require_static := false;
-		winning_only := false;
-		non_winning_only := false;
-	end;
-
-	// Add any forced masters
-	if Signature(e) = 'TES4' then begin
-		if (pos('master', process_mode) <> 0) and not plugin_combined_use then begin
-//		if (pos('master', process_mode) <> 0) and not (plugin_combined_use or plugin_each_use) then begin
-			if not base_master_list.indexOf(GetFileName(e)) < 0 then
-				Exit;
-			if not master_force.indexOf(GetFileName(e)) < 0 then
-				Exit;
-			if not plugin_master_queue.indexof(GetFileName(e)) < 0 then
-				Exit;
-			plugin_master_queue.addObject(GetFileName(e), GetFile(e));
-		end;
-	end else if remove and (Signature(e) = 'RFGP') then begin
-		if IsEditable(e) then begin
-			AddMessage(Format('%s: Removing: %s', [GetFileName(e), Name(e)]));
-			RemoveNode(e);
-		end;
-	end;
-
-	// Non-persistent cells only (ignore not modify)
-	if not cell_filter(e, true, true, true, false) then
-		Exit;
-
-	// direct cleaning calls
-
-//	if process_mode = 'init_master_cell_rvis_clean' then begin
-//		plugin_master_cell_rvis_clean(e, true, true, true, false);
-//		Exit;
-//	end;
-
-	// master clean
-
-	if process_mode = 'init_cell_master_clean' then begin
-		main_allow := false;
-		other_allow := false;
-		interior_allow := false;
-		persistent_allow := false;
-		if process_area = 'main' then begin
-			main_allow := true;
-		end else if process_area = 'other' then begin
-			other_allow := true;
-		end else if process_area = 'ints' then begin
-			interior_allow := true;
-		end else if process_area = 'exts' then begin
-			main_allow := true;
-			other_allow := true;
-		end else if process_area = 'all' then begin
-			main_allow := true;
-			other_allow := true;
-			interior_allow := true;
-		end;
-
-		master_clean(e, main_allow, other_allow, interior_allow, persistent_allow, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end;
-
-	if process_mode = 'init_cell_all_master_clean' then begin
-		master_clean(e, true, true, true, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end else if process_mode = 'init_cell_exts_master_clean' then begin
-		master_clean(e, true, true, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end else if process_mode = 'init_cell_ints_master_clean' then begin
-		master_clean(e, false, false, true, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end else if process_mode = 'init_cell_main_master_clean' then begin
-		master_clean(e, true, false, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end else if process_mode = 'init_cell_other_master_clean' then begin
-		master_clean(e, false, true, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
-		Exit;
-	end;
-
-	// master add
-
-	if process_mode = 'init_cell_all_master_add' then begin
-		master_add(e, true, true, true, false, stat_promote, remove);
-		Exit;
-	end else if process_mode = 'init_cell_exts_master_add' then begin
-		master_add(e, true, true, false, false, stat_promote, remove);
-		Exit;
-	end else if process_mode = 'init_cell_ints_master_add' then begin
-		master_add(e, false, false, true, false, stat_promote, remove);
-		Exit;
-	end else if process_mode = 'init_cell_main_master_add' then begin
-		master_add(e, true, false, false, false, stat_promote, remove);
-		Exit;
-	end else if process_mode = 'init_cell_other_master_add' then begin
-		master_add(e, false, true, false, false, stat_promote, remove);
-		Exit;
-	end;
-
-	if process_mode = 'stats' then begin
-		plugin_cell_stat_master_add(GetFile(e), e, true, true);
-		plugin_cell_rvis_master_add(GetFile(e), e, true, true);
-		Exit;
-	end;
-
-	if process_mode = 'init_alt' then begin
-		Result := plugin_init(mode);
-		Exit;
-	end;
-
-	if process_mode = 'init' then begin
-		Result := plugin_cell_stat_master_add(GetFile(e), e, true, true);
-		Exit;
-	end;
-
-	if pos('final', process_mode) = 1 then begin
-		e := WinningOverride(e);
-		if not base_master_list.indexOf(GetFileName(e)) < 0 then
-			Exit;
-		if cell_queue_add(e) then
-			AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
-
-		Exit;
-	end;
-
 	if process_mode = 'precombine_merge' then begin
 		efname := GetFileName(e);
 		idx := pos('.precombine', efname);
@@ -2933,12 +2884,283 @@ end;
 	ol.free;
 end;
 
+function cell_finalize(e: IInterface): boolean;
+var
+	main_allow, other_allow, interior_allow, persistent_allow: boolean;
+	remove, require_static: boolean;
+begin
+
+	if plugin_combined_use then begin
+		remove := true;
+		refr_clean := false;
+		stat_check := false;
+		rvis_check := false;
+		require_static := false;
+		winning_only := false;
+		non_winning_only := false;
+	end else if plugin_each_use then begin
+		remove := true;
+		refr_clean := false;
+		stat_check := false;
+		rvis_check := false;
+		require_static := false;
+		winning_only := false;
+		non_winning_only := false;
+	end else begin
+		remove := true;
+		refr_clean := false;
+		stat_check := false;
+		rvis_check := false;
+		require_static := false;
+		winning_only := false;
+		non_winning_only := false;
+	end;
+
+	// Non-persistent cells only (ignore and do not modify)
+	if not cell_filter(e, true, true, true, false) then
+		Exit;
+
+	// direct cleaning calls
+
+//	if process_mode = 'init_master_cell_rvis_clean' then begin
+//		plugin_master_cell_rvis_clean(e, true, true, true, false);
+//		Exit;
+//	end;
+
+	// master clean
+
+	if process_mode = 'init_cell_master_clean' then begin
+		main_allow := false;
+		other_allow := false;
+		interior_allow := false;
+		persistent_allow := false;
+		if process_area = 'main' then begin
+			main_allow := true;
+		end else if process_area = 'other' then begin
+			other_allow := true;
+		end else if process_area = 'ints' then begin
+			interior_allow := true;
+		end else if process_area = 'exts' then begin
+			main_allow := true;
+			other_allow := true;
+		end else if process_area = 'all' then begin
+			main_allow := true;
+			other_allow := true;
+			interior_allow := true;
+		end;
+
+		master_clean(e, main_allow, other_allow, interior_allow, persistent_allow, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end;
+
+	if process_mode = 'precombine_merge' then begin
+		Result := precombine_previs_merge(e);
+		Exit;
+	end;
+
+	if process_mode = 'previs_merge' then begin
+		Result := precombine_previs_merge(e);
+		Exit;
+	end;
+
+	if pos('final', process_mode) = 1 then begin
+		e := WinningOverride(e);
+		if not master_base_list.indexOf(GetFileName(e)) < 0 then
+			Exit;
+		if cell_queue_add(e) then
+			AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
+
+		Exit;
+	end;
+
+	// old/deprecated:
+
+	if process_mode = 'init_cell_all_master_clean' then begin
+		master_clean(e, true, true, true, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end else if process_mode = 'init_cell_exts_master_clean' then begin
+		master_clean(e, true, true, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end else if process_mode = 'init_cell_ints_master_clean' then begin
+		master_clean(e, false, false, true, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end else if process_mode = 'init_cell_main_master_clean' then begin
+		master_clean(e, true, false, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end else if process_mode = 'init_cell_other_master_clean' then begin
+		master_clean(e, false, true, false, false, refr_clean, stat_check, rvis_check, require_static, winning_only, non_winning_only, remove);
+		Exit;
+	end;
+
+	// master add
+
+	if process_mode = 'init_cell_all_master_add' then begin
+		master_add(e, true, true, true, false, stat_promote, remove);
+		Exit;
+	end else if process_mode = 'init_cell_exts_master_add' then begin
+		master_add(e, true, true, false, false, stat_promote, remove);
+		Exit;
+	end else if process_mode = 'init_cell_ints_master_add' then begin
+		master_add(e, false, false, true, false, stat_promote, remove);
+		Exit;
+	end else if process_mode = 'init_cell_main_master_add' then begin
+		master_add(e, true, false, false, false, stat_promote, remove);
+		Exit;
+	end else if process_mode = 'init_cell_other_master_add' then begin
+		master_add(e, false, true, false, false, stat_promote, remove);
+		Exit;
+	end;
+
+	if process_mode = 'init' then begin
+		Result := plugin_cell_stat_master_add(GetFile(e), e, true, true);
+		Exit;
+	end;
+
+	if process_mode = 'stats' then begin
+		plugin_cell_stat_master_add(GetFile(e), e, true, true);
+		plugin_cell_rvis_master_add(GetFile(e), e, true, true);
+		Exit;
+	end;
+
+	if process_mode = 'init_alt' then begin
+		Result := plugin_init(mode);
+		Exit;
+	end;
+
+end;
+
+procedure plugin_finalize(plugin: IwbFile);
+var
+	e, t, r, w, g, cg: IInterface;
+	i, j, k, l, c: integer;
+	fname: string;
+	wq, cq: TList;
+begin
+	fname := GetFileName(plugin);
+	cq := TList.create;
+
+	if Assigned(plugin_process_list) then begin
+		if plugin_process_list.indexOf(GetFileName(e)) < 0 then begin
+			cq.free;
+			Exit;
+		end;
+	end;
+
+	// Add plugin to master force queue
+	if (pos('master', process_mode) <> 0) and not plugin_combined_use then begin
+		plugin_master_force_queue(plugin);
+	end else if process_mode = 'precombine_merge' then begin
+		if pos('.precombine', GetFilename(plugin)) = 0 then
+			Exit;
+	end else if process_mode = 'previs_merge' then begin
+		if pos('.previs', GetFilename(plugin)) = 0 then
+			Exit;
+	end;
+
+	if process_mode = 'previs_merge' then begin
+		efname := GetFileName(e);
+		idx := pos('.previs', efname);
+		if idx = 0 then
+			Exit;
+		efoname := copy(efname, 1, idx - 1);
+	end;
+
+	// Remove RFGPs
+	if IsEditable(plugin) and rfgp_remove then begin
+		g := GroupBySignature(plugin, 'RFGP');
+		if Assigned(g) then begin
+			AddMessage(Format('%s: Removing: %s', [fname, Name(g)]));
+			RemoveNode(g);
+		end;
+	end;
+
+	// Resolve all interior and exterior cells and add to queue
+	g := GroupBySignature(plugin, 'CELL');
+	if Assigned(g) then begin
+		for i := 0 to Pred(ElementCount(g)) do begin
+			e := ElementByIndex(g, i);
+//			AddMessage('e: ' + Name(e));
+			for j := 0 to Pred(ElementCount(e)) do begin
+				t := ElementByIndex(e, j);
+//				AddMessage('t: ' + Name(t));
+				for k := 0 to Pred(ElementCount(t)) do begin
+					r := ElementByIndex(t, k);
+					if Signature(r) <> 'CELL' then
+						continue;
+//					AddMessage('r: ' + Name(r));
+					cq.add(r);
+				end;
+			end;
+		end;
+	end;
+
+	g := GroupBySignature(plugin, 'WRLD');
+	if Assigned(g) then begin
+		for i := 0 to Pred(ElementCount(g)) do begin
+			w := ElementByIndex(g, i);
+			if Signature(w) <> 'WRLD' then
+				continue;
+
+			cg := ChildGroup(w);
+//			AddMessage('w: ' + FullPath(w));
+//			AddMessage('cg: ' + FullPath(cg));
+
+			for j := 0 to Pred(ElementCount(cg)) do begin
+				e := ElementByIndex(cg, j);
+//				AddMessage('e: ' + FullPath(e));
+
+				if Signature(e) = 'CELL' then begin
+					cq.add(e);
+					continue;
+				end else if Signature(e) = 'GRUP' then begin
+					if GroupType(e) < 2 then
+						continue;
+					if GroupType(e) > 5 then
+						continue;
+				end;
+
+				for k := 0 to Pred(ElementCount(e)) do begin
+					t := ElementByIndex(e, k);
+//					AddMessage('t: ' + FullPath(t));
+
+					for l := 0 to Pred(ElementCount(t)) do begin
+						r := ElementByIndex(t, l);
+						if Signature(r) <> 'CELL' then
+							continue;
+
+//						AddMessage('r: ' + FullPath(r));
+						cq.add(r);
+					end;
+				end;
+			end;
+		end;
+	end;
+
+	AddMessage(Format('cq count == %d', [cq.count]));
+	for i := 0 to Pred(cq.count) do begin
+		e := ObjectToElement(cq[i]);
+		cell_finalize(e);
+	end;
+
+	cq.free;
+end;
+
 function Finalize: integer;
 var
-	t, r, plugin: IInterface;
+	e, t, g, r, plugin: IInterface;
 	i, j, k: integer;
 	rc, rct: integer;
 begin
+
+//	for i := 0 to 0 do begin
+	for i := 0 to Pred(FileCount) do begin
+		t := FileByLoadOrder(i);
+		if not Assigned(t) then
+			continue;
+
+		plugin_finalize(t);
+	end;
+
 	if pos('final', process_mode) = 1 then begin
 		// XXX: Add masters before copying due to an xedit issue
 		// XXX: with formid corruption when intermixed.
@@ -2987,7 +3209,9 @@ begin
 			plugin_master_add(plugin, t, true, false);
 		end;
 
-		plugin_cell_stat_master_add(plugin, t, true, false);
+		if stat_master_add then begin
+			plugin_cell_stat_master_add(plugin, t, true, false);
+		end;
 
 		if plugin_master_queue.indexof(GetFileName(plugin)) < 0 then
 			plugin_master_queue.addObject(GetFileName(plugin), plugin);
@@ -3002,10 +3226,13 @@ begin
 		if not Assigned(t) then
 			continue;
 
-//		if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
+//			if Debug then AddMessage(Format('cell_queue[%d]: %s', [i,FullPath(t)]));
 
 		plugin := plugin_resolve(t);
-		plugin_cell_rvis_master_add(plugin, t, true, false);
+
+		if rvis_master_add then begin
+			plugin_cell_rvis_master_add(plugin, t, true, false);
+		end;
 
 		if plugin_master_queue.indexof(GetFileName(plugin)) < 0 then
 			plugin_master_queue.addObject(GetFileName(plugin), plugin);
@@ -3031,8 +3258,9 @@ begin
 	cell_queue.free;
 	cell_cache.free;
 
+	master_exclude_list.free;
 	master_force_seen.free;
-	master_force.free;
+	master_force_list.free;
 
 	plugin_file_map.free;
 	plugin_master_queue.free;
