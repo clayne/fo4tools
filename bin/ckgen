@@ -384,7 +384,7 @@ function ck_archive_rewrite() {
 	local file="$1"; shift
 
 	local plugin_base="${plugin/%.es[pml]}"
-	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_esm="${plugin/%.es[pml]/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	local plugin_ck_base="${plugin_ck/%.es[pml]}"
@@ -426,7 +426,7 @@ function ck_archive_rewrite() {
 		# loading it by that name.
 		plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file" | while read __file; do
 			local __file_base="${__file/%.es[pml]}"
-			local __file_esm="${__file/%.esp/.esm}"
+			local __file_esm="${__file/%.es[pml]/.esm}"
 			local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
 			local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
 			local __file_ck_base="${__file_ck/%.es[pml]}"
@@ -523,7 +523,7 @@ function ck_plugin_master_rewrite() {
 	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	local file_base="${file/%.es[pml]}"
-	local file_esm="${file/%.esp/.esm}"
+	local file_esm="${file/%.es[pml]/.esm}"
 	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
 	local file_ck="${file_sanitized:-${file_esm:-$file}}"
 	local file_ck_base="${file_ck/%.es[pml]}"
@@ -584,7 +584,7 @@ function ck_output_dir_rename() {
 	# altered to use esm masters instead.
 	plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file" | while read __file; do
 		local __file_base="${__file/%.es[pml]}"
-		local __file_esm="${__file/%.esp/.esm}"
+		local __file_esm="${__file/%.es[pml]/.esm}"
 		local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
 		local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
 		local __file_ck_base="${__file_ck/%.es[pml]}"
@@ -628,13 +628,13 @@ function ck_exec_wrap() {
 	local wcur=$(printf "%02d" $cur)
 
 	local plugin_base="${plugin/%.es[pml]}"
-	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_esm="${plugin/%.es[pml]/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	local file_base="${file/%.es[pml]}"
-	local file_esm="${file/%.esp/.esm}"
+	local file_esm="${file/%.es[pml]/.esm}"
 	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
 	local file_ck="${file_sanitized:-${file_esm:-$file}}"
 	local file_ck_base="${file_ck/%.es[pml]}"
@@ -830,13 +830,13 @@ function ck_archive_wrap() {
 	local mode="$1"; shift
 
 	local plugin_base="${plugin/%.es[pml]}"
-	local plugin_esm="${plugin/%.esp/.esm}"
+	local plugin_esm="${plugin/%.es[pml]/.esm}"
 	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
 	local file_base="${file/%.es[pml]}"
-	local file_esm="${file/%.esp/.esm}"
+	local file_esm="${file/%.es[pml]/.esm}"
 	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
 	local file_ck="${file_sanitized:-${file_esm:-$file}}"
 	local file_ck_base="${file_ck/%.es[pml]}"
@@ -965,14 +965,15 @@ function ck_wrap() {
 	set -o pipefail
 	set -o errtrace
 
+	# For each given mode, nuke any old data left in per-job build
+	# directory, regenerate it with CK, and then move the results
+	# to the output directory.
+
 	rm -f "$bdir/$job/EditorWarnings.txt"
 	trap "echo 'FAILURE' >> '$bdir/$job/EditorWarnings.txt'; ls -d '$bdir/$file.$mode.$type.$area.$wcur'.*.error &>/dev/null || cp --remove-destination -fp '$bdir/$job/EditorWarnings.txt' '$bdir/$file.$mode.$type.$area.$wcur.ck_wrap.error'" ERR
 
 	ck_clone "$sdir" "$bdir" "$odir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
 
-	# For each given mode, nuke any old data left in per-job build
-	# directory, regenerate it with CK, and then move the results
-	# to the output directory.
 	case "$mode" in
 	scol)
 		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$manual" "$ctl_log"
