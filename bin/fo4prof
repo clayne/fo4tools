@@ -143,7 +143,7 @@ new() {
 		mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup"
 		cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
 
-		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full
+		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full >/dev/null
 	fi
 
 #	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
@@ -158,8 +158,9 @@ done; shift $((OPTIND - 1))
 MODE="$1"; shift || true
 
 if [[ -z "$MODE" ]]; then
-	echo "No mode specified" 1>&2
-	exit -1
+	MODE="list"
+#	echo "No mode specified" 1>&2
+#	exit -1
 fi
 
 case "$MODE" in
