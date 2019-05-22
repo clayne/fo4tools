@@ -378,6 +378,7 @@ function ck_archive_rewrite() {
 	set -x
 
 	local bdir="$1"; shift
+	local cdir="$1"; shift
 	local job="$1"; shift
 	local method="$1"; shift
 	local plugin="$1"; shift
@@ -389,35 +390,12 @@ function ck_archive_rewrite() {
 	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
 	local plugin_ck_base="${plugin_ck/%.es[pml]}"
 
-	local file_base="${file/%.es[pml]}"
-	local file_esm="${file/%.esp/.esm}"
-	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
-	local file_ck="${file_sanitized:-${file_esm:-$file}}"
-	local file_ck_base="${file_ck/%.es[pml]}"
-
-	local archive_type="Main"
-	local archive_main="$bdir/$job/Data/$plugin_base - $archive_type.ba2"
-	local archive_main_ck="$bdir/$job/Data/$plugin_ck_base - $archive_type.ba2"
-
 	set -e
 	set -o pipefail
-
-	if [[ ! -f "$archive_main" ]]; then
-		return 0
-	elif [[ "$file" == "$file_ck" ]]; then
-		return 0
-	fi
 
 	case "$method" in
 	sanitize)
 		local archive_data_tmp="$bdir/$job/.archive_tmp/Data"
-
-		if [[ "$archive_main" != "$archive_main_ck" ]]; then
-			while ! cp -flp --remove-destination "$archive_main" "$archive_main_ck"; do
-				perm_debug "$archive_main" "$archive_main_ck"
-				sleep $((1 + (RANDOM % 4)))
-			done
-		fi
 
 		# For every master a given plugin has (and itself), check the plugin's main
 		# archive for embedded directory names that need to be sanitized. If it's
@@ -430,52 +408,56 @@ function ck_archive_rewrite() {
 			local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
 			local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
 			local __file_ck_base="${__file_ck/%.es[pml]}"
-			local __file_sub="$__file_esm"
-			local __file_sub_base="$__file_base"
 
-			# If the target is the file itself, then the ck-sanitized name
-			# should be used - otherwise the esm-extension name should be used
-			# as esp masters are simply flipped to esm extensions.
-			if [[ "$__file" == "$__file_ck" ]]; then
-				# Sanitized name same as original, skip.
-				continue
-			elif [[ "$__file" == "$file" ]]; then
-				__file_sub="$__file_ck"
-				__file_sub_base="$__file_ck_base"
+			local __archive_type="Main"
+			local __archive_main="$bdir/$job/Data/$__file_base - $__archive_type.ba2"
+			local __archive_main_ck="$bdir/$job/Data/$__file_ck_base - $__archive_type.ba2"
+			local __archive_main_ck_cached="$cdir/Data/$__file_ck_base - $__archive_type.ba2"
+
+			if [[ "$__archive_main_ck_cached" -nt "$__archive_main_ck" ]]; then
+				while ! cp -flp --remove-destination "$__archive_main_ck_cached" "$__archive_main_ck"; do
+					perm_debug "$__archive_main_ck_cached" "$__archive_main_ck"
+					sleep $((1 + (RANDOM % 4)))
+				done
+			elif [[ "$__archive_main" != "$__archive_main_ck" && -f "$__archive_main" && ! -f "$__archive_main_ck" ]]; then
+				while ! cp -flp --remove-destination "$__archive_main" "$__archive_main_ck"; do
+					perm_debug "$__archive_main" "$__archive_main_ck"
+					sleep $((1 + (RANDOM % 4)))
+				done
 			fi
 
 			if [[ ! -d "$archive_data_tmp" ]]; then
 				# Speed-hack to avoid archive extraction unless it's absolutely necessary.
-				egrep -qi "$__file|$__file_base.*strings" "$archive_main" || continue
+				egrep -qi "$__file|$__file_base.*strings" "$__archive_main" || continue
 
-				while ! cp -flp --remove-destination "$archive_main" "$archive_main.save"; do
-					perm_debug "$archive_main" "$archive_main.save"
+				while ! cp -flp --remove-destination "$__archive_main" "$__archive_main.save"; do
+					perm_debug "$__archive_main" "$__archive_main.save"
 					sleep $((1 + (RANDOM % 4)))
 				done
 
 				mkdir -p "$archive_data_tmp"
-				ck_archive_unpack "$archive_main_ck" "$archive_data_tmp"
+				ck_archive_unpack "$__archive_main_ck" "$archive_data_tmp"
 			fi
 
 			# Account for file-specific dirs
-			if [[ "$__file" != "$__file_sub" ]]; then
+			if [[ "$__file" != "$__file_ck" ]]; then
 				find "$archive_data_tmp" -type d -name "$__file" -print0 \
-					| xargs -tr0 rename "$__file" "$__file_sub"
+					| xargs -tr0 rename "$__file" "$__file_ck"
 			fi
 
 			# Account for mixed case base string files
-			if [[ "$__file_base" != "$__file_sub_base" ]]; then
+			if [[ "$__file_base" != "$__file_ck_base" ]]; then
 				for ___file_base in "${__file_base}" "${__file_base^^}" "${__file_base,,}"; do
 					find "$archive_data_tmp" -type f -name "${___file_base}*" -iname '*strings' -print0 \
-						| xargs -tr0 rename "$___file_base" "$__file_sub_base"
+						| xargs -tr0 rename "$___file_base" "$__file_ck_base"
 				done
 			fi
-		done
 
-		if [[ -d "$archive_data_tmp" ]]; then
-			ck_archive_pack "$archive_data_tmp" "$archive_main_ck" 'Default'
-			rm -rf "$archive_data_tmp"
-		fi
+			if [[ -d "$archive_data_tmp" ]]; then
+				ck_archive_pack "$archive_data_tmp" "$__archive_main_ck" 'Default'
+				rm -rf "$archive_data_tmp"
+			fi
+		done
 
 		;;
 	restore)
@@ -516,26 +498,42 @@ function ck_plugin_master_rewrite() {
 	local file="$1"; shift
 	local file_src="${1:-$file}"; shift || true
 
-	local plugin_base="${plugin/%.es[pml]}"
-	local plugin_esm="${plugin/%.esp/.esm}"
-	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
-	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pml]}"
-
 	local file_base="${file/%.es[pml]}"
 	local file_esm="${file/%.es[pml]/.esm}"
 	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
 	local file_ck="${file_sanitized:-${file_esm:-$file}}"
 	local file_ck_base="${file_ck/%.es[pml]}"
 
-	local max_tries=256
-
 	set -e
 	set -o pipefail
 
+	# Ensure all plugins using esp masters (including their masters) are temporarily
+	# altered to use esm masters instead.
+	OIFS="$IFS"
+	IFS="
+"
+	local -a masters=( $(plugin-master-reloc -qr --include-self "$bdir/$job/Data/$file_src") )
+	IFS="$OIFS"
+
+	local -a sub_args=()
+	for __file in "${masters[@]}"; do
+		local __file_base="${__file/%.es[pml]}"
+		local __file_esm="${__file/%.es[pml]/.esm}"
+		local __file_sanitized="${__file_esm//[^A-Za-z0-9_.-]/_}"
+		local __file_ck="${__file_sanitized:-${__file_esm:-$__file}}"
+		local __file_ck_base="${__file_ck/%.es[pml]}"
+
+		if [[ "$__file_base" != "$__file_ck_base" ]]; then
+			case "$method" in
+			esp-to-esm) sub_args+=( "\"$__file_base:$__file_ck_base\"" ) ;;
+			esm-to-esp) sub_args+=( "\"$__file_ck_base:$__file_base\"" ) ;;
+			esac
+		fi
+	done
+
 	case "$method" in
 	esp-to-esm)
-		while ! plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm --sub "$file_base:$file_ck_base" "$bdir/$job/Data/$file_src"; do
+		while ! eval plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm "${sub_args[@]/#/--sub }" "\"$bdir/$job/Data/$file_src\""; do
 			perm_debug "$bdir/$job/Data/$file_src"
 			sleep $((1 + (RANDOM % 4)))
 		done
@@ -544,7 +542,7 @@ function ck_plugin_master_rewrite() {
 
 		;;
 	esm-to-esp)
-		while ! plugin-master-reloc -vfr --esm-to-esp --sub "$file_ck_base:$file_base" "$bdir/$job/Data/$file_src"; do
+		while ! eval plugin-master-reloc -vfr --esm-to-esp "${sub_args[@]/#/--sub }" "\"$bdir/$job/Data/$file_src\""; do
 			perm_debug "$bdir/$job/Data/$file_src"
 			sleep $((1 + (RANDOM % 4)))
 		done
@@ -564,18 +562,6 @@ function ck_output_dir_rename() {
 	local dir="$1"; shift
 	local plugin="$1"; shift
 	local file="$1"; shift
-
-	local plugin_base="${plugin/%.es[pml]}"
-	local plugin_esm="${plugin/%.esp/.esm}"
-	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
-	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
-	local plugin_ck_base="${plugin_ck/%.es[pml]}"
-
-	local file_base="${file/%.es[pml]}"
-	local file_esm="${file/%.esp/.esm}"
-	local file_sanitized="${file_esm//[^A-Za-z0-9_.-]/_}"
-	local file_ck="${file_sanitized:-${file_esm:-$file}}"
-	local file_ck_base="${file_ck/%.es[pml]}"
 
 	set -e
 	set -o pipefail
@@ -643,7 +629,7 @@ function ck_exec_wrap() {
 	set -o pipefail
 
 	# Sanitize archive filename and embedded filenames within archive
-	ck_archive_rewrite "$bdir" "$job" "sanitize" "$plugin" "$file"
+	ck_archive_rewrite "$bdir" "$cdir" "$job" "sanitize" "$plugin" "$file"
 
 	# Sanitize masters to be compatible with ck args (no spaces) and archives
 	ck_plugin_master_rewrite "$bdir" "$job" "esp-to-esm" "$plugin" "$file"
@@ -740,7 +726,7 @@ function ck_exec_wrap() {
 	ck_plugin_master_rewrite "$bdir" "$job" "esm-to-esp" "$plugin" "$file"
 
 	# Restore original archive and remove temporaries
-	ck_archive_rewrite "$bdir" "$job" "restore" "$plugin" "$file"
+	ck_archive_rewrite "$bdir" "$cdir" "$job" "restore" "$plugin" "$file"
 
 	case "$mode" in
 	scol)
