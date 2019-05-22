@@ -32,6 +32,20 @@ revised after testing:
 
 ---
 
+updated (may 2019):
+
+fo4prof new <profile>
+ckgen -j12 <profile> scol <plugin-file>
+ckgen -j12 <profile> precombine clean all <plugin-file>
+<merge precombine plugin data into plugin or use newly produced plugin (but this won't work if it doesn't contain STAT/SCOL refrs)>
+ckgen -j12 <profile> previs clean all <plugin-file>
+<merge previs plugin data into plugin or use newly produced plugin>
+ckgen -j12 <profile> csg <plugin-file>
+ckgen -j12 <profile> cdx <plugin-file>
+package data
+
+---
+
 Probably controls auto master copying from Merging -> Data:
 
 sGeneralMasterMismatchWarning:GeneralWarnings
@@ -209,7 +223,7 @@ That ref doesn't exist anywhere.
 
 -generatestaticcollections:<esm> x64 by default for every plugin passed in? Note: MUST be an esm file.
 
-Need to determine how this affects other plugins being generated for, i.e. if plugin1 has master2 and master2 has SCOLs will plugin1 need the actual NIFs from master2 when generating precombined data? It would be great if precombined data doesn't need any generated SCOL NIFs but I doubt that's the case. The main concern with all of this is with archive files and embedded .esp plugin names which are hard to deal with when it comes to the temporary esp->esm game.
+Need to determine how this affects other plugins being generated for, i.e. if plugin1 has master2 and master2 has SCOLs will plugin1 need the actual NIFs from master2 when generating precombined data? It would be great if precombined data doesn't need any generated SCOL NIFs but I doubt that's the case. The main concern with all of this is with archive files and embedded .esp plugin names which are hard to deal with when it comes to the temporary esp->esm game. Update: It also appears that plugins themselves have embedded NIF paths for SCOLs (e.g. BTInteriors_Project.esp:  SCOL\BTInteriors_Project.esp\CM0013386E.NIF), so if a plugin is changed from .esp to .esm, it's still going to refer to NIFs which are only relevant to the esp version. This will definitely cause problems as -generatestaticcollections is passed the esm'ified plugin and the produced NIFs are using esm'ified paths. On top of that when -generateprecombined is used, it's also passed an esm'ified plugin and archive with relocated directories - which means the plugin is now referring to SCOL meshes that don't even exist.
 
 This sucks but a foolproof way of handling the renamed plugins + SCOL problem is to repackage the archives with renamed dirs and if extra paranoid regenerated SCOLs.
 
@@ -583,11 +597,11 @@ General difficulties:
 1. xEdit doesn't allow editing Fallout4.esm. This would be useful for the intermediate step between merging XCRI data and generating new previs data.
 2. CK has max handle limitations for forms/objects. This speaks for itself and means one cannot just open their entire load order in CK and generate precombines once. Really sucks and makes things a lot harder to setup for previs generation.
 3. CK has max handle limitations for loose files. This means 100k+ loose precombine files will result in CK crashing and not generating complete previs data. The only way around this is to temporarily rearchive the new precombined NIFs with the vanilla archives and shim that into place before previs generation.
-4. CK -generateprecombined and -generateprevisdata require atleast one REFR in each cell to be generating. Simply providing a plugin of overidden cell data won't do anything without actual statics to generate for.
+4. CK -generateprecombined and -generateprevisdata require atleast one REFR in each cell to generate anything. Simply providing a plugin of overidden cell data won't do anything without actual statics to generate for.
 5. CK likes to remove all esps from the master list of a plugin and provide broken formids for anything those esps were master for. The only fix is to manually readd them in xEdit but one cannot use "add masters" as this will increment all the broken references. Instead the main header must be edited. This sucks.
 6. CK likes to trash the master id of XPRI formids if more than 2 masters are used.
-7. xEdit doesn't allow more than 254 plugins so even if the plugins in the list aren't actually going to be loaded there's still an issue with generating more plugins than the maximum load order can handle.
-8. xEdit has a bug where if during the process of copying an element if masters are somehow added around the same time then it can produce broken worldspace references that have the wrong load order formid. Still investigating.
+7. xEdit doesn't allow more than 254 plugins so even if the plugins in the list aren't actually going to be loaded there's still an issue with generating more plugins than the maximum load order can handle. This can be worked around with the -PseudoESL option.
+8. xEdit has a bug where if during the process of copying an element if masters are somehow added around the same time then it can produce broken worldspace references that have the wrong load order formid. Still investigating. Update: I think this is finally fixed now.
 9. DLCs like DLCCoast and DLCNukaWorld don't like previs generation with a synthetic plugin that only overrides refs in cells that contain statics - the overrides must target all cells. I suspect this has something to do with world borders but it still seems like a bug. Might be an issue with overlapped refs vs ALL synthetic refs instead OR could be an issue with using DLCUltraHighResolution.esm as a master. Also seen with having regrowth in the middle of the master order. Very strange bug.
 
 ---
