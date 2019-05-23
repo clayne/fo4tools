@@ -227,6 +227,13 @@ Need to determine how this affects other plugins being generated for, i.e. if pl
 
 This sucks but a foolproof way of handling the renamed plugins + SCOL problem is to repackage the archives with renamed dirs and if extra paranoid regenerated SCOLs.
 
+Update to this: it appears that the path actually in the plugin doesn't really matter as far as CK is concerned, it will always default back to SCOL/<plugin>/CM<formid>.NIF and it is not editable within CK's SCOL dialog box. There's also hardcoded strings within CK itself which lend further evidence to this:
+
+collection '%s' (%08X). Recreate and Fragment functionality for this collection will no longer function properly.
+SCOL\%s\CM%08X.NIF
+
+However this does not necessarily indicate that this is what is used as the search path - it may actually only be able generation of SCOL NIFs, but it certainly seems this location is fixed regardless of what the plugin itself says. Still, it would probably be safer to forcibly substitute this plugin path before using the esm'ified plugin with CK.
+
 ---
 
 Only promote overridden masters if they have stat or scol refrs
