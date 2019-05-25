@@ -1,0 +1,115 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+SELF="$(basename $0)"
+OUT_DIR="/tmp/$SELF"
+mkdir -p "$OUT_DIR"
+
+ARCHIVE2="/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/Tools/Archive2/Archive2.exe"
+
+function plugin_grep() {
+	perl -e '
+	my $strings=($ARGV[1] ? 1 : 0);
+	my $match=qr/\W$ARGV[0](?:\W|_)/i;
+	foreach (<STDIN>) {
+		if ($strings) {
+			my @a=split(/:/, $_, 2);
+			next unless scalar @a == 2;
+			next unless $a[1] =~ /$match/;
+			print "$a[0]: $a[1]";
+		} else {
+			next unless /$match/i;
+			print;
+		}
+	}' -- "$@"
+}
+
+function ck_archive_unpack() {
+	"$ARCHIVE2" "$(cygpath -aw "$1")" -e="$(cygpath -aw "$2")" -q
+}
+
+function plugin_string_dump() {
+	local plugin="$1"
+	local plugin_base="${plugin/%.es[pml]}"
+	local plugin_esm="${plugin/%.es[pml]/.esm}"
+	local plugin_sanitized="${plugin_esm//[^A-Za-z0-9_.-]/_}"
+	local plugin_ck="${plugin_sanitized:-${plugin_esm:-$plugin}}"
+	local plugin_ck_base="${plugin_ck/%.es[pml]}"
+
+	echo "Processing $plugin" 1>&2
+	mkdir -p "$OUT_DIR/$plugin"
+
+	strings -f "$plugin" \
+		| tee "$OUT_DIR/$plugin/plugin.strings.all" \
+		| plugin_grep "$plugin" 1 \
+		> "$OUT_DIR/$plugin/plugin.strings.match" \
+		|| true
+
+	strings -f "$plugin" \
+		| plugin_grep "$plugin_base" 1 \
+		> "$OUT_DIR/$plugin/plugin.strings.base.match" \
+		|| true
+
+	find -type f -iname "$plugin_base - *.ba2" 2>/dev/null | while read ba2; do
+		local ba2_suffix="${ba2/* - }"
+		local ba2_suffix="${ba2_suffix/.ba2}"
+		local ba2_suffix="${ba2_suffix/.BA2}"
+		if [[ "$ba2_suffix" =~ [Tt]extures* ]]; then
+			continue
+		fi
+
+		echo "Unpacking $ba2" 1>&2
+		TEMP="$(mktemp -d)"
+		ck_archive_unpack "$ba2" "$TEMP" \
+		&& (
+			cd "$TEMP"
+			find * -type f -print0 \
+				| xargs -r0 strings -f \
+				| plugin_grep "$plugin" 1 \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.match" \
+				|| true
+#				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.all" \
+
+			find * -type f -print0 \
+				| xargs -r0 strings -f \
+				| plugin_grep "$plugin_base" 1 \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.base.match" \
+				|| true
+#				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.all" \
+
+			find * -type f -ls \
+				| sed -e 's#\\ # #g' \
+				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.all" \
+				| plugin_grep "$plugin" \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.match" \
+				|| true
+
+			find * -type f -ls \
+				| sed -e 's#\\ # #g' \
+				| plugin_grep "$plugin_base" \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.base.match" \
+				|| true
+
+		)
+
+		strings "$ba2" \
+			| plugin_grep "$plugin" \
+			> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.compressed.match" \
+			|| true
+
+		strings "$ba2" \
+			| plugin_grep "$plugin_base" \
+			> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.compressed.base.match" \
+			|| true
+
+		if [[ -n "$TEMP" && "$TEMP" != "/" ]]; then
+			rm -rf "$TEMP"
+		fi
+	done
+}
+
+for plugin in "$@"; do
+	plugin_string_dump "$plugin"
+done
