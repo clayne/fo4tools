@@ -1,0 +1,139 @@
+#!/usr/bin/perl
+
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use Carp qw(confess);
+use Data::Dumper;
+use Pod::Usage;
+use File::Find::Rule;
+use File::Slurp qw(read_file);
+use File::Basename qw(basename dirname);
+
+use warnings FATAL => qw(all);
+use strict;
+
+local $SIG{__DIE__} = \&confess;
+local $Data::Dumper::Sortkeys = 1;
+
+our $VERSION = '$Id$';
+
+my $verbose = 0;
+my $orient_by_plugin = 0;
+
+use constant {
+	DUMP_DIR => "/tmp/plugin_string_dump",
+};
+
+sub plugin_parse {
+	my ($glob, $plugin_strings, $plugin_base, $archive_strings) = @_;
+
+	my $tab = {};
+	my $rule = File::Find::Rule->file->name(ref $glob ? @$glob : $glob)->nonempty->start(DUMP_DIR);
+	while ((local $_ = $rule->match)) {
+		my $plugin_file = basename(dirname($_));
+		my $plugin_file_base = ($plugin_file =~ s/\.es[pml]$//r);
+		my $match_re = $plugin_base
+			     ? qr|^(.+)[\\/]($plugin_file_base)(?!\.es[pml])(.*)|i
+			     : qr|^(.+)[\\/]([^\\/]+\.es[mpl])(?:[\\/](.+))?|i;
+
+		my @in = map s/^\s+//r, read_file($_, chomp => 1) or next;
+		foreach (@in) {
+			my ($strings_file, $strings_content, $strings_ext, $file);
+			if ($plugin_strings || $archive_strings) {
+				($strings_file, $strings_content) = /^([^:]+):\s+(.+)/;
+				if ($archive_strings) {
+					my (@strings_ext) = split('\.', $strings_file || '');
+					if (scalar @strings_ext > 1) {
+						$strings_ext = lc $strings_ext[-1];
+						$strings_ext =~ s/[^a-zA-Z]$//g;
+						next if ($strings_ext eq 'log');
+					}
+				}
+				$file = $strings_content || next;
+			} else {
+				my @p = split('\s+', $_, 11);
+				$file = $p[10] || next;
+			}
+
+			# Remove unwanted string fragments.
+			$file =~ s|^BASE ||g;
+
+			# Convert backs-lashes to forward-slashes.
+			$file =~ s|\\|/|g;
+
+			my ($dir_base, $match, $rest) = ($file =~ $match_re) or next;
+			$dir_base =~ s/^.([a-zA-Z]:)/$1/;
+
+			my $rest_ext;
+			my @rest_ext = split('\.', $rest || '');
+			if (scalar @rest_ext > 1) {
+				$rest_ext = lc $rest_ext[-1];
+				$rest_ext =~ s/[^a-zA-Z]$//g;
+				$rest_ext = 'bgem' if (index($rest_ext, 'bgem', 0) == 0);
+				$rest_ext = 'bgsm' if (index($rest_ext, 'bgsm', 0) == 0);
+				$rest_ext = 'dds' if (index($rest_ext, 'dds', 0) == 0);
+			}
+
+			my @k;
+			my ($plugin_base_str) = join('/', lc $dir_base, $plugin_base ? '<plugin_base>' : '<plugin>', $rest_ext ? "*.$rest_ext" : ());
+			if ($archive_strings) {
+				@k = ($plugin_base_str, $strings_ext ? "*.$strings_ext" : $strings_file, $plugin_file);
+				@k = reverse @k if ($orient_by_plugin);
+			} else {
+				@k = ($plugin_base_str, '*', $plugin_file);
+				@k = reverse @k if ($orient_by_plugin);
+			}
+			$tab->{$k[0]}{$k[1]}{$k[2]}++;
+		}
+	}
+
+	return $tab;
+}
+
+sub main {
+	my $ret;
+	my $help = 0;
+
+	local @ARGV = @_;
+	GetOptions(
+                'h|help' => \$help,
+		'verbose|v+' => \$verbose,
+		'orient-by-plugin+' => \$orient_by_plugin,
+        ) && (!$help && ($ret = 1));
+
+        $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	foreach (
+		[ 'archive string content (matching plugin name)', 'archive.*.strings.match', 1, 0, 1 ],
+		[ 'archive string content (matching plugin basename)', 'archive.*.strings.base.match', 1, 1, 1 ],
+		[ 'archive file list', 'archive.*.ls.all', 0, 0 ],
+		[ 'archive file list (matching plugin basename)', 'archive.*.ls.base.match', 0, 1 ],
+		[ 'plugin string content (matching plugin name)', 'plugin.strings.all', 1, 0 ],
+		[ 'plugin string content (matching plugin basename)', 'plugin.strings.base.match', 1, 1 ],
+	) {
+#		print STDERR Dumper $_;
+		my $type = shift @$_;
+		my $tab = plugin_parse(@$_);
+
+		printf STDOUT ("By %s:\n\n", $type);
+		foreach my $base_str (sort keys %$tab) {
+			printf STDOUT ("%s\n", $base_str);
+			foreach my $match (sort keys %{$tab->{$base_str}}) {
+				my $ref = $tab->{$base_str}{$match};
+				my $print_match = ($match ne '*');
+
+				printf STDOUT ("\t%s\n", $match) if ($print_match);
+				foreach my $in_ext (sort keys %$ref) {
+					printf STDOUT ("\t%s%s (%d)\n", $print_match ? "\t" : '', $in_ext, $ref->{$in_ext});
+				}
+			}
+		}
+		printf STDOUT ("--\n\n");
+	}
+
+	return 1;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__
+
