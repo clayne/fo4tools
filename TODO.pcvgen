@@ -234,6 +234,127 @@ SCOL\%s\CM%08X.NIF
 
 However this does not necessarily indicate that this is what is used as the search path - it may actually only be able generation of SCOL NIFs, but it certainly seems this location is fixed regardless of what the plugin itself says. Still, it would probably be safer to forcibly substitute this plugin path before using the esm'ified plugin with CK.
 
+Additional data shows even vanilla esm's to have bogus SCOL filepaths:
+
+clayne@a4-sfx:/tmp/plugin_string_dump $ find * -type f -name 'plugin.strings.all' -print0 | xargs -r0 cat | awk '{ if (match($2, "^(.+)[/\\\\]([^/\\\\]+\\.es[mpl])", a)) { utab[tolower(a[1])"/<plugin>"][a[2]]++ } }END{ for (p in utab) { printf("%s", p); for (pl in utab[p]) printf(" %s", pl); printf("\n"); } }' | sort -k1,1 | grep ^scol
+scol/<plugin> Gravato_DLC01SCOL.esp DLCNukaWorld.esm scornett-DLC01.esp cat_wildlands.esp SimSettlements.esp DLCCoast.esm RedWaveReloaded.esp BTInteriors_Project.esp DLCworkshop03.esm MaxwellsWorl.esp Gravato_DLC01.esp rwisnewski_DLC01.esp InsideJobs.esp BasementLiving.esp DLCRobot.esm Fallout4.esm
+
+Namely: Gravato_DLC01SCOL.esp scornett-DLC01.esp Gravato_DLC01.esp rwisnewski_DLC01.esp
+
+clayne@a4-sfx:/tmp/plugin_string_dump $ find * -type f -name 'plugin.strings.all' -print0 | xargs -r0 cat | egrep -c '(Gravato_DLC01SCOL\.esp|scornett-DLC01\.esp|Gravato_DLC01\.esp|rwisnewski_DLC01\.esp)'
+114
+
+Clearly these were 'active file' plugins that were merged back into vanilla masters but none of the paths were updated.
+
+---
+
+Embedded paths:
+
+Paths that involve the plugin-name:
+
+In archives:
+
+clayne@a4-sfx:/tmp/plugin_string_dump $ find * -type f -name '*.ls.all' -print0 | xargs -r0 cat | awk '{ if (match($11, "^(.+)[/\\\\]([^/\\\\]+\\.es[mpl])", a)) { utab[tolower(a[1])"/<plugin>"][a[2]]++ } }END{ for (p in utab) { printf("%-64s", p); for (pl in utab[p]) printf(" %s", pl); printf("\n"); } }' | sort -k1,1
+meshes/actors/character/facegendata/facegeom/<plugin>            RecruitableSettlersFH.esp DLCworkshop02.esm DLCNukaWorld.esm CrowdedCommonwealth.esp WelcometoGoodneighbor.esp SOTS.esp cat_wildlands.esp WRVR.esp atlanticofficesf23.esp DLCCoast.esm RecruitableSettlers.esp DLCworkshop03.esm LeeEnfieldNo4MkI.esp Greeb.esp MaxwellsWorl.esp HandmadeAntiMaterielRifle.esp Orphans.esp DLCRobot.esm Fallout4.esm
+meshes/precombined/<plugin>                                      DLCNukaWorld.esm SOTS.esp DLCCoast.esm DLCworkshop03.esm DLCworkshop01.esm InsideJobs.esp DLCRobot.esm
+meshes/scol/<plugin>                                             DLCNukaWorld.esm cat_wildlands.esp DLCCoast.esm BTInteriors_Project.esp DLCworkshop03.esm InsideJobs.esp DLCRobot.esm Fallout4.esm
+sound/voice/<plugin>                                             RecruitableSettlersFH.esp DLCNukaWorld.esm WelcometoGoodneighbor.esp SOTS.esp cat_wildlands.esp WRVR.esp DLCCoast.esm 3DNPC_FO4.esp RecruitableSettlers.esp USSQuincy.esp DLCworkshop03.esm MaxwellsWorl.esp 3DNPC_FO4Settler.esp 3DNPC_FO4_DLC.esp AtomicRadio.esp SimSettlements.esm DLCRobot.esm Fallout4.esm
+textures/actors/character/facecustomization/<plugin>             CrowdedCommonwealth.esp Fallout4.esm
+textures/actors/facecustomization/<plugin>                       Greeb.esp
+vis/<plugin>                                                     DLCNukaWorld.esm DWUK_LexingtonInteriors.esp DLCCoast.esm DLCworkshop03.esm DLCworkshop01.esm InsideJobs.esp DLCRobot.esm Fallout4.esm
+
+In plugin data:
+
+clayne@a4-sfx:/tmp/plugin_string_dump $ find * -type f -name 'plugin.strings.all' -print0 | xargs -r0 cat | awk '{ if (match($2, "^(.+)[/\\\\]([^/\\\\]+\\.es[mpl])", a)) { utab[tolower(a[1])"/<plugin>"][a[2]]++ } }END{ for (p in utab) { printf("%-64s", p); for (pl in utab[p]) printf(" %s", pl); printf("\n"); } }' | sort -k1,1
+data\sound\fx\mus\radio/<plugin>                                 JetfuelRadio.esp
+scol/<plugin>                                                    Gravato_DLC01SCOL.esp DLCNukaWorld.esm scornett-DLC01.esp cat_wildlands.esp SimSettlements.esp DLCCoast.esm RedWaveReloaded.esp BTInteriors_Project.esp DLCworkshop03.esm MaxwellsWorl.esp Gravato_DLC01.esp rwisnewski_DLC01.esp InsideJobs.esp BasementLiving.esp DLCRobot.esm Fallout4.esm
+textures\actors\character\facecustomization/<plugin>             Fallout4.esm
+
+
+Paths that involve the plugin-base (.esp, .esm, .esl removed):
+
+In archives:
+
+clayne@a4-sfx:/tmp/plugin_string_dump.base $ for i in *; do find "$i" -type f -name '*.ls.match' -print0 | xargs -r0 cat | awk -v plugin="${i/.es[pml]}" '{ if (match($11, "^(.+)[/\\\\]"plugin"[^.]", a)) { utab[tolower(a[1])"/<plugin>"][plugin]++ } }END{ for (p in utab) { printf("%-64s", p); for (pl in utab[p]) printf(" %s", pl); printf("\n"); } }'; done | sort -k1,1
+interface/<plugin>                                               SimSettlements
+materials/<plugin>                                               PIRAD
+materials/props/<plugin>                                         InsideJobs
+materials/setdressing/<plugin>                                   InsideJobs
+materials/weapons/<plugin>                                       SigSauer127
+meshes/<plugin>                                                  PIRAD
+meshes/fadingsignal/<plugin>                                     BasementLiving
+meshes/props/<plugin>                                            InsideJobs
+meshes/setdressing/<plugin>                                      InsideJobs
+meshes/weapons/<plugin>                                          SigSauer127
+music/sots/<plugin>                                              SOTS
+scripts/<plugin>                                                 BasementLiving
+scripts/<plugin>                                                 DWUK_LexingtonInteriors
+scripts/<plugin>                                                 InsideJobs
+scripts/<plugin>                                                 RemoteExplosives
+scripts/<plugin>                                                 SettlementMenuManager
+scripts/<plugin>                                                 SimSettlements
+scripts/<plugin>                                                 SurvivalOptions
+scripts/source/user/<plugin>                                     BasementLiving
+sound/fx/<plugin>                                                SOTS
+sound/fx/mus/radio/<plugin>                                      WRVR
+sound/fx/sots/<plugin>                                           SOTS
+sound/voice/atomicradio.esp/<plugin>                             AtomicRadio
+strings/<plugin>                                                 DLCCoast
+strings/<plugin>                                                 DLCNukaWorld
+strings/<plugin>                                                 DLCRobot
+strings/<plugin>                                                 DLCworkshop01
+strings/<plugin>                                                 DLCworkshop02
+strings/<plugin>                                                 DLCworkshop03
+strings/<plugin>                                                 Fallout4
+strings/<plugin>                                                 MoreAGOMBz
+
+In plugin data:
+
+clayne@a4-sfx:/tmp/plugin_string_dump.base $ for i in *; do find "$i" -type f -name 'plugin.strings.match' -print0 | xargs -r0 cat | awk -v plugin="${i/.es[pml]}" '{ if (match($2, "^(.+)[/\\\\]"plugin"[^.]", a)) { utab[tolower(a[1])"/<plugin>"][plugin]++ } }END{ for (p in utab) { printf("%-64s", p); for (pl in utab[p]) printf(" %s", pl); printf("\n"); } }'; done | sort -k1,1
+actors\character\_1stperson\animations/<plugin>                  Mosin
+actors\character\_1stperson\animations/<plugin>                  Tomacuzi9
+actors\character\animations\weapon/<plugin>                      Mosin
+actors\character\animations\weapon\mosinanims/<plugin>           Mosin
+actors\powerarmor\_1stperson\animations/<plugin>                 Mosin
+c:\projects/<plugin>                                             Fallout4
+data\music\sots/<plugin>                                         SOTS
+data\sound\fx/<plugin>                                           LureEnemies
+data\sound\fx/<plugin>                                           SOTS
+data\sound\fx\mus\radio/<plugin>                                 3DNPC_FO4
+data\sound\fx\mus\radio/<plugin>                                 AtomicRadio
+data\sound\fx\mus\radio/<plugin>                                 WRVR
+data\sound\fx\sots/<plugin>                                      SOTS
+data\sound\fx\wpn/<plugin>                                       Mosin
+data\sound\fx\wpn/<plugin>                                       PlungerGun
+data\sound\fx\wpn/<plugin>                                       RU556
+data\sound\fx\wpn/<plugin>                                       Tomacuzi9
+data\sound\fx\wpn\handmade/<plugin>                              PipeShotgun
+data\sound\fx\wpn\ru556\foley/<plugin>                           RU556
+fadingsignal/<plugin>                                            BasementLiving
+props/<plugin>                                                   InsideJobs
+setdressing/<plugin>                                             InsideJobs
+weapons/<plugin>                                                 Binoculars
+weapons/<plugin>                                                 GatlingRifle
+weapons/<plugin>                                                 PipeShotgun
+weapons/<plugin>                                                 PlungerGun
+weapons/<plugin>                                                 RU556
+weapons/<plugin>                                                 SigSauer127
+weapons/<plugin>                                                 Tomacuzi9
+weapons\blackmetal/<plugin>                                      AK74M
+weapons\blackmetal\ak74m/<plugin>                                AK74M
+weapons\mosin/<plugin>                                           Mosin
+weapons\mosin\attachments/<plugin>                               Mosin
+weapons\pipeshotgun\barrels/<plugin>                             PipeShotgun
+weapons\pipeshotgun\magazines/<plugin>                           PipeShotgun
+weapons\ru556/<plugin>                                           RU556
+weapons\ru556\attachments/<plugin>                               RU556
+weapons\ru556\ru556/<plugin>                                     RU556
+weapons\tomacuzi9/<plugin>                                       Tomacuzi9
+weapons\tomacuzi9\skins/<plugin>                                 Tomacuzi9
+
+
+It's important that when rewriting archives everything is accounted for, particularly localization data (strings files) when converting plugins with spaces to plugins with underscores. If the strings files aren't visible by the renamed plugin base, CK won't load the plugin at all.
+
 ---
 
 Only promote overridden masters if they have stat or scol refrs
