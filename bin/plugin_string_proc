@@ -17,25 +17,30 @@ local $Data::Dumper::Sortkeys = 1;
 our $VERSION = '$Id$';
 
 my $verbose = 0;
-my $orient_by_plugin = 0;
+my $invert = 0;
+my $archive_base_only = 0;
+my $archive_base_use = 1;
 
 use constant {
 	DUMP_DIR => "/tmp/plugin_string_dump",
 };
 
 sub plugin_parse {
-	my ($glob, $plugin_strings, $plugin_base, $archive_strings) = @_;
+	my ($glob, $plugin_strings, $archive_strings, $plugin_base, $formid) = @_;
 
 	my $tab = {};
 	my $rule = File::Find::Rule->file->name(ref $glob ? @$glob : $glob)->nonempty->start(DUMP_DIR);
-	while ((local $_ = $rule->match)) {
-		my $plugin_file = basename(dirname($_));
+	while ((my $input_file = $rule->match)) {
+		my $archive_base = lc((basename($input_file) =~ /archive\.([^.]+)\..+/)[0] || '');
+		my $plugin_file = basename(dirname($input_file));
 		my $plugin_file_base = ($plugin_file =~ s/\.es[pml]$//r);
-		my $match_re = $plugin_base
-			     ? qr|^(.+)[\\/]($plugin_file_base)(?!\.es[pml])(.*)|i
-			     : qr|^(.+)[\\/]([^\\/]+\.es[mpl])(?:[\\/](.+))?|i;
+		my $match_re = $formid
+			? qr%^(.+)[\\/]([a-fA-F0-9]{8})(.*)%i
+			: $plugin_base
+			     ? qr%^(.+)[\\/]($plugin_file_base(?!\.es[pml]))(.*)%i
+			     : qr%^(.+)[\\/]([^\\/]+\.es[mpl])(?:[\\/](.+))?%i;
 
-		my @in = map s/^\s+//r, read_file($_, chomp => 1) or next;
+		my @in = map lc s|\\|/|gr, map s/^\s+//r, read_file($input_file, chomp => 1) or next;
 		foreach (@in) {
 			my ($strings_file, $strings_content, $strings_ext, $file);
 			if ($plugin_strings || $archive_strings) {
@@ -43,7 +48,7 @@ sub plugin_parse {
 				if ($archive_strings) {
 					my (@strings_ext) = split('\.', $strings_file || '');
 					if (scalar @strings_ext > 1) {
-						$strings_ext = lc $strings_ext[-1];
+						$strings_ext = $strings_ext[-1];
 						$strings_ext =~ s/[^a-zA-Z]$//g;
 						next if ($strings_ext eq 'log');
 					}
@@ -58,36 +63,111 @@ sub plugin_parse {
 			$file =~ s|^BASE ||g;
 
 			# Convert backs-lashes to forward-slashes.
-			$file =~ s|\\|/|g;
+#			$file =~ s|\\|/|g;
 
 			my ($dir_base, $match, $rest) = ($file =~ $match_re) or next;
 			$dir_base =~ s/^.([a-zA-Z]:)/$1/;
 
+			# Convert matching strings to symbolic tags.
+			foreach ($dir_base, $match, $rest) {
+				s%$plugin_file%<plugin>%gi;
+				s%$plugin_file_base%<plugin_base>%gi;
+				s%[^/]+\.es[mpl]%<other_plugin>%gi;
+				s%^[a-fA-F0-9]{8}%<formid>%gi;
+			}
+
 			my $rest_ext;
 			my @rest_ext = split('\.', $rest || '');
 			if (scalar @rest_ext > 1) {
-				$rest_ext = lc $rest_ext[-1];
+				$rest_ext = $rest_ext[-1];
 				$rest_ext =~ s/[^a-zA-Z]$//g;
+
+				# These extensions tend to have trailing crap from strings
 				$rest_ext = 'bgem' if (index($rest_ext, 'bgem', 0) == 0);
 				$rest_ext = 'bgsm' if (index($rest_ext, 'bgsm', 0) == 0);
 				$rest_ext = 'dds' if (index($rest_ext, 'dds', 0) == 0);
 			}
 
-			my @k;
-			my ($plugin_base_str) = join('/', lc $dir_base, $plugin_base ? '<plugin_base>' : '<plugin>', $rest_ext ? "*.$rest_ext" : ());
-			if ($archive_strings) {
-				@k = ($plugin_base_str, $strings_ext ? "*.$strings_ext" : $strings_file, $plugin_file);
-				@k = reverse @k if ($orient_by_plugin);
-			} else {
-				@k = ($plugin_base_str, '*', $plugin_file);
-				@k = reverse @k if ($orient_by_plugin);
-			}
-			$tab->{$k[0]}{$k[1]}{$k[2]}++;
+			my ($plugin_base_str) = sprintf("%s/%s%s",
+				$dir_base,
+				$match,
+				$rest_ext ? ($match eq '<formid>' ? ".$rest_ext" : "/*.$rest_ext") : ""
+			);
+
+			# Remove path elements between symbolic tags
+			$plugin_base_str =~ s%<([^<>]+)>/.+/<([^<>]+)>%<$1>/*/<$2>%;
+
+			my @k = $archive_strings ? (
+				$plugin_base_str,
+				$strings_ext ? "*.$strings_ext" : $strings_file,
+				$archive_base_use ? $archive_base : undef,
+				!$archive_base_only ? $plugin_file : undef,
+			) : (
+				$plugin_base_str,
+				undef,
+				$archive_base_use ? $archive_base : undef,
+				!$archive_base_only ? $plugin_file : undef,
+			);
+
+			@k = reverse @k if ($invert);
+			$tab->{$k[0] || ''}{$k[1] || ''}{$k[2] || ''}{$k[3] || ''}++;
 		}
 	}
 
 	return $tab;
 }
+
+sub hash_dump {
+	my ($hash) = @_;
+
+	# {
+	# 	'meshes/scol/<plugin>/*.hkt' => {
+	# 		'*.nif' => {
+	# 			'main' => {
+	# 				'DLCRobot.esm' => 150,
+	# 				'DLCworkshop03.esm' => 218
+	# 			}
+	# 		}
+	# 	},
+	# 	'facegeom/<plugin>/*.ssf' => {
+	# 		'*.nif' => {
+	# 			'main' => {
+	# 				'DLCCoast.esm' => 1710,
+	# 				'DLCNukaWorld.esm' => 2610,
+	# 				'DLCRobot.esm' => 143,
+	# 				'DLCworkshop03.esm' => 51
+	# 			},
+	# 			'meshes' => {
+	# 				'Fallout4.esm' => 11717
+	# 			}
+	# 		}
+	# 	}
+	# }
+
+	my @res;
+	my @stack = [ 0, [ sort keys %$hash ], $hash, \@res ];
+
+	while ((my $this = shift @stack)) {
+		my ($depth, $keys, $ref) = @$this;
+
+		local $_ = shift @$keys // next;
+		unshift @stack, [ $depth, $keys, $ref ];
+
+		# Ignore placeholder hash keys
+		my $print = ($_ ne '') ? 1 : 0;
+
+		if (!ref $ref->{$_}) {
+			printf STDOUT ("%s%s (%d)\n", "\t" x $depth, $_, $ref->{$_}) if ($print);
+			next;
+		}
+
+		printf STDOUT ("%s%s\n", "\t" x $depth, $_) if ($print);
+		unshift @stack, [ $depth + $print, [ sort keys %{$ref->{$_}} ], $ref->{$_} ];
+	}
+
+	return \@res;
+}
+
 
 sub main {
 	my $ret;
@@ -97,36 +177,33 @@ sub main {
 	GetOptions(
                 'h|help' => \$help,
 		'verbose|v+' => \$verbose,
-		'orient-by-plugin+' => \$orient_by_plugin,
+		'archive-base!' => \$archive_base_use,
+		'archive-base-only+' => \$archive_base_only,
+		'invert' => \$invert,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
+	my ($glob, $plugin_strings, $archive_strings, $plugin_base, $formid) = @_;
 	foreach (
-		[ 'archive string content (matching plugin name)', 'archive.*.strings.match', 1, 0, 1 ],
+		[ 'archive string content (matching plugin name)', 'archive.*.strings.match', 1, 1, 0 ],
 		[ 'archive string content (matching plugin basename)', 'archive.*.strings.base.match', 1, 1, 1 ],
-		[ 'archive file list', 'archive.*.ls.all', 0, 0 ],
-		[ 'archive file list (matching plugin basename)', 'archive.*.ls.base.match', 0, 1 ],
-		[ 'plugin string content (matching plugin name)', 'plugin.strings.all', 1, 0 ],
-		[ 'plugin string content (matching plugin basename)', 'plugin.strings.base.match', 1, 1 ],
+		[ 'archive string content (matching formid pattern)', 'archive.*.strings.formid.match', 1, 1, 0, 1 ],
+		[ 'archive file list', 'archive.*.ls.all', 0, 0, 0 ],
+		[ 'archive file list (matching plugin basename)', 'archive.*.ls.base.match', 0, 0, 1 ],
+		[ 'archive file list (matching formid pattern)', 'archive.*.ls.formid.match', 0, 0, 0, 1 ],
+		[ 'plugin string content (matching plugin name)', 'plugin.strings.match', 1, 0, 0 ],
+		[ 'plugin string content (matching plugin basename)', 'plugin.strings.base.match', 1, 0, 1 ],
+		[ 'plugin string content (matching formid pattern)', 'plugin.strings.formid.match', 1, 0, 0, 1 ],
 	) {
-#		print STDERR Dumper $_;
-		my $type = shift @$_;
-		my $tab = plugin_parse(@$_);
+		my ($type, $glob, @args) = @$_;
+		next if ($archive_base_only && $glob !~ /^archive/);
 
 		printf STDOUT ("By %s:\n\n", $type);
-		foreach my $base_str (sort keys %$tab) {
-			printf STDOUT ("%s\n", $base_str);
-			foreach my $match (sort keys %{$tab->{$base_str}}) {
-				my $ref = $tab->{$base_str}{$match};
-				my $print_match = ($match ne '*');
 
-				printf STDOUT ("\t%s\n", $match) if ($print_match);
-				foreach my $in_ext (sort keys %$ref) {
-					printf STDOUT ("\t%s%s (%d)\n", $print_match ? "\t" : '', $in_ext, $ref->{$in_ext});
-				}
-			}
-		}
+		my $tab = plugin_parse($glob, @args);
+		hash_dump($tab);
+
 		printf STDOUT ("--\n\n");
 	}
 

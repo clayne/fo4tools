@@ -9,10 +9,15 @@ mkdir -p "$OUT_DIR"
 
 ARCHIVE2="/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/Tools/Archive2/Archive2.exe"
 
+function temp_cleanup() {
+	local temp="$1"
+	[[ -n "$temp" && -d "$temp" && "$temp" != "/" ]] && rm -rf "$temp" || true
+}
+
 function plugin_grep() {
 	perl -e '
 	my $strings=($ARGV[1] ? 1 : 0);
-	my $match=qr/\W$ARGV[0](?:\W|_)/i;
+	my $match=qr%\W$ARGV[0](?:\W|_)%i;
 	foreach (<STDIN>) {
 		if ($strings) {
 			my @a=split(/:/, $_, 2);
@@ -41,6 +46,7 @@ function plugin_string_dump() {
 	echo "Processing $plugin" 1>&2
 	mkdir -p "$OUT_DIR/$plugin"
 
+	# plugin strings
 	strings -f "$plugin" \
 		| tee "$OUT_DIR/$plugin/plugin.strings.all" \
 		| plugin_grep "$plugin" 1 \
@@ -52,6 +58,11 @@ function plugin_string_dump() {
 		> "$OUT_DIR/$plugin/plugin.strings.base.match" \
 		|| true
 
+	strings -f "$plugin" \
+		| plugin_grep '[a-fA-F0-9]{8}(?:_[a-zA-Z0-9]+)?\.[a-zA-Z]{2,5}' 1 \
+		> "$OUT_DIR/$plugin/plugin.strings.formid.match" \
+		|| true
+
 	find -type f -iname "$plugin_base - *.ba2" 2>/dev/null | while read ba2; do
 		local ba2_suffix="${ba2/* - }"
 		local ba2_suffix="${ba2_suffix/.ba2}"
@@ -60,25 +71,35 @@ function plugin_string_dump() {
 			continue
 		fi
 
-		echo "Unpacking $ba2" 1>&2
 		TEMP="$(mktemp -d)"
+		trap "temp_cleanup '$TEMP'" ERR EXIT
+
+		echo "Unpacking $ba2" 1>&2
 		ck_archive_unpack "$ba2" "$TEMP" \
 		&& (
 			cd "$TEMP"
-			find * -type f -print0 \
+
+			# archive strings
+			find * -type f '!' '(' -name '*.fuz' -o -name '*.wav' ')' -print0 \
 				| xargs -r0 strings -f \
 				| plugin_grep "$plugin" 1 \
 				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.match" \
 				|| true
 #				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.all" \
 
-			find * -type f -print0 \
+			find * -type f '!' '(' -name '*.fuz' -o -name '*.wav' ')' -print0 \
 				| xargs -r0 strings -f \
 				| plugin_grep "$plugin_base" 1 \
 				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.base.match" \
 				|| true
-#				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.all" \
 
+			find * -type f '!' '(' -name '*.fuz' -o -name '*.wav' ')' -print0 \
+				| xargs -r0 strings -f \
+				| plugin_grep '[a-fA-F0-9]{8}(?:_[a-zA-Z0-9]+)?\.[a-zA-Z]{2,5}' 1 \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.formid.match" \
+				|| true
+
+			# archive files
 			find * -type f -ls \
 				| sed -e 's#\\ # #g' \
 				| tee "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.all" \
@@ -92,8 +113,15 @@ function plugin_string_dump() {
 				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.base.match" \
 				|| true
 
+			find * -type f -ls \
+				| sed -e 's#\\ # #g' \
+				| plugin_grep '[a-fA-F0-9]{8}(?:_[a-zA-Z0-9]+)?\.[a-zA-Z]{2,5}' \
+				> "$OUT_DIR/$plugin/archive.${ba2_suffix}.ls.formid.match" \
+				|| true
+
 		)
 
+		# compressed archive strings
 		strings "$ba2" \
 			| plugin_grep "$plugin" \
 			> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.compressed.match" \
@@ -104,9 +132,12 @@ function plugin_string_dump() {
 			> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.compressed.base.match" \
 			|| true
 
-		if [[ -n "$TEMP" && "$TEMP" != "/" ]]; then
-			rm -rf "$TEMP"
-		fi
+		strings "$ba2" \
+			| plugin_grep '[a-fA-F0-9]{8}(?:_[a-zA-Z0-9]+)?\.[a-zA-Z]{2,5}' \
+			> "$OUT_DIR/$plugin/archive.${ba2_suffix}.strings.compressed.formid.match" \
+			|| true
+
+		temp_cleanup "$TEMP"
 	done
 }
 
