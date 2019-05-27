@@ -146,6 +146,7 @@ sub hash_dump {
 
 	my @res;
 	my @stack = [ 0, [ sort keys %$hash ], $hash, \@res ];
+	my $init = 0;
 
 	while ((my $this = shift @stack)) {
 		my ($depth, $keys, $ref) = @$this;
@@ -161,7 +162,7 @@ sub hash_dump {
 			next;
 		}
 
-		printf STDOUT ("%s%s\n", "\t" x $depth, $_) if ($print);
+		printf STDOUT ("%s%s%s\n", ($init++ && !$depth) ? "\n" : "", "\t" x $depth, $_) if ($print);
 		unshift @stack, [ $depth + $print, [ sort keys %{$ref->{$_}} ], $ref->{$_} ];
 	}
 
