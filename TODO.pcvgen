@@ -718,6 +718,34 @@ clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/c
     552 loc ref type
       2 particles
 
+  10358      0020B215 DeadShrub03                                      switch node		Not sure, but base STAT (DeadShrub03 [STAT:00133855]) has "non occluder" flag, however other ref BASE types do not
+      2      001C3D59 SmokeDiamondCityExterior01                       particles		Not sure, but ref has Persistent and Is Full LOD flags, base STAT (SmokeDiamondCityExterior01 [STAT:002214CE]) refers to Sky\SmokeDiamondCityExteriorSky.nif model, so likely NIF involves particle effects (smoke)
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4/ckgen.build (blg_bff) $ find */EditorWarnings* -print0 | xargs -r0 egrep -i 'failed to collect ref' | awk -F'\t' '{ if (!rtab[$8]++) { rtab[$8]=$6","$7; } utab[$8]++ }END{ for (u in utab) { c=split(rtab[u], a, ","); printf("%8d %12s %-48s %s\n", utab[u], a[2], a[1], u) } }' | sort -k1,1nr
+    8515     0303CFB1 ClutterGenDeskD                                  enable parented
+    3143     03012860 BeachFence_Broken02                              has recipe
+    2292     03056770 WorkshopEditorCP03                               linked to/from
+    2245     03005E8C MarshScumM01                                     gamebryo property anims
+    1183     030254C3 FederalistBookcase_Broken01Debris01              gamebryo anims
+     824     03022C65 Buoy_Bell_Green_01                               attach ref
+     614     0305664F OilLampOn                                        dynamic havok
+     140     0300483D DLC03_Barn_ShackSmMedTall_001                    billboard node
+      80     03048B12 CeilingLamp01                                    external emittance
+      64     030047F1 BeachFence_BrokenEnd_Left01                      no geometry
+       2     0302A6A2 HitDoorLgBroken01                                loc ref type
+
+    8515     0303CFB1 ClutterGenDeskD                                  enable parented		Has XESP element (enable parented)
+    3143     03012860 BeachFence_Broken02                              has recipe		Has FLST record referencing base STAT by formid list (BeachFence_Broken02 "Fence" [STAT:000B2415])
+    2292     03056770 WorkshopEditorCP03                               linked to/from		Has XLKR element (linked to/from)
+    2245     03005E8C MarshScumM01                                     gamebryo property anims	Not sure, but base STAT model (MarshScumM01 [STAT:00112875]) has "animated" bit (0) set in BSXFlags in NIF
+    1183     030254C3 FederalistBookcase_Broken01Debris01              gamebryo anims		Not sure, but base SCOL model (FederalistBookcase_Broken01Debris01 "Bookcase" [SCOL:0019B568]) has "havok" bit (1) set in BSXFlags in NIF
+     824     03022C65 Buoy_Bell_Green_01                               attach ref		Has XATR element (attach ref), also part of XRFG (reference group)
+     614     0305664F OilLampOn                                        dynamic havok		Has XRGD element (ragdoll data)
+     140     0300483D DLC03_Barn_ShackSmMedTall_001                    billboard node		Child STAT object (BarnWingWallFrontR01 [STAT:03002657])) has MNAM (Distant LOD) data, ref also has XPRI data
+      80     03048B12 CeilingLamp01                                    external emittance	Has XEMI element (emittance)
+      64     030047F1 BeachFence_BrokenEnd_Left01                      no geometry		Doesn't have any geometry in NIF
+       2     0302A6A2 HitDoorLgBroken01                                loc ref type		Has XLRT element (location ref type), notably linked to NoObjectCombinationReftype [LCRT:001E819A]
+
 ---
 
 General difficulties:
@@ -746,3 +774,34 @@ test frm close with xedit scripting to get around empty dialog box on script fin
 test with plugin timestamps matching plugin or master load order
 change plugin-master-reloc to preserve timestamps even on modification
 
+---
+
+Problem?
+
+STAT objects referenced by SCOL objects but the SCOL is defined in a master. Regenerating SCOL for the overriding plugin won't do anything because it is not defining any SCOLs itself and as such when that SCOL is generated it won't have any knowledge of a child plugin that's overriding one of it's statics. Not sure if this causes hard breakage or just makes it so later STAT overrides have no effect if they're involved with a SCOL from a master and said SCOL is precombined or (if not precombined), already using generated SCOL data.
+
+---
+
+Consider preserving scripts directory during ckgen rsync.
+
+---
+
+clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4 (modded_regrowth) $ find ckgen.out/*.es[pml]/Data -mindepth 1 -type d -name '*.es[pml]' | perl -ne 'chomp; my @a=split("/", $_); print "$_\n" if ($a[1] ne $a[$#a])'
+ckgen.out/3DNPC_FO4_DLC.esp/Data/Meshes/PreCombined.clean.ints.01/3DNPC_FO4.esp
+ckgen.out/BTInteriors_Project.esp/Data/Meshes/PreCombined.clean.ints.01/DLCCoast.esm
+ckgen.out/BTInteriors_Project.esp/Data/Meshes/PreCombined.clean.ints.01/DLCNukaWorld.esm
+ckgen.out/BTInteriors_Project.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
+ckgen.out/BTInteriors_Project.esp/Data/Meshes/PreCombined.clean.other.01/DLCNukaWorld.esm
+ckgen.out/DiamondNewVendors.esp/Data/Meshes/SCOL.clean.ALL.01/DLCNukaWorld.esm
+ckgen.out/InsideJobs.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
+ckgen.out/RecruitableSettlers.esp/Data/Meshes/PreCombined.clean.ints.01/DLCNukaWorld.esm
+ckgen.out/RecruitableSettlers.esp/Data/Meshes/PreCombined.clean.other.01/DLCNukaWorld.esm
+ckgen.out/RecruitableSettlersFH.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
+ckgen.out/RedWaveReloaded.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
+ckgen.out/Some Assembly Required (Legendary Patch).esp/Data/Meshes/PreCombined.clean.ints.01/DLCNukaWorld.esm
+ckgen.out/Some Assembly Required (Legendary Patch).esp/Data/Meshes/PreCombined.clean.ints.01/DLCRobot.esm
+ckgen.out/Some Assembly Required (Legendary Patch).esp/Data/Meshes/PreCombined.clean.other.01/DLCNukaWorld.esm
+ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.ints.01/DLCCoast.esm
+ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.ints.01/DLCNukaWorld.esm
+ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
+ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.other.01/DLCNukaWorld.esm
