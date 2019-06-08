@@ -4,6 +4,9 @@ set -e
 
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
 
+# Force Windows (rather than Cygwin) compatible symlinks
+export CYGWIN=winsymlinks:nativestrict
+
 list() {
 	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
 
@@ -22,7 +25,7 @@ delete() {
 
 	for p in "$@"; do
 		rm -rf "$PROGDIR/Fallout 4.$p" "$USERDIR/Fallout4.$p" "$DATADIR/Fallout4.$p"
-		((VERSION_CONTROL)) && net share "Merging.$p" /delete || true
+		((VERSION_CONTROL)) && net share "Merging.$p" /delete >/dev/null || true
 	done
 }
 
@@ -48,10 +51,9 @@ use() {
 		exit -1
 	fi
 
-	# Force Windows (rather than Cygwin) compatible symlinks
-	CYGWIN=winsymlinks:nativestrict ln -sfT "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
-	CYGWIN=winsymlinks:nativestrict ln -sfT "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
-	CYGWIN=winsymlinks:nativestrict ln -sfT "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
+	ln -sfT "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
+	ln -sfT "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
+	ln -sfT "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
 }
 
 # XXX: Handle multiple args
@@ -159,21 +161,17 @@ MODE="$1"; shift || true
 
 if [[ -z "$MODE" ]]; then
 	MODE="list"
-#	echo "No mode specified" 1>&2
-#	exit -1
 fi
 
 case "$MODE" in
 list)
 	list "$@" ;;
-switch|use|flip)
-	use "$@" ;;
 create|new|clone)
 	new "$@" ;;
 rm|delete|clean)
 	delete "$@" ;;
+switch|use|flip)
+	use "$@" ;;
 *)
-	echo "Invalid mode: $MODE" 1>&2
-	exit -1
-	;;
+	use "$MODE" ;;
 esac
