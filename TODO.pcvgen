@@ -780,11 +780,15 @@ Problem?
 
 STAT objects referenced by SCOL objects but the SCOL is defined in a master. Regenerating SCOL for the overriding plugin won't do anything because it is not defining any SCOLs itself and as such when that SCOL is generated it won't have any knowledge of a child plugin that's overriding one of it's statics. Not sure if this causes hard breakage or just makes it so later STAT overrides have no effect if they're involved with a SCOL from a master and said SCOL is precombined or (if not precombined), already using generated SCOL data.
 
----
-
-Consider preserving scripts directory during ckgen rsync.
+It might be prudent to look for any plugin that creates/overrides STAT or SCOL data and consider this as a plugin that should be included for pcvgen purposes (i.e. not just plugins with CELL data).
 
 ---
+
+Consider preserving scripts directory during ckgen rsync (note this causes issues if a script is actually opened / being edited during that time due to how windows handles file IO on open files).
+
+---
+
+Example of embedded plugin names in precombined/previs data:
 
 clayne@a4-sfx:/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4 (modded_regrowth) $ find ckgen.out/*.es[pml]/Data -mindepth 1 -type d -name '*.es[pml]' | perl -ne 'chomp; my @a=split("/", $_); print "$_\n" if ($a[1] ne $a[$#a])'
 ckgen.out/3DNPC_FO4_DLC.esp/Data/Meshes/PreCombined.clean.ints.01/3DNPC_FO4.esp
@@ -805,3 +809,43 @@ ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.ints.01/D
 ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.ints.01/DLCNukaWorld.esm
 ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.other.01/DLCCoast.esm
 ckgen.out/Unofficial Fallout 4 Patch.esp/Data/Meshes/PreCombined.clean.other.01/DLCNukaWorld.esm
+
+---
+
+BGS engineer (Ziegfelding) notes on precombined/previs:
+
+"It sounds like this actually is behaving as expected. Not sure what information is out there on this so here's an overview.
+
+There are two systems new to F4 to help with performance: precombination and previs.
+
+Precombination works by analyzing ref 3D for a cell and merging like geometries across similarly located refs into a different set of NIFs. For example if you had 3 refs to RockWithLichen and 1 ref to RockWithNoLichen tucked together in the corner of a cell, precombination would merge all 4 rock geometries together and all 3 lichen geometries together into a single NIF named for the combination key for that corner of the cell (eg: "Meshes\PreCombined\0000DBBB_01B8656E_OC.NIF"). The cell would store the form IDs for those combined refs so it would know not to load 3D for those NIFs in game since their 3D will already be baked into the combined NIFs.
+
+Previs is precomputed visibility data and it is calculated using the precombined NIFs. It builds a visibility graph of which non-mobile uncombined refs and combined geometries are visible from different points which we then use in game for preculling the scene. This data is stored for a 3x3 collection of cells in the UVD files (eg: "Vis\Fallout4.esm\0000DBB9.UVD").
+
+When we detect a change to a ref used in any of that process during a plugin load we disable both systems for that area. We don't know what you did to the rock but most changes would invalidate the precreated NIFs so we err on the side of caution and just turn it off. Because the one rock you edited has been merged with the other rocks near it we can't just remove that one rock. (We *may* be able to just remove that key though. I'll have to look into it to verify we never combine a single ref across multiple keys. That might be a possible optimization.) But anything we do which turns off (or even partially disables) precombination needs to turn off previs.
+
+Newly added refs are fine. They are not prebaked into any NIFs and aren't in the combined lists so they aren't affected. They also are treated by the previs system as dynamic objects so while their visibility isn't calculated as optimally as it could be they, it at least doesn't have to shutdown the system. But not every change can be adding something new.
+
+The solution to this which we used in DLC is to just recreate new precombine and previs data for your changed cells. We use an automated process for this but the PreCombine Geometry items in the world menu should work as well to generate new local combined NIFs and stamp new combination data onto the cells. The Visibility menu contains options for recreating UVD files including your changes. Make sure you generate vis data for neighboring cells too since it contains info about what can be seen across cell boundaries as well. The difficulty I imagine modders will run into is with mods in overlapping areas since only one set of precombined/previs data can exist. For DLC we just make sure we stay away from areas other DLC touched but that won't work for modders. I think we'll probably end up with a lot more combination mods (mods A, B, and C all make changes to Sanctuary so once those are locked down someone merges them together into ABC_Optimized with all the combined precalc data for all 3 mods).
+
+The situation in your bridge example, if I'm understanding correctly, is just changing the NIF out from under an existing ref. The ref doesn't know it was changed so it doesn't disable precombined data so the bridge shows up unchanged. Poking that ref (or any other combined ref in the cell) to get it into the plugin disables precombined data and when we try to load the actual 3D for the ref it finds the new model and loads correctly. Which is what I'd expect. For changes to base objects like that, there is a "Clear Affected Cells For PreCombine Data" option in the object window right-click menu which should wipe the combined data off any cell containing that base object.
+
+Ideally we would do all this combination at run time so devs and modders didn't have to worry about it, but that just wasn't feasible due to memory restrictions and load time/streaming concerns.
+
+Hope this helps.
+
+PS: we had two INI settings we used in development to disable these systems completely (bUseCombinedObjects=0 and bPreCulledObjectsEnabled=0). I just gave them a quick try here and they seem to still work but as you'd expect they can cause performance issues. But when modding it can be a way to test if the issue is something wrong with the plugin or just fighting against precalc data."
+
+---
+
+BGS engineer (Ziegfelding) notes on precombined timestamps in relation to a now fixed bug:
+
+Some updates on this stuff since I last posted reflecting implemented changes which will be in an upcoming patch:
+
+-Someone indicated that navmesh changes might be breaking precalc data. There's no way those changes should matter. But they did.
+
+-Looked into the sprinting issue and removed its dependency on precalc data. So you will be able to sprint in a new/edited cell without having to generate for it.
+
+-Found an issue where mod generated precalc data was lost on editor reload/resave. The issue here was that newly created editor forms were losing their time stamp so the same code which wipes master file generated data when loading plugin changes was causing plugins to wipe their own data. Our fix makes sure this data is no longer wiped, makes sure timestamp is set on edit, and on editor load sets any missing timestamps to the current date.
+
+If anyone who works on external tools wants to resolve this on their end before an editor patch with this fix is released, it should be easy to see where this data is in each form in the file. Duplicate a cell, generate precombine/previs for it, and save it to a plugin. That plugin has working precalc data in game. Make a copy of it then reload the plugin and resave it in the editor. That plugin has precalc data disabled. Do a comparison between the working and broken copy and you'll see that across all forms, data at the same place in each form has changed from some number (lets say XX) to 00. If you look in the file for a PCMB chunk for the duplicate cell you'll see that it too had/still has that XX value stored. Forcing those changed 00s back to XXs should re-enable the precalc data. More generically, finding the PCMB chunk for a CELL, getting its particular XX value, then propagating that value to all the cell's child forms in the file will reenable precalc data for the cell.
