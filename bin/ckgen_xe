@@ -3,36 +3,94 @@
 set -e
 set -o pipefail
 
-PLUGIN_FILE="plugins.test.resort"
+# XXX: assumes default location
+FALLOUT_DIR="/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4"
+SCRIPT_FILE="Fallout4 - Precombined split.pas"
+PLUGIN_FILE="plugins.pcvgen"
 CKGEN_DATA="ckgen.data"
+XEDIT_PCV_ARGS=()
+XEDIT_DEFAULT_ARGS=(
+	-iknowwhatimdoing \
+	-allowmasterfilesedit \
+	-autoload \
+	-autoexit \
+)
+AREA=( main ints other )
 PIDS=()
 
-trap "kill \${PIDS[*]} &>/dev/null || true" SIGINT
+trap "kill \${PIDS[*]} &>/dev/null || true" ERR EXIT
 
-cd "/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4" || exit -1
+function datadir_locate()
+{
+	local area=$1
 
-AREA=()
-XEDIT_ARGS=()
-for i in "$@"; do
-	if [[ "$i" =~ ^--pcv ]]; then
-		XEDIT_ARGS+=( "$i" )
-	else
-		AREA+=( "$i" )
+	for dir in "$CKGEN_DATA/$area" "$CKGEN_DATA" "Data" "$PWD"; do
+		if [[ -d "$dir" ]]; then
+			echo "$dir"
+			return 0
+		fi
+	done
+
+	echo "Unable to resolve datadir" 1>&2
+	return 1
+}
+
+function pluginfile_locate()
+{
+	local area=$1
+
+	for dir in "$CKGEN_DATA/$area" "$CKGEN_DATA" "Data" "$PWD"; do
+		if [[ -f "$dir/$PLUGIN_FILE" ]]; then
+			echo "$dir/$PLUGIN_FILE"
+			return 0
+		fi
+	done
+
+	echo "Unable to resolve pluginfile" 1>&2
+	return 1
+}
+
+cd "$FALLOUT_DIR" || exit -1
+
+while getopts -- "ni-:" opt; do
+	# Facade to handle long-opts properly
+	if [[  "$opt" == "-" ]]; then
+		case "$OPTARG" in
+		*=*) opt="${OPTARG%=*}"; OPTARG="${OPTARG#*=}" ;; # --long-opt=<value>
+		*)   opt="${OPTARG}";
+			case "${!OPTIND}" in
+			-*) OPTARG="" ;;			  # --long-opt
+			*)  OPTARG="${!OPTIND}"; let ++OPTIND; ;; # --long-opt <value>
+			esac ;;
+		esac
 	fi
-done
 
-if [[ "${#AREA[@]}" -eq 0 ]]; then
-	AREA=( main ints other )
+        case $opt in
+	pcv*) XEDIT_PCV_ARGS+=( "--${opt}${OPTARG:+=$OPTARG}" ) ;;
+	n) NOOP=1 ;;
+	i) SCRIPT_FILE="" ;;
+        ?) exit -1 ;;
+        esac
+done; shift $((OPTIND - 1))
+
+if (($#)); then
+	AREA=( "$@" )
 fi
 
-for i in "${AREA[@]}"; do
-	./fo4edit.exe \
-		-iknowwhatimdoing \
-		-allowmasterfilesedit \
-		-P:"$(cygpath -aw "$CKGEN_DATA/$i/$PLUGIN_FILE")" \
-		-D:"$(cygpath -aw "$CKGEN_DATA/$i")" \
-		--pcv-area="${i/.test}" \
-		"${XEDIT_ARGS[@]}" &
+for area in "${AREA[@]}"; do
+	area="${area/.test}" || exit -1
+	datadir=$(datadir_locate "$area") || exit -1
+	pluginfile=$(pluginfile_locate "$area") || exit -1
+
+	# XXX: assumes fo4edit in cwd
+	# XXX: requires user interaction on both plugin load and script finish,
+	# XXX: xEdit author says they are aware and intend to fix that.
+	${NOOP:+echo} ./fo4edit.exe \
+		"${XEDIT_DEFAULT_ARGS[@]}" \
+		-P:"$(cygpath -aw "$pluginfile")" \
+		-D:"$(cygpath -aw "$datadir")" \
+		${SCRIPT_FILE:+"-script:$SCRIPT_FILE"} \
+		"${XEDIT_PCV_ARGS[@]}" \
+		--pcv-area="$area" &
 	PIDS+=( $! )
-echo "${PIDS[@]}"
 done; wait
