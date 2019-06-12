@@ -849,3 +849,17 @@ Some updates on this stuff since I last posted reflecting implemented changes wh
 -Found an issue where mod generated precalc data was lost on editor reload/resave. The issue here was that newly created editor forms were losing their time stamp so the same code which wipes master file generated data when loading plugin changes was causing plugins to wipe their own data. Our fix makes sure this data is no longer wiped, makes sure timestamp is set on edit, and on editor load sets any missing timestamps to the current date.
 
 If anyone who works on external tools wants to resolve this on their end before an editor patch with this fix is released, it should be easy to see where this data is in each form in the file. Duplicate a cell, generate precombine/previs for it, and save it to a plugin. That plugin has working precalc data in game. Make a copy of it then reload the plugin and resave it in the editor. That plugin has precalc data disabled. Do a comparison between the working and broken copy and you'll see that across all forms, data at the same place in each form has changed from some number (lets say XX) to 00. If you look in the file for a PCMB chunk for the duplicate cell you'll see that it too had/still has that XX value stored. Forcing those changed 00s back to XXs should re-enable the precalc data. More generically, finding the PCMB chunk for a CELL, getting its particular XX value, then propagating that value to all the cell's child forms in the file will reenable precalc data for the cell.
+
+---
+
+Reference notes on hard links, symlinks, junctions, and shortcuts within the Windows domain:
+
+https://stackoverflow.com/questions/9042542/what-is-the-difference-between-ntfs-junction-points-and-symbolic-links
+
+Perms:
+
+The easiest way to grant SeCreateSymbolicLinkPrivilege is to start gpedit.msc, go down to
+"Windows Settings"->"Security Settings"->"Local Policies"->"User Rights
+Assignment", then find "Create symbolic links" and add whatever users and groups you want[1].
+
+or (cygwin): editrights -u $USER -a SeCreateSymbolicLinkPrivilege

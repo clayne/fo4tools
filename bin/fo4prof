@@ -5,7 +5,35 @@ set -e
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
 
 # Force Windows (rather than Cygwin) compatible symlinks
+# Note: Requires admin rights or group policy to create symbolic links
+# Note: this is also used by rsync when syncing symbolic links.
 export CYGWIN=winsymlinks:nativestrict
+
+link() {
+	local target="$1"
+	local link="$2"
+
+	if [[ ! -e "$target" ]]; then
+		echo "'$target' does not exist" 1>&2
+		exit -1
+	elif [[ -e "$link" && ! -L "$link" ]]; then
+		# Do not touch anything if $link is actually a directory
+		# or otherwise. It should either not exist or be a symlink.
+		echo "'$link' is not a symlink" 1>&2
+		exit -1
+	fi
+
+	if ((JUNCTIONS)); then
+		# mklink cannot overwrite links
+		rm -f "$link"
+
+		# mklink [[/d] | [/h] | [/j]] <Link> <Target>
+		cmd /c mklink /j "$(cygpath -aw "$link")" "$(cygpath -aw "$target")" >/dev/null
+	else
+		# ln [OPTION]... [-T] TARGET LINK_NAME   (1st form)
+		ln -sfT "$target" "$link"
+	fi
+}
 
 list() {
 	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
@@ -51,9 +79,9 @@ use() {
 		exit -1
 	fi
 
-	ln -sfT "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
-	ln -sfT "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
-	ln -sfT "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
+	link "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
+	link "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
+	link "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
 }
 
 # XXX: Handle multiple args
