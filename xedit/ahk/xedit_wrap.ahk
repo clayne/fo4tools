@@ -12,7 +12,7 @@ IfWinExist, Module Selection ahk_class TfrmModuleSelect
 	WinGet, id, list, Module Selection ahk_class TfrmModuleSelect
 	Loop, %id% {
 		hwid := id%a_index%
-;		WinActivate, ahk_id %hwid%
+		WinActivate, ahk_id %hwid%
 		ControlSend,, {Enter}, ahk_id %hwid%
 	}
 }
