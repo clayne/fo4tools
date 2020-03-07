@@ -863,3 +863,7 @@ The easiest way to grant SeCreateSymbolicLinkPrivilege is to start gpedit.msc, g
 Assignment", then find "Create symbolic links" and add whatever users and groups you want[1].
 
 or (cygwin): editrights -u $USER -a SeCreateSymbolicLinkPrivilege
+
+---
+
+Create ITM SCOL records in generated plugins so said plugin can be used as a direct argument to create SCOL data?
