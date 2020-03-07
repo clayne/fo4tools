@@ -1,0 +1,247 @@
+#!/usr/bin/perl
+
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use Carp qw(confess);
+use File::Basename qw(basename dirname);
+use File::Copy qw(copy);
+use Digest::MD5 qw(md5_hex);
+use Data::Dumper;
+use Pod::Usage;
+
+use warnings FATAL => qw(all);
+use strict;
+
+local $SIG{__DIE__} = \&confess;
+local $Data::Dumper::Sortkeys = 1;
+
+our $VERSION = '$Id$';
+
+my $verbose = 0;
+
+# clayne@a4-sfx:/f/SteamLibrary/steamapps/common/Fallout 4.shared/ck_patched (shared) $ for i in $(ls | sort -V); do ((cd $i && md5sum {orig,patched}/"CreationKit.exe"); echo; diff -u <(hexdump -C "$i/orig/CreationKit.exe") <(hexdump -C "$i/patched/CreationKit.exe"); echo; diff -u <(objdump -d "$i/orig/CreationKit.exe") <(objdump -d "$i/patched/CreationKit.exe")) 2>&1 | awk -v v="$i" '{ printf("%16s | %s\n", v, $0) }'; echo; echo; done
+#        1.10.15.0 | fc3ceb06c3181303347d352d234000b0 *orig/CreationKit.exe
+#        1.10.15.0 | 3d258f581ba4b7f9517785471a6bbce1 *patched/CreationKit.exe
+#        1.10.15.0 |
+#        1.10.15.0 | --- /dev/fd/63       2020-03-07 12:06:33.000000000 -0800
+#        1.10.15.0 | +++ /dev/fd/62       2020-03-07 12:06:33.000000000 -0800
+#        1.10.15.0 | @@ -188541,7 +188541,7 @@
+#        1.10.15.0 |  00347100  21 04 c6 05 cf 90 21 04  01 e8 72 9a 2b 02 c6 05  |!.....!...r.+...|
+#        1.10.15.0 |  00347110  23 ae 25 04 01 eb 3e 48  8d 0d 9a 90 21 04 c6 05  |#.%...>H....!...|
+#        1.10.15.0 |  00347120  9b 90 21 04 01 e8 56 9a  2b 02 48 8d 0d 7f 8e 1e  |..!...V.+.H.....|
+#        1.10.15.0 | -00347130  04 c6 05 80 8e 1e 04 01  e8 43 9a 2b 02 b9 01 00  |.........C.+....|
+#        1.10.15.0 | +00347130  04 c6 05 80 8e 1e 04 01  e8 43 9a 2b 02 b9 00 00  |.........C.+....|
+#        1.10.15.0 |  00347140  00 00 e8 e9 cb d7 01 c6  05 2a 1b a5 06 01 c6 05  |.........*......|
+#        1.10.15.0 |  00347150  e3 ad 25 04 00 48 8d 0d  d4 ad 25 04 e8 1f 9a 2b  |..%..H....%....+|
+#        1.10.15.0 |  00347160  02 48 89 9c 24 c8 00 00  00 48 8d 05 d0 ea ce ff  |.H..$....H......|
+#        1.10.15.0 |
+#        1.10.15.0 | --- /dev/fd/63       2020-03-07 12:07:31.000000000 -0800
+#        1.10.15.0 | +++ /dev/fd/62       2020-03-07 12:07:31.000000000 -0800
+#        1.10.15.0 | @@ -1,5 +1,5 @@
+#        1.10.15.0 |
+#        1.10.15.0 | -1.10.15.0/orig/CreationKit.exe:     file format pei-x86-64
+#        1.10.15.0 | +1.10.15.0/patched/CreationKit.exe:     file format pei-x86-64
+#        1.10.15.0 |
+#        1.10.15.0 |
+#        1.10.15.0 |  Disassembly of section .text:
+#        1.10.15.0 | @@ -1461067,7 +1461067,7 @@
+#        1.10.15.0 |     140347d2a:       48 8d 0d 7f 8e 1e 04    lea    0x41e8e7f(%rip),%rcx        # 0x144530bb0
+#        1.10.15.0 |     140347d31:       c6 05 80 8e 1e 04 01    movb   $0x1,0x41e8e80(%rip)        # 0x144530bb8
+#        1.10.15.0 |     140347d38:       e8 43 9a 2b 02          callq  0x142601780
+#        1.10.15.0 | -   140347d3d:       b9 01 00 00 00          mov    $0x1,%ecx
+#        1.10.15.0 | +   140347d3d:       b9 00 00 00 00          mov    $0x0,%ecx
+#        1.10.15.0 |     140347d42:       e8 e9 cb d7 01          callq  0x1420c4930
+#        1.10.15.0 |     140347d47:       c6 05 2a 1b a5 06 01    movb   $0x1,0x6a51b2a(%rip)        # 0x146d99878
+#        1.10.15.0 |     140347d4e:       c6 05 e3 ad 25 04 00    movb   $0x0,0x425ade3(%rip)        # 0x1445a2b38
+#
+#       1.10.130.0 | 0574a5718ea8f7f09864d6d9416eaaac *orig/CreationKit.exe
+#       1.10.130.0 | 4517020fef2ce4946cfe0d739ccd7b93 *patched/CreationKit.exe
+#       1.10.130.0 |
+#       1.10.130.0 | --- /dev/fd/63       2020-03-07 12:09:28.000000000 -0800
+#       1.10.130.0 | +++ /dev/fd/62       2020-03-07 12:09:28.000000000 -0800
+#       1.10.130.0 | @@ -188541,7 +188541,7 @@
+#       1.10.130.0 |  00347100  20 04 c6 05 cf 30 20 04  01 e8 a2 b3 2b 02 c6 05  | ....0 .....+...|
+#       1.10.130.0 |  00347110  23 4e 24 04 01 eb 3e 48  8d 0d 9a 30 20 04 c6 05  |#N$...>H...0 ...|
+#       1.10.130.0 |  00347120  9b 30 20 04 01 e8 86 b3  2b 02 48 8d 0d 7f 2e 1d  |.0 .....+.H.....|
+#       1.10.130.0 | -00347130  04 c6 05 80 2e 1d 04 01  e8 73 b3 2b 02 b9 01 00  |.........s.+....|
+#       1.10.130.0 | +00347130  04 c6 05 80 2e 1d 04 01  e8 73 b3 2b 02 b9 00 00  |.........s.+....|
+#       1.10.130.0 |  00347140  00 00 e8 d9 e4 d7 01 c6  05 2a b7 a3 06 01 c6 05  |.........*......|
+#       1.10.130.0 |  00347150  e3 4d 24 04 00 48 8d 0d  d4 4d 24 04 e8 4f b3 2b  |.M$..H...M$..O.+|
+#       1.10.130.0 |  00347160  02 48 89 9c 24 c8 00 00  00 48 8d 05 7d 02 d3 ff  |.H..$....H..}...|
+#       1.10.130.0 |
+#       1.10.130.0 | --- /dev/fd/63       2020-03-07 12:10:27.000000000 -0800
+#       1.10.130.0 | +++ /dev/fd/62       2020-03-07 12:10:27.000000000 -0800
+#       1.10.130.0 | @@ -1,5 +1,5 @@
+#       1.10.130.0 |
+#       1.10.130.0 | -1.10.130.0/orig/CreationKit.exe:     file format pei-x86-64
+#       1.10.130.0 | +1.10.130.0/patched/CreationKit.exe:     file format pei-x86-64
+#       1.10.130.0 |
+#       1.10.130.0 |
+#       1.10.130.0 |  Disassembly of section .text:
+#       1.10.130.0 | @@ -1461067,7 +1461067,7 @@
+#       1.10.130.0 |     140347d2a:       48 8d 0d 7f 2e 1d 04    lea    0x41d2e7f(%rip),%rcx        # 0x14451abb0
+#       1.10.130.0 |     140347d31:       c6 05 80 2e 1d 04 01    movb   $0x1,0x41d2e80(%rip)        # 0x14451abb8
+#       1.10.130.0 |     140347d38:       e8 73 b3 2b 02          callq  0x1426030b0
+#       1.10.130.0 | -   140347d3d:       b9 01 00 00 00          mov    $0x1,%ecx
+#       1.10.130.0 | +   140347d3d:       b9 00 00 00 00          mov    $0x0,%ecx
+#       1.10.130.0 |     140347d42:       e8 d9 e4 d7 01          callq  0x1420c6220
+#       1.10.130.0 |     140347d47:       c6 05 2a b7 a3 06 01    movb   $0x1,0x6a3b72a(%rip)        # 0x146d83478
+#       1.10.130.0 |     140347d4e:       c6 05 e3 4d 24 04 00    movb   $0x0,0x4244de3(%rip)        # 0x14458cb38
+#
+#       1.10.162.0 | e46b959103e4962b379c10e7686476e6 *orig/CreationKit.exe
+#       1.10.162.0 | 184ec94a07df461ca8ba09e4a4a8e2f2 *patched/CreationKit.exe
+#       1.10.162.0 |
+#       1.10.162.0 | --- /dev/fd/63       2020-03-07 12:12:24.000000000 -0800
+#       1.10.162.0 | +++ /dev/fd/62       2020-03-07 12:12:24.000000000 -0800
+#       1.10.162.0 | @@ -188556,7 +188556,7 @@
+#       1.10.162.0 |  00347230  20 04 c6 05 9f 2f 20 04  01 e8 92 b3 2b 02 c6 05  | ..../ .....+...|
+#       1.10.162.0 |  00347240  f3 4c 24 04 01 eb 3e 48  8d 0d 6a 2f 20 04 c6 05  |.L$...>H..j/ ...|
+#       1.10.162.0 |  00347250  6b 2f 20 04 01 e8 76 b3  2b 02 48 8d 0d 4f 2d 1d  |k/ ...v.+.H..O-.|
+#       1.10.162.0 | -00347260  04 c6 05 50 2d 1d 04 01  e8 63 b3 2b 02 b9 01 00  |...P-....c.+....|
+#       1.10.162.0 | +00347260  04 c6 05 50 2d 1d 04 01  e8 63 b3 2b 02 b9 00 00  |...P-....c.+....|
+#       1.10.162.0 |  00347270  00 00 e8 c9 e4 d7 01 c6  05 4a b6 a3 06 01 c6 05  |.........J......|
+#       1.10.162.0 |  00347280  b3 4c 24 04 00 48 8d 0d  a4 4c 24 04 e8 3f b3 2b  |.L$..H...L$..?.+|
+#       1.10.162.0 |  00347290  02 48 89 9c 24 c8 00 00  00 48 8d 05 5c 01 d3 ff  |.H..$....H..\...|
+#       1.10.162.0 |
+#       1.10.162.0 | --- /dev/fd/63       2020-03-07 12:13:22.000000000 -0800
+#       1.10.162.0 | +++ /dev/fd/62       2020-03-07 12:13:22.000000000 -0800
+#       1.10.162.0 | @@ -1,5 +1,5 @@
+#       1.10.162.0 |
+#       1.10.162.0 | -1.10.162.0/orig/CreationKit.exe:     file format pei-x86-64
+#       1.10.162.0 | +1.10.162.0/patched/CreationKit.exe:     file format pei-x86-64
+#       1.10.162.0 |
+#       1.10.162.0 |
+#       1.10.162.0 |  Disassembly of section .text:
+#       1.10.162.0 | @@ -1461214,7 +1461214,7 @@
+#       1.10.162.0 |     140347e5a:       48 8d 0d 4f 2d 1d 04    lea    0x41d2d4f(%rip),%rcx        # 0x14451abb0
+#       1.10.162.0 |     140347e61:       c6 05 50 2d 1d 04 01    movb   $0x1,0x41d2d50(%rip)        # 0x14451abb8
+#       1.10.162.0 |     140347e68:       e8 63 b3 2b 02          callq  0x1426031d0
+#       1.10.162.0 | -   140347e6d:       b9 01 00 00 00          mov    $0x1,%ecx
+#       1.10.162.0 | +   140347e6d:       b9 00 00 00 00          mov    $0x0,%ecx
+#       1.10.162.0 |     140347e72:       e8 c9 e4 d7 01          callq  0x1420c6340
+#       1.10.162.0 |     140347e77:       c6 05 4a b6 a3 06 01    movb   $0x1,0x6a3b64a(%rip)        # 0x146d834c8
+#       1.10.162.0 |     140347e7e:
+
+my $patch_tab = {
+	'1.10.15.0' => {
+		 offset => 0x34713e,
+		sum_pre => 'fc3ceb06c3181303347d352d234000b0',
+		sum_pst => '3d258f581ba4b7f9517785471a6bbce1',
+		arg_pre => "\x01",
+		arg_pst => "\x00",
+	},
+	'1.10.130.0' => {
+		 offset => 0x34713e,
+		sum_pre => '0574a5718ea8f7f09864d6d9416eaaac',
+		sum_pst => '4517020fef2ce4946cfe0d739ccd7b93',
+		arg_pre => "\x01",
+		arg_pst => "\x00",
+	},
+	'1.10.162.0' => {
+		 offset => 0x34726e,
+		sum_pre => 'e46b959103e4962b379c10e7686476e6',
+		sum_pst => '184ec94a07df461ca8ba09e4a4a8e2f2',
+		arg_pre => "\x01",
+		arg_pst => "\x00",
+	},
+};
+my $patch_xtab;
+
+foreach my $version (keys %$patch_tab) {
+	foreach (qw(sum_pre sum_pst)) {
+		$patch_xtab->{$patch_tab->{$version}{$_}} = $patch_tab->{$version};
+	}
+}
+
+sub file_sum {
+	my $file = shift;
+	my $file_sz = (stat($file))[7] or die "stat: $file: $!";
+	my $buf;
+
+	open(my $fd, '<', $file) or die "open: $file: $!";
+	binmode($fd);
+	sysread($fd, $buf, $file_sz, 0) or die "sysread: $file: $!";
+	close($fd);
+
+	return md5_hex($buf);
+}
+
+sub file_patch {
+	my $file = shift;
+	my $data = shift;
+	my $offset = shift;
+	my $sum_pst = shift;
+	my $file_sz = (stat($file))[7] or die "stat: $file: $!";
+	my $buf;
+
+	my $file_temp = "$file.$$";
+
+	copy($file, $file_temp) or die "copy: $file -> $file_temp";
+
+	open(my $fd, '+<', $file_temp) or die "open: $file_temp: $!";
+	binmode($fd);
+	seek($fd, $offset, 0) or die "seek: $file_temp: $!";
+	syswrite($fd, $data, length($data)) or die "syswrite: $file_temp: $!";
+	close($fd);
+
+	my $file_sum = file_sum($file_temp);
+	print STDERR Dumper { sum_pst => $sum_pst, sum_patched => $file_sum } if ($verbose > 1);
+
+	if ($file_sum ne $sum_pst) {
+		print STDERR "$_: file_sum != sum_pst ($file_sum != $sum_pst)\n";
+		unlink($file_temp) or die "unlink: $file_temp: $!";
+		return 0;
+	}
+
+	rename($file_temp, $file) or die "rename: $file_temp -> $file: $!";
+
+	return 1;
+}
+
+sub main {
+	my $ret = 1;
+	my $help = 0;
+	my $noop = 0;
+	my $reverse;
+
+	local @ARGV = @_;
+	GetOptions(
+                'h|help' => \$help,
+		'v|verbose+' => \$verbose,
+		'r|reverse+' => \$reverse,
+		'n|dry-run+' => \$noop,
+        ) && (!$help && ($ret = 1));
+
+        $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	foreach (@ARGV) {
+		my $sum = file_sum($_);
+		print STDERR Dumper { $_ => $sum } if ($verbose > 1);
+
+		# already patched
+		my $ent = $patch_xtab->{$sum};
+		if (!$ent) {
+			print STDERR "$_: Unknown checksum: $sum\n";
+			next;
+		}
+
+		print STDERR Dumper { ent => $ent } if ($verbose > 1);
+
+		my ($sum_pre, $sum_pst) = map $ent->{$_}, ($reverse ? qw(sum_pst sum_pre) : qw(sum_pre sum_pst));
+		my ($offset, $data) = map $ent->{$_}, ($reverse ? qw(offset arg_pre) : qw(offset arg_pst));
+
+		if ($sum_pst eq $sum) {
+			print STDERR "$_: already patched\n" if ($verbose);
+		} elsif ($sum_pre eq $sum) {
+			print STDERR "$_: patching\n" if ($verbose);
+			file_patch($_, $data, $offset, $sum_pst) or $ret = 0;
+		} else {
+			die "Assertion failed";
+		}
+	}
+
+	return $ret;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__
