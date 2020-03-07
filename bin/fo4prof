@@ -36,9 +36,9 @@ link() {
 }
 
 list() {
-	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2 -d .)
+	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2- -d .)
 
-	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2 -d . | while read tmp; do
+	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2- -d . | while read tmp; do
 		[[ $tmp == "shared" || $tmp == "template" || $tmp == "extract" ]] && continue
 		[[ $tmp == $ACTIVE ]] && echo "$tmp*" || echo "$tmp"
 	done
