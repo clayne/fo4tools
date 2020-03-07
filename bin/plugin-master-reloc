@@ -126,11 +126,10 @@ sub main {
 	while (local $_ = shift @q) {
 		my $mproc = [];
 		my ($dirname, $basename, $path) = (dirname($_), basename($_), $_);
-
 		next unless (!$seen{$basename}++);
-		next unless (!$protect || !$protect_tab{$basename});
 
-		if ($copy_plugin_to_esm) {
+		my $is_protected = ($protect && $protect_tab{$basename});
+		if (!$is_protected && $copy_plugin_to_esm) {
 			my $esm = plugin_sub($basename, [ 'esp', 'esm' ], @sub);
 			if ($esm ne $basename) {
 				plugin_clone("$dirname/$basename", "$dirname/$esm", $overwrite);
@@ -140,7 +139,7 @@ sub main {
 				unshift @q, "$dirname/$esm";
 				next;
 			}
-		} elsif ($copy_plugin_to_esp) {
+		} elsif (!$is_protected && $copy_plugin_to_esp) {
 			my $esp = plugin_sub($basename, [ 'esm', 'esp' ], @sub);
 			if ($esp ne $basename) {
 				plugin_clone("$dirname/$basename", "$dirname/$esp", $overwrite);
@@ -203,9 +202,9 @@ sub main {
 		my @qt;
 		for (my $i = 0; $i < @$mproc; $i++) {
 			my ($offset, $master) = map $mproc->[$i]{$_}, qw(offset master);
-			next unless (!$protect || !$protect_tab{$master});
 
-			if ($esp_to_esm) {
+			my $is_protected = ($protect && $protect_tab{$basename});
+			if (!$is_protected && $esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
 				# extension and update the MAST entry to point to it.
 				# Additionally, for each esp master, add it to the list of
@@ -241,7 +240,7 @@ sub main {
 				close($fd);
 
 				push @qt, "$dirname/$esm";
-			} elsif ($esm_to_esp) {
+			} elsif (!$is_protected && $esm_to_esp) {
 				# For any file with esm masters which have a matching esp
 				# file, update the MAST entry to point to the esp and remove
 				# the esm. The matching esp check is very important so as not
