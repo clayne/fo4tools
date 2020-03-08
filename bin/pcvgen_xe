@@ -17,6 +17,10 @@ local $Data::Dumper::Sortkeys = 1;
 
 our $VERSION = '$Id$';
 
+# Autohotkey specific
+my $autohotkey_path = '/cygdrive/c/Program Files/AutoHotkey/AutoHotkey.exe',
+my $xedit_wrap_path = "$ENV{'HOME'}/git/fo4tools/xedit/ahk/xedit_wrap.ahk";
+
 # XXX: assumes default location
 my $fallout_dir = '/cygdrive/c/Program Files (x86)/Steam/steamapps/common/Fallout 4';
 my $pcvgen_script='Fallout4 - Precombined split.pas';
@@ -35,10 +39,6 @@ my @xedit_default_script_args = qw(
         -autoload
         -autoexit
 );
-
-# Autohotkey specific
-my $autohotkey_path = '/cygdrive/c/Program Files/AutoHotkey/AutoHotkey.exe',
-my $xedit_wrap_path = "$ENV{'HOME'}/git/fo4tools/xedit/ahk/xedit_wrap.ahk";
 
 my $verbose = 0;
 my $noop = 0;
@@ -68,8 +68,14 @@ sub plugin_file_resolve {
 sub xedit_run {
 	my %opts = @_;
 	my ($area, $args, $script, $data_dir, $plugin_file) = map $opts{$_}, qw(area args script data_dir plugin_file);
-
 	my @cmds;
+
+	# Shim autohotkey script into cmds so it runs first.
+	if ($script && -x $autohotkey_path) {
+		chomp(my $xedit_wrap_path = qx/cygpath -wa "$xedit_wrap_path"/);
+		unshift @cmds, [ $autohotkey_path, $xedit_wrap_path ], '&';
+	}
+
 	foreach my $area (@$area) {
 		my $data_dir = data_dir_resolve($area, $data_dir);
 		my $plugin_file = plugin_file_resolve($area, $plugin_file);
@@ -94,12 +100,6 @@ sub xedit_run {
 		print STDERR join(' ', map +(/\s/ ? "'$_'" : $_), @cmd), "\n" if ($verbose);
 
 		push @cmds, \@cmd, '&';
-	}
-
-	# Shim autohotkey script into cmds so it runs first.
-	if ($script && -x $autohotkey_path) {
-		chomp(my $xedit_wrap_path = qx/cygpath -wa "$xedit_wrap_path"/);
-		unshift @cmds, [ $autohotkey_path, $xedit_wrap_path ], '&';
 	}
 
 	eval { run @cmds } if (@cmds);
