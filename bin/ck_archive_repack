@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -e
+set -o pipefail
+
+function ck_archive_unpack() {
+	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -e="$(cygpath -aw "$2")" -q
+}
+
+function ck_archive_pack() {
+	# Archive2 refuses to create empty archives
+	find "$1" -type f '!' -empty 2>/dev/null | egrep '' &>/dev/null || echo 'empty' > "$1/empty.txt"
+
+	# Any archive containing sound files cannot be compressed
+	local compression
+	if [[ -n "$3" ]]; then
+		compression="$3"
+	elif [[ -d "$1/Sound" || -d "$1/Data/Sound" || -d "$1/Music" || -d "$1/Data/Music" ]]; then
+		compression="None"
+	else
+		compression="Default"
+	fi
+
+	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -c="$(cygpath -aw "$2.$$")" -compression="$compression" -q \
+		&& mv "$2.$$" "$2"
+}
+
+for i in "$@"; do
+	tmp=$(mktemp -d)
+	mkdir -p "$tmp/Data"
+
+	set -x
+	ck_archive_unpack "$i" "$tmp/Data"
+	ck_archive_pack "$tmp/Data" "$i"
+	set +x
+
+	rm -rf "$tmp"
+done
