@@ -368,6 +368,630 @@ Double check that cut down plugins (only static REFRs) generate the same precomb
 
 Figure out what causes CK to scramble the order of emitted masters in plugins it generates... timestamp?
 
+Related to this:
+
++ plugin-master-reloc -vfr --copy-plugin-to-esm --esp-to-esm --sub 'America Rising - A Tale of the Enclave.esp.pcv:America_Rising_-_A_Tale_of_the_Enclave.esp.pcv' 'ckgen.build/10/Data/America Rising - A Tale of the Enclave.esp.pcv.esp'
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [07] ReGrowth Overhaul 10.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [08] rgo_tree_noocclude.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [09] Unofficial Fallout 4 Patch.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [10] 3DNPC_FO4.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [11] AA FusionCityRising.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [12] AA FusionCityRising - HotC.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [13] AA 50 Ways To Die.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [14] OutcastsAndRemnants.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [15] WelcometoGoodneighbor.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [16] BTInteriors_Project.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [17] stumbleuponinteriors.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [18] crowdedcommonwealth.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [19] plenty 'o' exploration.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [20] moreXplore.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [21] Convenient Bridges.esm
+Writing "America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm": [22] America Rising - A Tale of the Enclave.esm
+Writing "rgo_tree_noocclude.esm": [02] ReGrowth Overhaul 10.esm
+Writing "Unofficial Fallout 4 Patch.esm": [07] ReGrowth Overhaul 10.esm
+Writing "Unofficial Fallout 4 Patch.esm": [08] rgo_tree_noocclude.esm
+Writing "3DNPC_FO4.esm": [07] ReGrowth Overhaul 10.esm
+Writing "3DNPC_FO4.esm": [08] rgo_tree_noocclude.esm
+Writing "AA FusionCityRising.esm": [07] ReGrowth Overhaul 10.esm
+Writing "AA FusionCityRising.esm": [08] rgo_tree_noocclude.esm
+Writing "AA FusionCityRising - HotC.esm": [07] ReGrowth Overhaul 10.esm
+Writing "AA FusionCityRising - HotC.esm": [08] rgo_tree_noocclude.esm
+Writing "AA FusionCityRising - HotC.esm": [09] AA FusionCityRising.esm
+Writing "AA 50 Ways To Die.esm": [07] ReGrowth Overhaul 10.esm
+Writing "AA 50 Ways To Die.esm": [08] rgo_tree_noocclude.esm
+Writing "OutcastsAndRemnants.esm": [07] ReGrowth Overhaul 10.esm
+Writing "OutcastsAndRemnants.esm": [08] rgo_tree_noocclude.esm
+Writing "WelcometoGoodneighbor.esm": [07] ReGrowth Overhaul 10.esm
+Writing "WelcometoGoodneighbor.esm": [08] rgo_tree_noocclude.esm
+Writing "BTInteriors_Project.esm": [07] ReGrowth Overhaul 10.esm
+Writing "BTInteriors_Project.esm": [08] rgo_tree_noocclude.esm
+Writing "stumbleuponinteriors.esm": [07] ReGrowth Overhaul 10.esm
+Writing "stumbleuponinteriors.esm": [08] rgo_tree_noocclude.esm
+Writing "crowdedcommonwealth.esm": [07] ReGrowth Overhaul 10.esm
+Writing "crowdedcommonwealth.esm": [08] rgo_tree_noocclude.esm
+Writing "plenty 'o' exploration.esm": [07] ReGrowth Overhaul 10.esm
+Writing "plenty 'o' exploration.esm": [08] rgo_tree_noocclude.esm
+Writing "moreXplore.esm": [07] ReGrowth Overhaul 10.esm
+Writing "moreXplore.esm": [08] rgo_tree_noocclude.esm
+Writing "Convenient Bridges.esm": [07] ReGrowth Overhaul 10.esm
+Writing "Convenient Bridges.esm": [08] rgo_tree_noocclude.esm
+Writing "America Rising - A Tale of the Enclave.esm": [07] ReGrowth Overhaul 10.esm
+Writing "America Rising - A Tale of the Enclave.esm": [08] rgo_tree_noocclude.esm
+ckgen.build/10/Data/America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+[09] Unofficial Fallout 4 Patch.esm
+[10] 3DNPC_FO4.esm
+[11] AA FusionCityRising.esm
+[12] AA FusionCityRising - HotC.esm
+[13] AA 50 Ways To Die.esm
+[14] OutcastsAndRemnants.esm
+[15] WelcometoGoodneighbor.esm
+[16] BTInteriors_Project.esm
+[17] stumbleuponinteriors.esm
+[18] crowdedcommonwealth.esm
+[19] plenty 'o' exploration.esm
+[20] moreXplore.esm
+[21] Convenient Bridges.esm
+[22] America Rising - A Tale of the Enclave.esm
+
+ckgen.build/10/Data/Fallout4.esm:
+
+ckgen.build/10/Data/DLCRobot.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/DLCworkshop01.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/DLCCoast.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/DLCworkshop02.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/DLCworkshop03.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/DLCNukaWorld.esm:
+[00] Fallout4.esm
+
+ckgen.build/10/Data/ReGrowth Overhaul 10.esm:
+[00] Fallout4.esm
+[01] DLCCoast.esm
+
+ckgen.build/10/Data/rgo_tree_noocclude.esm:
+[00] Fallout4.esm
+[01] DLCCoast.esm
+[02] ReGrowth Overhaul 10.esm
+
+ckgen.build/10/Data/Unofficial Fallout 4 Patch.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/3DNPC_FO4.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/AA FusionCityRising.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/AA FusionCityRising - HotC.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+[09] AA FusionCityRising.esm
+
+ckgen.build/10/Data/AA 50 Ways To Die.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/OutcastsAndRemnants.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/WelcometoGoodneighbor.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/BTInteriors_Project.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/stumbleuponinteriors.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/crowdedcommonwealth.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/plenty 'o' exploration.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/moreXplore.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/Convenient Bridges.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/10/Data/America Rising - A Tale of the Enclave.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+++ ./CreationKit.exe -generateprecombined:America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm filtered all 1 1
++ egrep -q 'OUT OF HANDLE|Could not get file pointer|Number of registered paths has exceeded maximum' EditorWarnings.txt
++ cat ckgen.build/10/DataFiles.txt
+Data File Loaded 'Fallout4.esm'...
+Data File Loaded 'DLCRobot.esm'...
+Data File Loaded 'DLCworkshop01.esm'...
+Data File Loaded 'DLCCoast.esm'...
+Data File Loaded 'DLCworkshop02.esm'...
+Data File Loaded 'DLCworkshop03.esm'...
+Data File Loaded 'DLCNukaWorld.esm'...
+Data File Loaded 'ReGrowth Overhaul 10.esm'...
+Data File Loaded 'rgo_tree_noocclude.esm'...
+Data File Loaded 'America Rising - A Tale of the Enclave.esm'...
+Data File Loaded 'Convenient Bridges.esm'...
+Data File Loaded 'moreXplore.esm'...
+Data File Loaded 'plenty 'o' exploration.esm'...
+Data File Loaded 'crowdedcommonwealth.esm'...
+Data File Loaded 'stumbleuponinteriors.esm'...
+Data File Loaded 'BTInteriors_Project.esm'...
+Data File Loaded 'WelcometoGoodneighbor.esm'...
+Data File Loaded 'OutcastsAndRemnants.esm'...
+Data File Loaded 'AA 50 Ways To Die.esm'...
+Data File Loaded 'AA FusionCityRising.esm'...
+Data File Loaded 'AA FusionCityRising - HotC.esm'...
+Data File Loaded '3DNPC_FO4.esm'...
+Data File Loaded 'Unofficial Fallout 4 Patch.esm'...
+Data File Loaded 'America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm'...
+
+If every master involved with a given plugin does *not* have the same order of masters that the loaded plugin has CK will seem to load them in this kind of order:
+
+1. All masters of the last master are loaded:
+
+Data File Loaded 'Fallout4.esm'...
+Data File Loaded 'DLCRobot.esm'...
+Data File Loaded 'DLCworkshop01.esm'...
+Data File Loaded 'DLCCoast.esm'...
+Data File Loaded 'DLCworkshop02.esm'...
+Data File Loaded 'DLCworkshop03.esm'...
+Data File Loaded 'DLCNukaWorld.esm'...
+Data File Loaded 'ReGrowth Overhaul 10.esm'...
+Data File Loaded 'rgo_tree_noocclude.esm'...
+
+aka
+
+ckgen.build/10/Data/America Rising - A Tale of the Enclave.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+2. Then the first master:
+
+Data File Loaded 'America Rising - A Tale of the Enclave.esm'...
+
+3. Then every other master of the loaded plugin in reverse order:
+
+[09] Unofficial Fallout 4 Patch.esm
+[10] 3DNPC_FO4.esm
+[11] AA FusionCityRising.esm
+[12] AA FusionCityRising - HotC.esm
+[13] AA 50 Ways To Die.esm
+[14] OutcastsAndRemnants.esm
+[15] WelcometoGoodneighbor.esm
+[16] BTInteriors_Project.esm
+[17] stumbleuponinteriors.esm
+[18] crowdedcommonwealth.esm
+[19] plenty 'o' exploration.esm
+[20] moreXplore.esm
+[21] Convenient Bridges.esm
+[22] America Rising - A Tale of the Enclave.esm <--- but not included this as it was the first master loaded
+
+It seems to be using some kind of graphing based decision which means if all masters involved aren't also locked down in master order one may get non-determinant loading orders.
+
+The resultant CombinedObjects.esp looks like this:
+
++ plugin-master-reloc -vfr --esm-to-esp --sub 'America_Rising_-_A_Tale_of_the_Enclave.esp.pcv:America Rising - A Tale of the Enclave.esp.pcv' ckgen.build/10/Data/CombinedObjects.esp
+Writing "CombinedObjects.esp": [07] ReGrowth Overhaul 10.esp
+Writing "CombinedObjects.esp": [08] rgo_tree_noocclude.esp
+Writing "CombinedObjects.esp": [09] America Rising - A Tale of the Enclave.esp
+Writing "CombinedObjects.esp": [10] Convenient Bridges.esp
+Writing "CombinedObjects.esp": [11] moreXplore.esp
+Writing "CombinedObjects.esp": [12] plenty 'o' exploration.esp
+Writing "CombinedObjects.esp": [13] crowdedcommonwealth.esp
+Writing "CombinedObjects.esp": [14] stumbleuponinteriors.esp
+Writing "CombinedObjects.esp": [15] BTInteriors_Project.esp
+Writing "CombinedObjects.esp": [16] WelcometoGoodneighbor.esp
+Writing "CombinedObjects.esp": [17] OutcastsAndRemnants.esp
+Writing "CombinedObjects.esp": [18] AA 50 Ways To Die.esp
+Writing "CombinedObjects.esp": [19] AA FusionCityRising.esp
+Writing "CombinedObjects.esp": [20] AA FusionCityRising - HotC.esp
+Writing "CombinedObjects.esp": [21] 3DNPC_FO4.esp
+Writing "CombinedObjects.esp": [22] Unofficial Fallout 4 Patch.esp
+Writing "CombinedObjects.esp": [23] America Rising - A Tale of the Enclave.esp.pcv.esp
+unlink ckgen.build/10/Data/ReGrowth Overhaul 10.esm
+unlink ckgen.build/10/Data/rgo_tree_noocclude.esm
+unlink ckgen.build/10/Data/America Rising - A Tale of the Enclave.esm
+unlink ckgen.build/10/Data/Convenient Bridges.esm
+unlink ckgen.build/10/Data/moreXplore.esm
+unlink ckgen.build/10/Data/plenty 'o' exploration.esm
+unlink ckgen.build/10/Data/crowdedcommonwealth.esm
+unlink ckgen.build/10/Data/stumbleuponinteriors.esm
+unlink ckgen.build/10/Data/BTInteriors_Project.esm
+unlink ckgen.build/10/Data/WelcometoGoodneighbor.esm
+unlink ckgen.build/10/Data/OutcastsAndRemnants.esm
+unlink ckgen.build/10/Data/AA 50 Ways To Die.esm
+unlink ckgen.build/10/Data/AA FusionCityRising.esm
+unlink ckgen.build/10/Data/AA FusionCityRising - HotC.esm
+unlink ckgen.build/10/Data/3DNPC_FO4.esm
+unlink ckgen.build/10/Data/Unofficial Fallout 4 Patch.esm
+unlink ckgen.build/10/Data/America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm
+ckgen.build/10/Data/CombinedObjects.esp:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esp
+[08] rgo_tree_noocclude.esp
+[09] America Rising - A Tale of the Enclave.esp
+[10] Convenient Bridges.esp
+[11] moreXplore.esp
+[12] plenty 'o' exploration.esp
+[13] crowdedcommonwealth.esp
+[14] stumbleuponinteriors.esp
+[15] BTInteriors_Project.esp
+[16] WelcometoGoodneighbor.esp
+[17] OutcastsAndRemnants.esp
+[18] AA 50 Ways To Die.esp
+[19] AA FusionCityRising.esp
+[20] AA FusionCityRising - HotC.esp
+[21] 3DNPC_FO4.esp
+[22] Unofficial Fallout 4 Patch.esp
+[23] America Rising - A Tale of the Enclave.esp.pcv.esp
+
+Which is completely out of whack ordr wise. If indeed all plugins are being loaded in this goofy order then it means the generated data might not be right at all. This seems to be mostly an issue when using "per-each" plugins, aka *.pcv.esp plugins.
+
+As a test, if 3DNPC_FO4.esp and Unofficial Fallout 4 Patch.esp are added as masters to AA FusionCityRising.esp, the following is observed:
+
+ckgen.build/1/Data/Unofficial Fallout 4 Patch.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/1/Data/3DNPC_FO4.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+
+ckgen.build/1/Data/AA FusionCityRising.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+[09] Unofficial Fallout 4 Patch.esm
+[10] 3DNPC_FO4.esm
+
+[..]
+
+ckgen.build/1/Data/America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+[09] Unofficial Fallout 4 Patch.esm
+[10] 3DNPC_FO4.esm
+[11] AA FusionCityRising.esm
+[12] AA FusionCityRising - HotC.esm
+[13] AA 50 Ways To Die.esm
+[14] OutcastsAndRemnants.esm
+[15] WelcometoGoodneighbor.esm
+[16] BTInteriors_Project.esm
+[17] stumbleuponinteriors.esm
+[18] crowdedcommonwealth.esm
+[19] plenty 'o' exploration.esm
+[20] moreXplore.esm
+[21] Convenient Bridges.esm
+[22] America Rising - A Tale of the Enclave.esm
+
+++ ./CreationKit.exe -generateprecombined:America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm filtered all 1 1
++ egrep -q 'OUT OF HANDLE|Could not get file pointer|Number of registered paths has exceeded maximum' EditorWarnings.txt
++ cat ckgen.build/1/DataFiles.txt
+Data File Loaded 'Fallout4.esm'...
+Data File Loaded 'DLCRobot.esm'...
+Data File Loaded 'DLCworkshop01.esm'...
+Data File Loaded 'DLCCoast.esm'...
+Data File Loaded 'DLCworkshop02.esm'...
+Data File Loaded 'DLCworkshop03.esm'...
+Data File Loaded 'DLCNukaWorld.esm'...
+Data File Loaded 'ReGrowth Overhaul 10.esm'...
+Data File Loaded 'rgo_tree_noocclude.esm'...
+Data File Loaded 'America Rising - A Tale of the Enclave.esm'...
+Data File Loaded 'Convenient Bridges.esm'...
+Data File Loaded 'moreXplore.esm'...
+Data File Loaded 'plenty 'o' exploration.esm'...
+Data File Loaded 'crowdedcommonwealth.esm'...
+Data File Loaded 'stumbleuponinteriors.esm'...
+Data File Loaded 'BTInteriors_Project.esm'...
+Data File Loaded 'WelcometoGoodneighbor.esm'...
+Data File Loaded 'OutcastsAndRemnants.esm'...
+Data File Loaded 'AA 50 Ways To Die.esm'...
+Data File Loaded '3DNPC_FO4.esm'...
+Data File Loaded 'Unofficial Fallout 4 Patch.esm'...
+Data File Loaded 'AA FusionCityRising.esm'...
+Data File Loaded 'AA FusionCityRising - HotC.esm'...
+Data File Loaded 'America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm'...
+
+in sdiff:
+
+Data File Loaded 'Fallout4.esm'...							Data File Loaded 'Fallout4.esm'...
+Data File Loaded 'DLCRobot.esm'...							Data File Loaded 'DLCRobot.esm'...
+Data File Loaded 'DLCworkshop01.esm'...							Data File Loaded 'DLCworkshop01.esm'...
+Data File Loaded 'DLCCoast.esm'...							Data File Loaded 'DLCCoast.esm'...
+Data File Loaded 'DLCworkshop02.esm'...							Data File Loaded 'DLCworkshop02.esm'...
+Data File Loaded 'DLCworkshop03.esm'...							Data File Loaded 'DLCworkshop03.esm'...
+Data File Loaded 'DLCNukaWorld.esm'...							Data File Loaded 'DLCNukaWorld.esm'...
+Data File Loaded 'ReGrowth Overhaul 10.esm'...						Data File Loaded 'ReGrowth Overhaul 10.esm'...
+Data File Loaded 'rgo_tree_noocclude.esm'...						Data File Loaded 'rgo_tree_noocclude.esm'...
+Data File Loaded 'America Rising - A Tale of the Enclave.esm'...			Data File Loaded 'America Rising - A Tale of the Enclave.esm'...
+Data File Loaded 'Convenient Bridges.esm'...						Data File Loaded 'Convenient Bridges.esm'...
+Data File Loaded 'moreXplore.esm'...							Data File Loaded 'moreXplore.esm'...
+Data File Loaded 'plenty 'o' exploration.esm'...					Data File Loaded 'plenty 'o' exploration.esm'...
+Data File Loaded 'crowdedcommonwealth.esm'...						Data File Loaded 'crowdedcommonwealth.esm'...
+Data File Loaded 'stumbleuponinteriors.esm'...						Data File Loaded 'stumbleuponinteriors.esm'...
+Data File Loaded 'BTInteriors_Project.esm'...						Data File Loaded 'BTInteriors_Project.esm'...
+Data File Loaded 'WelcometoGoodneighbor.esm'...						Data File Loaded 'WelcometoGoodneighbor.esm'...
+Data File Loaded 'OutcastsAndRemnants.esm'...						Data File Loaded 'OutcastsAndRemnants.esm'...
+Data File Loaded 'AA 50 Ways To Die.esm'...						Data File Loaded 'AA 50 Ways To Die.esm'...
+Data File Loaded 'AA FusionCityRising.esm'...					      <
+Data File Loaded 'AA FusionCityRising - HotC.esm'...				      <
+Data File Loaded '3DNPC_FO4.esm'...							Data File Loaded '3DNPC_FO4.esm'...
+Data File Loaded 'Unofficial Fallout 4 Patch.esm'...					Data File Loaded 'Unofficial Fallout 4 Patch.esm'...
+										      >	Data File Loaded 'AA FusionCityRising.esm'...
+										      >	Data File Loaded 'AA FusionCityRising - HotC.esm'...
+Data File Loaded 'America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm'...		Data File Loaded 'America_Rising_-_A_Tale_of_the_Enclave.esp.pcv.esm'...
+
+One can see the depth based loading where once it gets to 'AA FusionCityRising.esm' it proceeds to then load that plugin's masters first and then back to 'AA FusionCityRising.esm' (which 'AA FusionCityRising - HotC.esm' also has as a master). Now 'data file loaded' doesn't necessarily mean it parses each plugin's forms in that order, but the output of CombinedObjects.esp seems to infer it does:
+
+ckgen.build/1/Data/CombinedObjects.esp:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esp
+[08] rgo_tree_noocclude.esp
+[09] America Rising - A Tale of the Enclave.esp
+[10] Convenient Bridges.esp
+[11] moreXplore.esp
+[12] plenty 'o' exploration.esp
+[13] crowdedcommonwealth.esp
+[14] stumbleuponinteriors.esp
+[15] BTInteriors_Project.esp
+[16] WelcometoGoodneighbor.esp
+[17] OutcastsAndRemnants.esp
+[18] AA 50 Ways To Die.esp
+[19] 3DNPC_FO4.esp
+[20] Unofficial Fallout 4 Patch.esp
+[21] AA FusionCityRising.esp
+[22] AA FusionCityRising - HotC.esp
+[23] America Rising - A Tale of the Enclave.esp.pcv.esp
+
+I think that nearly 99% of the time this doesn't actually cause an issue because most mods aren't modifying the exact same statics or scols but are instead, when loaded together, resulting in a composite of all references which precombine/previs is aware of when generating. However, it's not as robust as it should be and ensuring each master has the explicit master order of things involved with it might be safest.
+
+Update: this is actually a problem, with the following test:
+
+ckgen.build/2/Data/BurningCampfiresThatHurt.esp.pcv.esm:
+[00] Fallout4.esm
+[01] DLCRobot.esm
+[02] DLCworkshop01.esm
+[03] DLCCoast.esm
+[04] DLCworkshop02.esm
+[05] DLCworkshop03.esm
+[06] DLCNukaWorld.esm
+[07] ReGrowth Overhaul 10.esm
+[08] rgo_tree_noocclude.esm
+[09] Unofficial Fallout 4 Patch.esm
+[10] 3DNPC_FO4.esm
+[11] AA FusionCityRising.esm
+[12] AA FusionCityRising - HotC.esm
+[13] AA 50 Ways To Die.esm
+[14] OutcastsAndRemnants.esm
+[15] SOTS.esm
+[16] WelcometoGoodneighbor.esm
+[17] DiamondNewVendors.esm
+[18] BTInteriors_Project.esm
+[19] InsideJobs.esm
+[20] stumbleuponinteriors.esm
+[21] crowdedcommonwealth.esm
+[22] plenty 'o' exploration.esm
+[23] moreXplore.esm
+[24] Convenient Bridges.esm
+[25] America Rising - A Tale of the Enclave.esm
+[26] BurningCampfiresThatHurt.esm
+
+vs what's actually loaded:
+
+Data File Loaded 'Fallout4.esm'...
+Data File Loaded 'DLCRobot.esm'...
+Data File Loaded 'DLCworkshop01.esm'...
+Data File Loaded 'DLCCoast.esm'...
+Data File Loaded 'DLCworkshop02.esm'...
+Data File Loaded 'DLCworkshop03.esm'...
+Data File Loaded 'DLCNukaWorld.esm'...
+Data File Loaded 'ReGrowth Overhaul 10.esm'...
+Data File Loaded 'rgo_tree_noocclude.esm'...
+Data File Loaded 'BurningCampfiresThatHurt.esm'...
+Data File Loaded 'America Rising - A Tale of the Enclave.esm'...
+Data File Loaded 'Convenient Bridges.esm'...
+Data File Loaded 'moreXplore.esm'...
+Data File Loaded 'plenty 'o' exploration.esm'...
+Data File Loaded 'crowdedcommonwealth.esm'...
+Data File Loaded 'stumbleuponinteriors.esm'...
+Data File Loaded 'InsideJobs.esm'...
+Data File Loaded 'BTInteriors_Project.esm'...
+Data File Loaded 'DiamondNewVendors.esm'...
+Data File Loaded 'WelcometoGoodneighbor.esm'...
+Data File Loaded 'SOTS.esm'...
+Data File Loaded 'OutcastsAndRemnants.esm'...
+Data File Loaded 'AA 50 Ways To Die.esm'...
+Data File Loaded '3DNPC_FO4.esm'...
+Data File Loaded 'Unofficial Fallout 4 Patch.esm'...
+Data File Loaded 'AA FusionCityRising.esm'...
+Data File Loaded 'AA FusionCityRising - HotC.esm'...
+Data File Loaded 'BurningCampfiresThatHurt.esp.pcv.esm'...
+
+1. A reference from Fallout4.esm was overridden and deleted in BTInteriors_Project.esp.
+2. That same reference from Fallout4.esm was overridden with no changes in plenty 'o' exploration.esp.
+3. In BurningCampfiresThatHurt.esp, plenty 'o' exploration.esp comes after BTInteriors_Project.esp as a master, meaning plenty 'o' exploration.esp should "win" for that same reference, effectively undoing the deletion from BTInteriors_Project.esp.
+4. Since BTInteriors_Project.esp was actually loaded after plenty 'o' exploration.esp when generating the data, the deletion ended up winning and the resultant CombinedObjects.esp for BurningCampfiresThatHurt.esp has the precombined for that reference removed.
+5. The same thing was tried with another reference but in that case said reference was ITM in BTInteriors_Project.esp and deleted in plenty 'o' exploration.esp. The resultant CombinedObjects.esp shows this reference's precombined data as unaffected (generated) because BTInteriors_Project.esp was actually loaded after plenty 'o' exploration.esp.
+
+It appears that CK is using an upwards-looking DFS algorithm (i.e. resolving parent order) to load the masters and master order in the plugin does not actually matter. Normally when another master or plugin overrides a formid said formid's owner is added as a master to the overriding plugin - which usually prevents this from being an issue. However in the case of 2 different masters overriding the *same* formid, both masters will already have the same common master that owns that formid. Which master gets loaded first is purely driven by a depth first search of the plugin being loaded and the only way to enforce master1 loads before master2 is to have master1 be an explicit master of master2 - even if they're both simply overriding formids from master0.
+
+As a final test of this, I forced plenty 'o' exploration.esp to have BTInteriors_Project.esp as a master and the original reference (which was deleted in BTInteriors_Project.esp and restored in plenty 'o' exploration.esp) showed up in CombinedObjects.esp for BurningCampfiresThatHurt.esp, which is correct per the master load order, and the other reference (which was deleted in plenty 'o' exploration.esp and restored in BTInteriors_Project.esp) showed up as removed in CombinedObjects.esp, also correct. So in short, master load order definitely matters to CK and it will not necessarily load them exactly as the target plugin dictates via the order of MAST entries.
+
 ---
 
 FIXED:
