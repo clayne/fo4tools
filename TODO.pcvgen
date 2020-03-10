@@ -992,6 +992,8 @@ It appears that CK is using an upwards-looking DFS algorithm (i.e. resolving par
 
 As a final test of this, I forced plenty 'o' exploration.esp to have BTInteriors_Project.esp as a master and the original reference (which was deleted in BTInteriors_Project.esp and restored in plenty 'o' exploration.esp) showed up in CombinedObjects.esp for BurningCampfiresThatHurt.esp, which is correct per the master load order, and the other reference (which was deleted in plenty 'o' exploration.esp and restored in BTInteriors_Project.esp) showed up as removed in CombinedObjects.esp, also correct. So in short, master load order definitely matters to CK and it will not necessarily load them exactly as the target plugin dictates via the order of MAST entries.
 
+Sigh, it would appear that timestamp has a *heavy* effect on all of this. The vanilla esms will always load in the correct order (as they're hardcoded in CK), but ensuring each master is only 1 second away from the next one (based on MAST order) results in a predictable load order everytime. However, randomizing the timestamps of every master involved results in entirely unpredictable load orders that don't even follow a timestamp sorted order.
+
 ---
 
 FIXED:
