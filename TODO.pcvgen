@@ -1078,6 +1078,59 @@ Also, -BuildCDX might want to be done after everything has been generated (PC+PV
 
 Update: it appears that any plugin flagged as an esm with modified precombines NEEDS a cdx, even without psg style precombines. Hiding the cdx and removing the esm flag also produces a working outcome - which means the cdx is of importance to master flagged plugins regardless of precombine style.
 
+Update: generated cdx 7 different ways and saw no difference in output until the plugin itself was altered:
+
+1. main.pcv.esm (not flagged esm):
+./CreationKit.exe -buildcdx:main.pcv.esm && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18967064 Mar 17 08:51 Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+2. main.pcv.esp (not flagged esm):
+./CreationKit.exe -buildcdx:main.pcv.esp && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18967064 Mar 17 09:03 Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+3. main.pcv.esm (flagged esm):
+./CreationKit.exe -buildcdx:main.pcv.esm && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18967064 Mar 17 09:10 Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+4. main.pcv.esp (flagged esm):
+./CreationKit.exe -buildcdx:main.pcv.esp && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18967064 Mar 17 09:15 Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+5. main.pcv.esm (one cell without precombines removed):
+./CreationKit.exe -buildcdx:main.pcv.esm && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18967064 Mar 17 09:21 Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+6. main.pcv.esm (1 cell's XPRI data removed):
+./CreationKit.exe -buildcdx:main.pcv.esm && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18891544 Mar 17 09:44 Data/main.pcv.cdx
+a899f1076c9186ff71bd8d9b6527d531 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+7. main.pcv.esm (4 cells *with* precombines removed):
+./CreationKit.exe -buildcdx:main.pcv.esm && ls -al Data/main.pcv.cdx ../../Data/main.pcv.cdx && md5sum Data/main.pcv.cdx ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 4 clayne None 18967064 Mar 16 19:37 ../../Data/main.pcv.cdx
+-rwxrwxr-x+ 1 clayne None 18891544 Mar 17 09:28 Data/main.pcv.cdx
+a899f1076c9186ff71bd8d9b6527d531 *Data/main.pcv.cdx
+b9b5b343ce6c41233f9d797c83211066 *../../Data/main.pcv.cdx
+
+CDX is clearly linked to XCRI data in CELLs.
+
 ---
 Worldspace exterior counts:
 
