@@ -36,10 +36,22 @@ link() {
 }
 
 list() {
+	while getopts "t" opt; do
+		case $opt in
+		t) TEMPLATE=1 ;;
+		?) exit -1 ;;
+		esac
+	done; shift $((OPTIND - 1)); OPTIND=1
+
 	ACTIVE=$(basename "$(readlink.exe -e "$PROGDIR/Fallout 4")" | cut -f 2- -d .)
 
 	find "$PROGDIR/Fallout 4."* -type d -prune -printf "%f\n" 2>/dev/null | cut -f 2- -d . | while read tmp; do
-		[[ $tmp == "shared" || $tmp == "template" || $tmp == "extract" ]] && continue
+		if ((TEMPLATE)); then
+			[[ $tmp =~ ^template\. ]] && echo "${tmp/#template.}"
+			continue
+		fi
+
+		[[ $tmp == "shared" || $tmp =~ ^template || $tmp == "extract" ]] && continue
 		[[ $tmp == $ACTIVE ]] && echo "$tmp*" || echo "$tmp"
 	done
 }
@@ -49,7 +61,7 @@ delete() {
 		case $opt in
 		?) exit -1 ;;
 		esac
-	done; shift $((OPTIND - 1))
+	done; shift $((OPTIND - 1)); OPTIND=1
 
 	for p in "$@"; do
 		rm -rf "$PROGDIR/Fallout 4.$p" "$USERDIR/Fallout4.$p" "$DATADIR/Fallout4.$p"
@@ -62,7 +74,7 @@ use() {
 		case $opt in
 		?) exit -1 ;;
 		esac
-	done; shift $((OPTIND - 1))
+	done; shift $((OPTIND - 1)); OPTIND=1
 
 	PROFILE="$1"; shift || true
 	if [[ -z "$PROFILE" ]]; then
@@ -86,24 +98,26 @@ use() {
 
 # XXX: Handle multiple args
 new() {
-	while getopts "s:" opt; do
+	while getopts "t:s:S:" opt; do
 		case $opt in
+		t) TEMPLATE+=( "$OPTARG" ) ;;
 		s) PROFILE_SRC="$OPTARG" ;;
+		S) PROFILE_SRC="$OPTARG"; PROFILE_SRC_SHARED=1 ;;
 		?) exit -1 ;;
 		esac
-	done; shift $((OPTIND - 1))
+	done; shift $((OPTIND - 1)); OPTIND=1
 
 	PROFILE="$1"; shift || true
 	if [[ -z "$PROFILE" ]]; then
 		echo "No profile specified" 1>&2
 		exit -1
-	elif [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
+	elif [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]] && ((!FORCE)); then
 		echo "$PROGDIR/Fallout 4.$PROFILE already exists!" 1>&2
 		exit -1
-	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]]; then
+	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]] && ((!FORCE)); then
 		echo "$USERDIR/Fallout4.$PROFILE already exists!" 1>&2
 		exit -1
-	elif [[ -d "$DATADIR/Fallout4.$PROFILE" ]]; then
+	elif [[ -d "$DATADIR/Fallout4.$PROFILE" ]] && ((!FORCE)); then
 		echo "$DATADIR/Fallout4.$PROFILE already exists!" 1>&2
 		exit -1
 	fi
@@ -117,20 +131,31 @@ new() {
 		USERDIR_SHARED="$USERDIR/Fallout4.$PROFILE_SRC"
 		DATADIR_SHARED="$DATADIR/Fallout4.$PROFILE_SRC"
 
-		# XXX: template copying is probably unnecessary when using -s
-		# XXX: because the entire source has already been rsynced
-		PROGDIR_TEMPLATE="$PROGDIR/Fallout 4.$PROFILE_SRC"
-		USERDIR_TEMPLATE="$USERDIR/Fallout4.$PROFILE_SRC"
-		DATADIR_TEMPLATE="$DATADIR/Fallout4.$PROFILE_SRC"
+		if ((PROFILE_SRC_SHARED)); then
+			PROGDIR_SHARED_BASE="$PROGDIR_SHARED"
+			USERDIR_SHARED_BASE="$USERDIR_SHARED"
+			DATADIR_SHARED_BASE="$DATADIR_SHARED"
+		fi
+
+		if false; then
+			# XXX: template copying is probably unnecessary when using -s
+			# XXX: because the entire source has already been rsynced
+			PROGDIR_TEMPLATE="$PROGDIR/Fallout 4.$PROFILE_SRC"
+			USERDIR_TEMPLATE="$USERDIR/Fallout4.$PROFILE_SRC"
+			DATADIR_TEMPLATE="$DATADIR/Fallout4.$PROFILE_SRC"
+		else
+			PROGDIR_TEMPLATE=""
+			USERDIR_TEMPLATE=""
+			DATADIR_TEMPLATE=""
+		fi
 	fi
+
+	# XXX: This shouldn't be needed twice but without it Fallout4.exe isn't being synced for some reason
+	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
 
 	# Clone shared directory using hard links only so as to effectively share
 	# the files between profiles but consume no additional disk space.
 	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
-
-	# XXX: This shouldn't be needed twice but without it Fallout4.exe isn't being synced
-	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
-
 	[[ -d "$USERDIR_SHARED" ]] && rsync -aSH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
 	[[ -d "$DATADIR_SHARED" ]] && rsync -aSH --link-dest="$DATADIR_SHARED_BASE" "$DATADIR_SHARED"/ "$DATADIR/Fallout4.$PROFILE"/
 
@@ -139,6 +164,14 @@ new() {
 	[[ -d "$PROGDIR_TEMPLATE" ]] && rsync -aSH "$PROGDIR_TEMPLATE"/ "$PROGDIR/Fallout 4.$PROFILE"/
 	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -aSH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
 	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -aSH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
+
+	# For any additional template directories, merge them into the profile directory in order.
+	for t in "${TEMPLATE[@]}"; do
+		pt="$PROGDIR/Fallout 4.template.${t}"; ut="$USERDIR/Fallout4.template.${t}"; dt="$DATADIR/Fallout4.template.${t}"
+		[[ -d "$pt" ]] && rsync -aSH "$pt"/ "$PROGDIR/Fallout 4.$PROFILE"/
+		[[ -d "$ut" ]] && rsync -aSH "$ut"/ "$USERDIR/Fallout4.$PROFILE"/
+		[[ -d "$dt" ]] && rsync -aSH "$dt"/ "$DATADIR/Fallout4.$PROFILE"/
+	done
 
 	# Convert paths in templated CreationKit.ini to be per-profile specific.
 	SFILEPATH=$(cygpath -w "$PROGDIR/Fallout 4.$PROFILE" | sed -e 's#\\#\\\\#g')
@@ -173,17 +206,20 @@ new() {
 		mkdir -p "$PROGDIR/Fallout 4.$PROFILE/Data/Merging/VersionBackup"
 		cp -p "$PROGDIR/Fallout 4.$PROFILE/Data"/*.esm "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"
 
-		net share "Merging.$PROFILE"="C:\Program Files (x86)\Steam\steamapps\common\Fallout 4.$PROFILE\Data\Merging" /grant:$USERNAME,full >/dev/null
+		net share "Merging.$PROFILE"="$(cygpath -aw "$PROGDIR/Fallout 4.$PROFILE/Data/Merging")" /grant:$USERNAME,full >/dev/null
 	fi
 
 #	esmlocalize -d "$PROGDIR/Fallout 4.$PROFILE/Data/Merging"/*.esm
 }
 
-while getopts "" opt; do
+FORCE=0
+
+while getopts "f" opt; do
         case $opt in
+	f) FORCE=1 ;;
 	?) exit -1 ;;
         esac
-done; shift $((OPTIND - 1))
+done; shift $((OPTIND - 1)); OPTIND=1
 
 MODE="$1"; shift || true
 
