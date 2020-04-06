@@ -1,4 +1,5 @@
 #Persistent
+#SingleInstance off
 SetTitleMatchMode 2
 SetTimer, CheckScript, 100
 
