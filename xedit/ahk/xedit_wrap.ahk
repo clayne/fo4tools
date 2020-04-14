@@ -1,7 +1,7 @@
 #Persistent
 #SingleInstance off
 SetTitleMatchMode 2
-SetTimer, CheckScript, 100
+SetTimer, CheckScript, 250
 
 script_started := []
 
