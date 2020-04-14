@@ -77,8 +77,8 @@ fi
 case "$MODE" in
 base)
 	log_prefix="pcvgen_xe"
-	plugin_output_prefix="base-"
-	scol_args=()
+	plugin_output_base_combined_prefix="base-"
+	ckgen_scol_args=()
 	ckgen_args=()
 
 	if ((ALL)); then
@@ -98,16 +98,6 @@ base)
 		touch "$STATE_DIR/$STATE"
 	fi
 
-if false; then
-	# remove target plugins
-	STATE=pcv_clean; if ((!RESUME)) || [[ ! -f "$STATE_DIR/$STATE" ]]; then
-		for i in "${area[@]}"; do
-			rm -f "$CKGEN_DATA/$i/${plugin_output_prefix}${i}.pcv.esp"
-		done
-		touch "$STATE_DIR/$STATE"
-	fi
-fi
-
 	# grab base plugins from plugins file
 	IFS=$'\n' MASTER_BASE_LIST=( $(grep '^\*' "$PLUGINS_FILE_BASE" | tr -d '*') ); IFS="$OIFS"
 
@@ -119,11 +109,13 @@ fi
 				--pcv-mode='master_clean' \
 				--pcv-plugin-base-process \
 				--pcv-plugin-base-master-force \
+				--pcv-plugin-base-esm \
 				--pcv-plugin-output-log-use \
 				--pcv-plugin-output-each-use \
 				--pcv-plugin-output-base-combined-use \
-				--pcv-plugin-output-base-combined-prefix="${plugin_output_prefix}" \
-				--pcv-plugin-master-force-list-add="${plugin_output_prefix}\$area.pcv.esp" \
+				--pcv-plugin-output-base-combined-esm \
+				--pcv-plugin-output-base-combined-prefix="${plugin_output_base_combined_prefix}" \
+				--pcv-plugin-master-force-list-add="${plugin_output_base_combined_prefix}\$area.pcv.esp" \
 				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}" \
 				${ALL:+-a all}
 		touch "$STATE_DIR/$STATE"
@@ -219,7 +211,7 @@ exit -1
 			find "$d" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -lfpt "Data"/
 
 			[[ -d "$CKGEN_DATA/$a" ]] || continue
-			find "$CKGEN_DATA/$a" -type f -name "${plugin_output_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -lfpt "Data"/
+			find "$CKGEN_DATA/$a" -type f -name "${plugin_output_base_combined_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -lfpt "Data"/
 		done
 
 		touch "$STATE_DIR/$STATE"
