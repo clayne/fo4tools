@@ -29,10 +29,8 @@ for i in "$@"; do
 	tmp=$(mktemp -d)
 	mkdir -p "$tmp/Data"
 
-	set -x
 	ck_archive_unpack "$i" "$tmp/Data"
 	ck_archive_pack "$tmp/Data" "$i"
-	set +x
 
 	rm -rf "$tmp"
 done
