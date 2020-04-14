@@ -49,6 +49,8 @@ my @xedit_default_script_args = qw(
 
 my $conf = {};
 
+my $log_file;
+my $log_prefix=basename($0);
 my $autohotkey = 1;
 my $verbose = 0;
 my $noop = 0;
@@ -127,7 +129,12 @@ sub xedit_run {
 			}
 		}
 
-		chomp(my $log_file_dos = qx/cygpath -aw "pcvgen_xe.$area.log"/);
+		my $pcv_mode = (map /--pcv-mode=(.+)/, @$args)[0];
+		my $log_file = $log_file || join('.', grep $_, ($log_prefix, $pcv_mode, $area, 'log'));
+		my $log_output_file = join('.', grep $_, ($log_prefix, $pcv_mode, $area, 'out'))
+			unless (grep /--pcv-plugin-output-(?:log|log-prefix)=/, @$args);
+
+		chomp(my $log_file_dos = qx/cygpath -aw "$log_file"/);
 		chomp(my $plugin_file_dos = qx/cygpath -aw "$plugin_file"/);
 		chomp(my $data_dir_dos = qx/cygpath -aw "$data_dir"/);
 
@@ -146,16 +153,21 @@ sub xedit_run {
 				@xedit_default_script_args,
 				"-script:$script",
 			) : (),
-			@$args,
+			map {
+				# If any args contain embedded '$area' values, substitute them with
+				# the actual area being executed on.
+				s/\$area/$area/gr;
+			} @$args,
+			$log_output_file ? "--pcv-plugin-output-log=$log_output_file" : (),
 			"--pcv-area=$area",
 		);
 
-		print STDERR join(' ', map +(/\s/ ? "'$_'" : $_), @cmd), "\n" if ($verbose);
+		print STDERR join(' ', map +(/\s/ ? "'$_'" : $_), @cmd), "\n" if ($verbose || $noop);
 
 		push @cmds, \@cmd, '&';
 	}
 
-	eval { run @cmds } if (@cmds);
+	eval { run @cmds } if (!$noop && @cmds);
 }
 
 sub plugins_tmp_write {
@@ -183,6 +195,7 @@ sub main {
 		'd|data-dir=s' => \$ckgen_data_dir,
 		'x|xedit-args=s' => \@xedit_default_args,
 		'a|area=s' => sub { push @area, split(',', $_[1]) },
+		'l|log=s' => \$log_file,
 		'i|interactive+' => sub { $pcvgen_script = '' },
 		'n|dry-run|noop+' => \$noop,
 		'ahk|autohotkey!' => \$autohotkey,
