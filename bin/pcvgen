@@ -5,10 +5,32 @@ set -o pipefail
 
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
 
+function data_clone() {
+	local src="$1"; shift
+	local dst="$1"; shift
+
+#	rm -rf "$dst" && mkdir -p "$dst"
+	mkdir -p "$dst"
+
+	# Copy plugins so xedit can work with them directly
+	rsync -aSH --include="*.es[pml]" --exclude="Merging" --delete "$src"/ "$dst"/
+
+	# Hard link assets so xedit can find localized string files
+	rsync -aSH --exclude="*.es[pml]" --exclude="Merging" --link-dest="$PWD/$src" "$src"/ "$dst"/
+}
+
+PLUGINS_FILE_BASE="plugins.pcvgen.base"
+PLUGINS_FILE="plugins.pcvgen"
+CKGEN_BUILD="ckgen.build"
+CKGEN_CACHE="ckgen.cache"
+CKGEN_DATA="ckgen.data"
+CKGEN_OUT="ckgen.out"
+SELF="$(basename "$0")"
 OIFS="$IFS"
 MODE="final"
+SRC="$PWD"
 
-while getopts "af:m:p:bF" opt; do
+while getopts "af:m:p:bFR" opt; do
 	case $opt in
 	a) ALL=1 ;;
 	f) PLUGINS_FILE="$OPTARG" ;;
@@ -16,22 +38,10 @@ while getopts "af:m:p:bF" opt; do
 	p) PROFILE="$OPTARG" ;;
 	b) MODE="base" ;;
 	F) FORCE=1 ;;
+	R) RESUME=1 ;;
 	?) exit -1 ;;
 	esac
 done; shift $((OPTIND - 1))
-
-function data_clone() {
-	local src="$1"; shift
-	local dst="$1"; shift
-
-	rm -rf "$dst" && mkdir -p "$dst"
-
-	# Hard link assets to xedit can find localized string files
-	rsync -avSPH --exclude="*.es[pml]" --link-dest="$PWD/$src" "$src"/ "$dst"/
-
-	# Copy plugins so xedit can work with them directly
-	rsync -avSPH --include="*.es[pml]" "$src"/ "$dst"/
-}
 
 # XXX: Make this reusable between ckgen and pcvgen
 if [[ -n "$PROFILE" ]]; then
@@ -50,25 +60,24 @@ fi
 if [[ ! -d "$SRC/Data" || ! -x "$SRC/CreationKit.exe" ]]; then
 	echo "'$SRC' is not a Fallout4 related directory" 1>&2
 	exit -1
-elif [[ -d "ckgen.out" ]] && ((!FORCE)); then
-	echo "ckgen.out exists but force option not given" 1>&2
+elif [[ -d "$CKGEN_OUT" ]] && ((!FORCE && !RESUME)); then
+	echo "'$CKGEN_OUT' exists but force option not given" 1>&2
 	exit -1
 fi
 
-if [[ -z "$PLUGINS_FILE" ]]; then
-	PLUGINS_FILE="plugins.pcvgen.$MODE"
-fi
+STATE_DIR="/tmp/$SELF/$PROFILE.$MODE"
+((RESUME)) || rm -rf "$STATE_DIR"
+mkdir -p "$STATE_DIR"
 
-rm -rf "ckgen.build" "ckgen.out" "ckgen.cache"
-
-# copy orig plugins if not already present
-if [[ ! -d "ckgen.data/orig" ]]; then
-	data_clone "Data" "ckgen.data/orig"
+STATE=ckgen_clean; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+	rm -rf "$CKGEN_BUILD" "$CKGEN_OUT" "$CKGEN_CACHE"
+	touch "$STATE_DIR/$STATE"
 fi
 
 case "$MODE" in
 base)
-	plugin_prefix="base-"
+	log_prefix="pcvgen_xe"
+	plugin_output_prefix="base-"
 	scol_args=()
 	ckgen_args=()
 
@@ -78,83 +87,143 @@ base)
 		area=( main ints other )
 	fi
 
-	# restore original plugins
+	STATE=ckgen_data_clone; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+		# copy orig plugins if not already present
+		data_clone "Data" "$CKGEN_DATA/orig"
+
+		# restore original plugins
+		for i in "${area[@]}"; do
+			data_clone "$CKGEN_DATA/orig" "$CKGEN_DATA/$i"
+		done
+		touch "$STATE_DIR/$STATE"
+	fi
+
+if false; then
+	# remove target plugins
+	STATE=pcv_clean; if ((!RESUME)) || [[ ! -f "$STATE_DIR/$STATE" ]]; then
+		for i in "${area[@]}"; do
+			rm -f "$CKGEN_DATA/$i/${plugin_output_prefix}${i}.pcv.esp"
+		done
+		touch "$STATE_DIR/$STATE"
+	fi
+fi
+
+	# grab base plugins from plugins file
+	IFS=$'\n' MASTER_BASE_LIST=( $(grep '^\*' "$PLUGINS_FILE_BASE" | tr -d '*') ); IFS="$OIFS"
+
+	STATE=pcv_init; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+		# build base esps
+		cat "$PLUGINS_FILE_BASE" "$PLUGINS_FILE" \
+			| pcvgen_xe -v \
+				--plugins=- \
+				--pcv-mode='master_clean' \
+				--pcv-plugin-base-process \
+				--pcv-plugin-base-master-force \
+				--pcv-plugin-output-log-use \
+				--pcv-plugin-output-each-use \
+				--pcv-plugin-output-combined-base-use \
+				--pcv-plugin-output-combined-prefix="${plugin_output_prefix}" \
+				--pcv-plugin-master-force-list-add="${plugin_output_prefix}\$area.pcv.esp" \
+				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}" \
+				${ALL:+-a all}
+		touch "$STATE_DIR/$STATE"
+	fi
+
+	# XXX: hack, figure out a better way - this won't work for pcv generated plugins
+	# XXX: with SCOL overrides for instance.
+	IFS=$'\n' ckgen_scol_args=( $(fgrep -l 'SCOL' "$CKGEN_DATA/orig"/*.es[pml]) ); IFS="$OIFS"
+
+	# add target plugins as args
 	for i in "${area[@]}"; do
-		data_clone "ckgen.data/orig" "ckgen.data/$i"
+		[[ -f "$log_prefix.master_clean.$i.out" ]] || continue
+		IFS=$'\n' tmp=( $(tr -d '\r' < "$log_prefix.master_clean.$i.out") ); IFS="$OIFS"
+
+		for j in "${tmp[@]}"; do
+			if [[ "$j" =~ ^base.*pcv\.esp ]]; then
+				ckgen_base_args+=( "$j:$i@all" )
+			else
+				ckgen_args+=( "$j:$i@all" )
+			fi
+			ckgen_files+=( "$CKGEN_DATA/$i/$j" )
+		done
 	done
-
-	# remove target plugins and add as args
-	for i in "${area[@]}"; do
-		rm -f "ckgen.data/${i}/${plugin_prefix}${i}.pcv.esp"
-		scol_args+=( "ckgen.data/${i}/${plugin_prefix}${i}.pcv.esp" )
-		ckgen_args+=( "ckgen.data/${i}/${plugin_prefix}${i}.pcv.esp:${i}@all" )
-	done
-
-	# grab plugins from plugins file
-	IFS=$'\n' MASTER_BASE_LIST=( $(grep '^\*' "$PLUGINS_FILE" | tr -d '*') ); IFS="$OIFS"
-
-	# build base esps
-	pcvgen_xe \
-		${ALL:+-a all} \
-		--plugins="$PLUGINS_FILE" \
-		--pcv-plugin-prefix="$plugin_prefix" \
-		--pcv-rfgp-clean=false \
-		--pcv-mode=master_clean \
-		--pcv-promote-winning-only \
-		--pcv-stat-promote-all \
-		--pcv-stat-promote-marker-prefer \
-		--pcv-plugin-base-use \
-		--pcv-plugin-combined-use \
-		--pcv-stat-master-add=false \
-		--pcv-rvis-master-add=false \
-		"${MASTER_BASE_LIST[@]/#/--pcv-master-base-list-add=}" \
-		"${MASTER_BASE_LIST[@]/#/--pcv-master-force-list-add=}"
 
 	for mode in scol precombine previs cdx csg; do
-	case "$mode" in
-	scol)
-		# build SCOL for all masters involved with source plugins (~10-15 mins)
-		IFS=$'\n' masters_scol=( $(plugin-master-reloc --include-self -qr "${scol_args[@]}") ); IFS="$OIFS"
+		case "$mode" in
+		scol)
+			STATE="${mode}_pre"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+				if ((!ALL)); then
+					mkdir -p "$CKGEN_DATA/all"
+					cp -lfpt "$CKGEN_DATA/all" "${ckgen_scol_args[@]}"
+				fi
+				touch "$STATE_DIR/$STATE"
+			fi
 
-		# XXX: hack, figure out a better way
-		if ((!ALL)); then
-			mkdir -p "ckgen.data/all"
-			cp -pt "ckgen.data/all" "${scol_args[@]}"
-		fi
+			STATE="${mode}_gen"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+				ckgen -nj16 ${PROFILE:+-p $PROFILE} "$mode" "${ckgen_scol_args[@]}"
+				touch "$STATE_DIR/$STATE"
+			fi
+			;;
+		precombine|previs)
+			STATE="${mode}_gen"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+				# build precombines or previs for all base plugins (~1-2h)
+				ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" \
+					clean all "${ckgen_base_args[@]}" \
+					filtered all "${ckgen_args[@]}"
+				touch "$STATE_DIR/$STATE"
+			fi
 
-		ckgen -nj16 ${PROFILE:+-p $PROFILE} "$mode" "${masters_scol[@]}"
-		;;
-	precombine|previs)
-		# build precombines or previs for all base plugins (~1-2h)
-		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" clean all "${ckgen_args[@]}"
+			STATE="${mode}_merge"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+				# copy generated precombine or previs plugins back into $CKGEN_DATA dirs
+				# and merge precombine or previs data back into base plugins
+				for i in "${ckgen_base_args[@]}" "${ckgen_args[@]}"; do
+					d="${i/:*}"; d="${d/.esp.*/.esp}"; d="${d/.esm.*/.esm}"; d="${d/.esl.*/.esl}";
+					a="${i/*:}"; a="${a/@*}"
 
-		# copy generated precombine or previs plugins back into ckgen.data dirs
-		# and merge precombine or previs data back into base plugins
-		for i in "${area[@]}"; do
-			[[ -d "ckgen.out/${plugin_prefix}${i}.pcv.esp" ]] || continue
-			find "ckgen.out/${plugin_prefix}${i}.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -print0 | xargs -tr0 cp -pt "ckgen.data/$i"
-			find "ckgen.out/${plugin_prefix}${i}.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -printf '%f\n'
-		done | pcvgen_xe \
-			${ALL:+-a all} \
-			--pcv-mode="${mode}_merge" \
-			--pcv-plugin-combined-use \
-			-p -
-		;;
-	cdx|csg)
-		# generate cdx data or compress psg for base plugins
-		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" "${ckgen_args[@]}"
-		;;
-	esac
+					[[ -d "$CKGEN_OUT/$d" ]] || continue
+					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -print0 | xargs -tr0 cp -lfpt "$CKGEN_DATA/$a"
+					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -printf '%f\n'
+				done | pcvgen_xe -v \
+					--plugins=- \
+					--pcv-mode="${mode}_merge" \
+					--pcv-plugin-output-combined-use \
+					${ALL:+-a all}
+				touch "$STATE_DIR/$STATE"
+			fi
+			;;
+		cdx|csg)
+			STATE="${mode}_gen"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+				# generate cdx data or compress psg for base plugins
+				ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" "${ckgen_base_args[@]}"
+				touch "$STATE_DIR/$STATE"
+			fi
+			;;
+		esac
+
 	done
 
-	# copy base plugin esps, geometry, archive, and cdx files into Data
-	for i in "${area[@]}"; do
-		[[ -d "ckgen.out/${plugin_prefix}${i}.pcv.esp" ]] || continue
-		find "ckgen.out/${plugin_prefix}${i}.pcv.esp" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -pt "Data"/
+# XXX: needs to be some kind of extract precombines/previs to final plugin step here.
+# XXX: also needs to copy ba2s for any SCOL data or something else needs to be figured out.
+exit -1
+	STATE=pcv_final; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+		touch "$STATE_DIR/$STATE"
+	fi
 
-		[[ -d "ckgen.data/$i" ]] || continue
-		find "ckgen.data/$i" -type f -name "${plugin_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -pt "Data"/
-	done
+	STATE=pcv_final_copy; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
+		# copy base plugin esps, geometry, archive, and cdx files into Data
+		for i in "${ckgen_base_args[@]}" "${ckgen_args[@]}"; do
+			d="${i/:*}"; d="${d/.esp.*/.esp}"; d="${d/.esm.*/.esm}"; d="${d/.esl.*/.esl}";
+			a="${i/*:}"; a="${a/@*}"
+
+			[[ -d "$CKGEN_OUT/$d" ]] || continue
+			find "$d" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -lfpt "Data"/
+
+			[[ -d "$CKGEN_DATA/$a" ]] || continue
+			find "$CKGEN_DATA/$a" -type f -name "${plugin_output_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -lfpt "Data"/
+		done
+
+		touch "$STATE_DIR/$STATE"
+	fi
 
 	# extract all precombine/previs data into final plugins (not necessary with base)
 	# ensure base plugins are renamed to esm's and flagged correctly
@@ -169,64 +238,59 @@ final)
 	)
 
 	# XXX: hack, figure out a better way of managing generated plugins
-	cp -pt "ckgen.data/main" "Data/main.pcv.esp"
-	cp -pt "ckgen.data/ints" "Data/ints.pcv.esp"
-	cp -pt "ckgen.data/other" "Data/other.pcv.esp"
+	cp -pt "$CKGEN_DATA/main" "Data/main.pcv.esp"
+	cp -pt "$CKGEN_DATA/ints" "Data/ints.pcv.esp"
+	cp -pt "$CKGEN_DATA/other" "Data/other.pcv.esp"
 
 	# build reduced esps
-	pcvgen_xe \
+	pcvgen_xe -v \
 		--plugins="$PLUGINS_FILE" \
-		--pcv-mode=master_clean \
-		--pcv-promote-winning-only \
-		--pcv-stat-promote-all \
-		--pcv-stat-promote-marker-prefer \
-		--pcv-plugin-base-use \
-		--pcv-plugin-each-use \
-		--pcv-stat-master-add=true \
-		--pcv-rvis-master-add=true \
-		"${MASTER_BASE_LIST[@]/#/--pcv-master-base-list-add=}" \
-		"${MASTER_BASE_LIST[@]/#/--pcv-master-force-list-add=}"
+		--pcv-mode='master_clean' \
+		--pcv-plugin-base-process \
+		--pcv-plugin-output-each-use \
+		"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}" \
+		"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-force-list-add=}"
 
 	for mode in scol precombine previs cdx; do
 	case "$mode" in
 	scol)
 		# build SCOL for all masters involved with source plugins (~10-15 mins)
-		IFS=$'\n' masters_scol=( $(plugin-master-reloc --include-self -qr ckgen.data/main/main.pcv.esp ckgen.data/ints/ints.pcv.esp ckgen.data/other/other.pcv.esp) ); IFS="$OIFS"
+		IFS=$'\n' scol_masters=( $(plugin-master-reloc --include-self -qr $CKGEN_DATA/main/main.pcv.esp $CKGEN_DATA/ints/ints.pcv.esp $CKGEN_DATA/other/other.pcv.esp) ); IFS="$OIFS"
 
 		# XXX: hack, figure out a better way
-		mkdir -p "ckgen.data/all" && cp -pt "ckgen.data/all" ckgen.data/main/main.pcv.esp ckgen.data/ints/ints.pcv.esp ckgen.data/other/other.pcv.esp
+		mkdir -p "$CKGEN_DATA/all" && cp -pt "$CKGEN_DATA/all" $CKGEN_DATA/main/main.pcv.esp $CKGEN_DATA/ints/ints.pcv.esp $CKGEN_DATA/other/other.pcv.esp
 
-		ckgen -nj16 ${PROFILE:+-p $PROFILE} "$mode" "${masters_scol[@]}"
+		ckgen -nj16 ${PROFILE:+-p $PROFILE} "$mode" "${scol_masters[@]}"
 		;;
 	precombine|previs)
 		# build precombines or previs for all base plugins (~1-2h)
-		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" clean all ckgen.data/main/main.pcv.esp:main@all ckgen.data/ints/ints.pcv.esp:ints@all ckgen.data/other/other.pcv.esp:other@all
+		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" clean all $CKGEN_DATA/main/main.pcv.esp:main@all $CKGEN_DATA/ints/ints.pcv.esp:ints@all $CKGEN_DATA/other/other.pcv.esp:other@all
 
-		# copy generated precombine or previs plugins back into ckgen.data dirs
+		# copy generated precombine or previs plugins back into $CKGEN_DATA dirs
 		# and merge precombine or previs data back into base plugins
 		for i in main ints other; do
-			[[ -d "ckgen.out/$i.pcv.esp" ]] || continue
-			find "ckgen.out/$i.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -print0 | xargs -tr0 cp -pt "ckgen.data/$i"
-			find "ckgen.out/$i.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -printf '%f\n'
-		done | pcvgen_xe \
+			[[ -d "$CKGEN_OUT/$i.pcv.esp" ]] || continue
+			find "$CKGEN_OUT/$i.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -print0 | xargs -tr0 cp -pt "$CKGEN_DATA/$i"
+			find "$CKGEN_OUT/$i.pcv.esp" -type f -name "*.${mode}.*.es[pml]" -printf '%f\n'
+		done | pcvgen_xe -v \
 			--pcv-mode="${mode}_merge" \
 			--pcv-plugin-combined-use \
 			-p -
 		;;
 	cdx)
 		# generate cdx data for base plugins
-		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" ckgen.data/main/main.pcv.esp:main@all ckgen.data/ints/ints.pcv.esp:ints@all ckgen.data/other/other.pcv.esp:other@all
+		ckgen -nj12 ${PROFILE:+-p $PROFILE} "$mode" $CKGEN_DATA/main/main.pcv.esp:main@all $CKGEN_DATA/ints/ints.pcv.esp:ints@all $CKGEN_DATA/other/other.pcv.esp:other@all
 		;;
 	esac
 	done
 
 	# copy base plugin esps, geometry, archive, and cdx files into Data
 	for i in main ints other; do
-		[[ -d "ckgen.out/$i.pcv.esp" ]] || continue
-		find "ckgen.out/$i.pcv.esp" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -pt "Data"/
+		[[ -d "$CKGEN_OUT/$i.pcv.esp" ]] || continue
+		find "$CKGEN_OUT/$i.pcv.esp" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -pt "Data"/
 
-		[[ -d "ckgen.data/$i" ]] || continue
-		find "ckgen.data/$i" -type f -name "$i.pcv.esp" -print0 | xargs -tr0 cp -pt "Data"/
+		[[ -d "$CKGEN_DATA/$i" ]] || continue
+		find "$CKGEN_DATA/$i" -type f -name "$i.pcv.esp" -print0 | xargs -tr0 cp -pt "Data"/
 	done
 
 	# extract all precombine/previs data into final plugins (not necessary with base)
