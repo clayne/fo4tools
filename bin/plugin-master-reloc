@@ -154,7 +154,7 @@ sub main {
 		print STDERR Dumper $path if ($verbose > 1);
 
 		my $fd;
-		if ($path eq '-') {
+		if ($path eq '/dev/stdin' || $path eq '-') {
 			$fd = *STDIN;
 			$esm_to_esp = 0;
 			$esp_to_esm = 0;
