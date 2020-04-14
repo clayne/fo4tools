@@ -30,9 +30,10 @@ OIFS="$IFS"
 MODE="final"
 SRC="$PWD"
 
-while getopts "af:m:p:bFR" opt; do
+while getopts "aif:m:p:bFR" opt; do
 	case $opt in
 	a) ALL=1 ;;
+	i) INTERACTIVE=1 ;;
 	f) PLUGINS_FILE="$OPTARG" ;;
 	m) MODE="$OPTARG" ;;
 	p) PROFILE="$OPTARG" ;;
@@ -104,7 +105,7 @@ base)
 	STATE=pcv_init; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
 		# build base esps
 		cat "$PLUGINS_FILE_BASE" "$PLUGINS_FILE" \
-			| pcvgen_xe -v \
+			| pcvgen_xe -v ${INTERACTIVE:+-i} ${ALL:+-a all} \
 				--plugins=- \
 				--pcv-mode='master_clean' \
 				--pcv-plugin-base-process \
@@ -116,8 +117,7 @@ base)
 				--pcv-plugin-output-base-combined-esm \
 				--pcv-plugin-output-base-combined-prefix="${plugin_output_base_combined_prefix}" \
 				--pcv-plugin-master-force-list-add="${plugin_output_base_combined_prefix}\$area.pcv.esp" \
-				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}" \
-				${ALL:+-a all}
+				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}"
 		touch "$STATE_DIR/$STATE"
 	fi
 
@@ -172,14 +172,14 @@ base)
 					d="${i/:*}"; d="${d/.esp.*/.esp}"; d="${d/.esm.*/.esm}"; d="${d/.esl.*/.esl}";
 					a="${i/*:}"; a="${a/@*}"
 
+					# XXX: check for missing output files and emit warnings
 					[[ -d "$CKGEN_OUT/$d" ]] || continue
 					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -print0 | xargs -tr0 cp -lfpt "$CKGEN_DATA/$a"
 					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -printf '%f\n'
-				done | pcvgen_xe -v \
+				done | pcvgen_xe -v ${INTERACTIVE:+-i} ${ALL:+-a all} \
 					--plugins=- \
 					--pcv-mode="${mode}_merge" \
-					--pcv-plugin-output-combined-use \
-					${ALL:+-a all}
+					--pcv-plugin-output-combined-use
 				touch "$STATE_DIR/$STATE"
 			fi
 			;;
