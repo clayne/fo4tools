@@ -121,8 +121,8 @@ fi
 				--pcv-plugin-base-master-force \
 				--pcv-plugin-output-log-use \
 				--pcv-plugin-output-each-use \
-				--pcv-plugin-output-combined-base-use \
-				--pcv-plugin-output-combined-prefix="${plugin_output_prefix}" \
+				--pcv-plugin-output-base-combined-use \
+				--pcv-plugin-output-base-combined-prefix="${plugin_output_prefix}" \
 				--pcv-plugin-master-force-list-add="${plugin_output_prefix}\$area.pcv.esp" \
 				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}" \
 				${ALL:+-a all}
