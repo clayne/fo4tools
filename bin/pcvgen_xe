@@ -21,20 +21,16 @@ local $Data::Dumper::Sortkeys = 1;
 our $VERSION = '$Id$';
 
 my $fo4tools_conf = '/usr/local/etc/fo4tools.conf';
+my $ckgen_conf = '/usr/local/etc/ckgen.conf';
 
 # Autohotkey specific
 my $autohotkey_path = '/cygdrive/c/Program Files/AutoHotkey/AutoHotkey.exe',
-my $xedit_wrap_path = "$ENV{'HOME'}/git/fo4tools/xedit/ahk/xedit_wrap.ahk";
 
-my $ckgen_data_dir='ckgen.data';
-my $pcvgen_script='Fallout4 - Precombined split.pas';
-my $pcvgen_plugin_file='plugins.pcvgen';
-my @pcvgen_area = qw(
-	main
-	ints
-	other
-);
-my $xedit_default_settings = 'plugins.fo4viewsettings';
+# xedit specific
+my $xedit_wrap_path = "$ENV{'HOME'}/git/fo4tools/xedit/ahk/xedit_wrap.ahk";
+my $xedit_path = 'fo4edit.exe';
+my $xedit_settings_suffix = 'fo4viewsettings';
+my $xedit_default_settings = "plugins.$xedit_settings_suffix";
 my @xedit_default_args = qw(
         -iknowwhatimdoing
         -allowmasterfilesedit
@@ -47,35 +43,60 @@ my @xedit_default_script_args = qw(
         -autoexit
 );
 
-my $conf = {};
+my $pcvgen_script = 'Fallout4 - Precombined split.pas';
+my $pcvgen_plugin_file_default = 'Plugins.txt';
+my @pcvgen_plugin_files = qw(
+	plugins.pcvgen.base
+	plugins.pcvgen
+);
+my @pcvgen_area = qw(
+	main
+	ints
+	other
+);
 
+my $conf = {};
 my $log_file;
-my $log_prefix=basename($0);
+my $log_prefix = basename($0);
 my $autohotkey = 1;
 my $verbose = 0;
 my $noop = 0;
 
-sub conf_read {
-	my $conf = shift || die;
-	my $tmp = {};
+sub conf_get {
+	my $conf = shift;
+	my $key = shift || die;
 
-	open(my $fd, '<', $conf) or die "open: $conf: $!";
+	return $conf->{$key};
+}
+
+sub conf_read {
+	my $conf = shift;
+	my $conf_file = shift || die;
+
+	open(my $fd, '<', $conf_file) or return;
 	while (<$fd>) {
 		chomp;
-		my ($key, $val) = /^([^=]+)="(.+)"$/ or next;
+		my ($key, $val) = /^([^#=]+)=['"](.+)['"]$/ or next;
 		$val =~ s/\$([A-Z0-9_]+)/$ENV{$1}/g;
-		$tmp->{$key} = $val;
+		$conf->{$key} = $val;
 	}
 	close($fd);
 
-	return $tmp;
+	return $conf;
 }
 
 sub data_dir_resolve {
 	my $area = shift || die;
 	my $data_dir = shift || die;
 
-	foreach ("$data_dir/$area", "$data_dir", 'Data', getcwd) {
+	my @data_dirs = (
+		"$data_dir/$area",
+		$data_dir,
+		'Data',
+		getcwd,
+	);
+
+	foreach (@data_dirs) {
 		-d && return $_;
 	}
 
@@ -85,8 +106,19 @@ sub data_dir_resolve {
 sub plugin_file_resolve {
 	my $area = shift || die;
 	my $plugin_file = shift || die;
+	my $data_dir = shift || die;
+	my $user_dir = shift || die;
 
-	foreach (map +($_ ? "$_/$plugin_file" : $plugin_file), "$ckgen_data_dir/$area", "$ckgen_data_dir", 'Data', getcwd, '') {
+	my @plugin_file_dirs = (
+		join('/', $data_dir, $area),
+		$data_dir,
+		'Data',
+		getcwd,
+		join('/', $user_dir, 'Fallout4'),
+	);
+
+	foreach (map +($plugin_file !~ /^\// ? "$_/$plugin_file" : $plugin_file), @plugin_file_dirs) {
+		print STDERR Dumper { plugin_file_resolve => $_ } if ($verbose > 1);
 		-f && return $_;
 	}
 
@@ -95,7 +127,8 @@ sub plugin_file_resolve {
 
 sub xedit_run {
 	my %opts = @_;
-	my ($area, $args, $script, $data_dir, $plugin_file) = map $opts{$_}, qw(area args script data_dir plugin_file);
+	my ($area, $args, $script, $data_dir, $user_dir, $plugin_file)
+		= map $opts{$_}, qw(area args script data_dir user_dir plugin_file);
 	my @cmds;
 
 	# Shim autohotkey script into cmds so it runs first.
@@ -111,20 +144,20 @@ sub xedit_run {
 
 	foreach my $area (@$area) {
 		my $data_dir = data_dir_resolve($area, $data_dir);
-		my $plugin_file = plugin_file_resolve($area, $plugin_file);
+		my $plugin_file = plugin_file_resolve($area, $plugin_file, $data_dir, $user_dir);
 
 		# If <plugin_file (last extension removed).fo4viewsettings> doesn't exist, copy
 		# an existing one using the default name (usually 'plugins.fo4viewsettings').
 		my $plugin_file_base = ($plugin_file =~ /\./) ? ($plugin_file =~ /(.+)\..+$/)[0] : $plugin_file;
-		my $plugin_settings = join('.', $plugin_file_base, 'fo4viewsettings');
+		my $plugin_settings = join('.', $plugin_file_base, $xedit_settings_suffix);
 		if (! -f $plugin_settings) {
 			foreach (
 				$xedit_default_settings,
-				join('/', $conf->{'DATADIR'}, 'Fallout4', $xedit_default_settings),
+				join('/', $user_dir, 'Fallout4', $xedit_default_settings),
 			) {
 				next unless -f;
 
-				copy($_, $plugin_settings);
+				copy($_, $plugin_settings) unless ($noop);
 				last;
 			}
 		}
@@ -143,7 +176,7 @@ sub xedit_run {
 
 		my ($in, $out, $err);
 		my @cmd = (
-			"./fo4edit.exe",
+			$xedit_path,
 #			"-T:$temp_dir_dos",
 			"-R:$log_file_dos",
 			"-P:$plugin_file_dos",
@@ -159,7 +192,7 @@ sub xedit_run {
 				s/\$area/$area/gr;
 			} @$args,
 			$log_output_file ? "--pcv-plugin-output-log=$log_output_file" : (),
-			"--pcv-area=$area",
+			$area ? "--pcv-area=$area" : (),
 		);
 
 		print STDERR join(' ', map +(/\s/ ? "'$_'" : $_), @cmd), "\n" if ($verbose || $noop);
@@ -167,7 +200,11 @@ sub xedit_run {
 		push @cmds, \@cmd, '&';
 	}
 
-	eval { run @cmds } if (!$noop && @cmds);
+	if (!$noop && @cmds) {
+		# look for xedit in the current directory
+		local $ENV{'PATH'} = join(':', getcwd, $ENV{'PATH'});
+		run @cmds;
+	}
 }
 
 sub plugins_tmp_write {
@@ -177,23 +214,33 @@ sub plugins_tmp_write {
 	return $tmpfile;
 }
 
+sub stdin_or_file {
+	return ($_[0] eq '' || $_[0] eq '-') ? '/dev/stdin' : $_[0];
+}
+
 sub main {
-	my $ret;
 	my $help = 0;
 	my @area = ();
 	my @pcvgen_args = ();
+	my $ckgen_data_dir;
+	my $fo4tools_user_dir;
+	my $plugin_file_tmp;
+	my $plugin_file;
+	my @plugin_files;
 	my @plugins;
-	my $tmpfile;
+	my $ret = 1;
 
-	$conf = conf_read($fo4tools_conf);
+	conf_read($conf, $fo4tools_conf);
+	conf_read($conf, $ckgen_conf);
 
 	local @ARGV = @_;
 
 	GetOptions(
-		'p|plugins:s' => \$pcvgen_plugin_file,
 		's|script=s' => \$pcvgen_script,
 		'd|data-dir=s' => \$ckgen_data_dir,
+		'u|user-dir=s' => \$fo4tools_user_dir,
 		'x|xedit-args=s' => \@xedit_default_args,
+		'p|plugin-files:s' => sub { push @plugin_files, $_[1] && split(',', $_[1]) },
 		'a|area=s' => sub { push @area, split(',', $_[1]) },
 		'l|log=s' => \$log_file,
 		'i|interactive+' => sub { $pcvgen_script = '' },
@@ -203,38 +250,57 @@ sub main {
                 'h|help' => \$help,
 		'<>' => sub {
 			local $_ = $_[0];
-			push @{/^(?:main|ints|other|all)$/ ? \@area : /^--/ ? \@pcvgen_args : \@plugins}, $_[0];
+			push @{/^(?:main|ints|other|all)$/ ? \@area
+				: /^--/ ? \@pcvgen_args
+				: \@plugins}, $_[0];
 		},
         ) && !$help || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
-	# Read plugins from stdin if none specified (XXX: handle argv?)
-	if (scalar @plugins) {
-		$tmpfile = plugins_tmp_write(@plugins);
-		$pcvgen_plugin_file = $tmpfile;
-	} elsif (!$pcvgen_plugin_file || $pcvgen_plugin_file eq '-' || $pcvgen_plugin_file eq '/dev/stdin') {
-		while (<STDIN>) {
-			chomp;
-			push @plugins, $_;
+	# defaults if no command line options
+	$ckgen_data_dir ||= join('/', getcwd, conf_get($conf, 'CKGEN_DATA_DIR'));
+	$fo4tools_user_dir ||= conf_get($conf, 'DATADIR');
+	@area = @pcvgen_area unless (@area);
+
+	# command line args always win first
+	if (!scalar @plugins) {
+		if (!$plugin_file) {
+			# use default plugin files if none specified
+			@plugin_files = (grep -f, @pcvgen_plugin_files) unless (@plugin_files);
+
+			foreach (map stdin_or_file($_), @plugin_files) {
+				open(my $fd, '<', $_) or die "open: $_: $!";
+				while (<$fd>) { chomp; push @plugins, $_ };
+				close($fd) or die "close: $_: $!";
+			}
 		}
-		$tmpfile = plugins_tmp_write(@plugins);
-		$pcvgen_plugin_file = $tmpfile;
 	}
 
-	@area = qw(main ints other) unless (@area);
+	$plugin_file_tmp = plugins_tmp_write(@plugins) if (@plugins);
+	$plugin_file ||= $plugin_file_tmp || $pcvgen_plugin_file_default;
 
-	print STDERR Dumper { area => \@area, pcvgen_args => \@pcvgen_args, verbose => $verbose } if ($verbose > 1);
-
-	xedit_run(
+	my %xedit_run_args = (
 		area => \@area,
 		args => \@pcvgen_args,
 		script => $pcvgen_script,
-		plugin_file => $pcvgen_plugin_file,
+		plugin_file => $plugin_file,
 		data_dir => $ckgen_data_dir,
+		user_dir => $fo4tools_user_dir,
 	);
 
-	unlink($tmpfile) if ($tmpfile);
+	print STDERR Dumper { %xedit_run_args } if ($verbose > 1);
+	eval { xedit_run(%xedit_run_args) };
+	if ($@) {
+		print STDERR $@;
+		$ret = 0;
+	}
 
-	return 1;
+	if ($plugin_file_tmp) {
+		foreach ($plugin_file_tmp, "$plugin_file_tmp.$xedit_settings_suffix") {
+			-f && unlink($_);
+		}
+	}
+
+	return $ret;
 }
 
 exit !main(@ARGV) unless (caller);
