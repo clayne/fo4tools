@@ -1,12 +1,9 @@
+source /usr/local/etc/fo4tools.sh
+
 # source /etc/bash_completion.d/fo4tools
 # export PS1='\[\033]0;\u@\h:\W\007\]\u@\h:\w$(__fo4tools_ps1) \\$ '
 __fo4tools_ps1() {
-	[[ "$PWD" =~ Fallout\ ?4 ]] || return
-
-	p="${PWD/Fallout 4\/*/Fallout 4}"; p="${p/Fallout4\/*/Fallout4}"
-	fo4prof=$(readlink.exe -en "$p")
-	fo4prof=${fo4prof#*.}
-	fo4prof=${fo4prof/\/*}
+	fo4prof=$(fo4tools_prof_name "$PWD")
 
 	[[ -n "$fo4prof" ]] && printf -- ' (%s)' "$fo4prof"
 }
