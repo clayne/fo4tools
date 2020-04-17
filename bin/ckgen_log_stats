@@ -1,0 +1,176 @@
+#!/usr/bin/perl
+
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use Carp qw(confess);
+use File::Basename qw(basename dirname);
+use File::Copy qw(copy);
+use Digest::MD5 qw(md5_hex);
+use Data::Dumper;
+use Pod::Usage;
+
+use warnings FATAL => qw(all);
+use strict;
+
+local $SIG{__DIE__} = \&confess;
+local $Data::Dumper::Sortkeys = 1;
+
+our $VERSION = '$Id$';
+
+my $verbose = 0;
+
+sub gen_sub {
+	$_ = $_[0];
+
+	# MASTERFILE:			REFR '<EDID>' (<FORMID>)	Ref (<FORMID>) to base object WorkshopVendorWeapons01 (<FORMID>) in cell <CELL> (<COORDS>) (<FORMID>) should be persistent but is not.
+	s/(?<=base object ).+(?= \(<FORMID>\))/<EDID>/g && return;
+
+	# FORMS:			REFR '<EDID>' (<FORMID>)	DOOR: Reference IndMetalDbDoorLoad01 <FORMID> has portal to navmesh <FORMID> which is not found.  Please finalize navmesh in cell Wilderness <FORMID> to resolve this.
+	s/(?<=Reference ).+(?= <FORMID>)/<EDID>/g && return;
+
+	# DIALOGUE:			INFO '<EDID>' (<FORMID>)	Info (<FORMID>) in quest 'DLC04POISC07Dialogue' uses shared info '<EDID>' (<FORMID>) in non-starts enabled or potentially dormant quest '<EDID>' (<FORMID>)
+	s/(?<=in quest )'[^']+'/'<EDID>'/g && return;
+
+	# MASTERFILE:			REFR '<EDID>' (<FORMID>)	Ref (<FORMID>) to base object XMarker (<FORMID>) in cell PackInGameJamTreeOrangeStorageCell (0, 0) (<FORMID>) should be persistent but is not.
+	s/(?<=cell ).+ \(-?\d+, -?\d+\)/<CELL> (<COORDS>)/g && return;
+
+	# Generated unbounded/always render interior spacial key (<FORMID>) overlaps ref ID in cell BostonPublicLibrary02 (<FORMID>)
+	s/(?<=cell ).+(?= \(<FORMID>\))/<CELL>/g && return;
+
+	# PATHFINDING:			NAVI '<EDID>' (<FORMID>)	NavMesh in cell Wilderness (Commonwealth[-25,6]) should be refinalized, there are navmesh bounds missing
+	s/(?<=cell ).+\(\w+\[-?\d+,-?\d+\]\)/<CELL> (<WORLD>[<COORDS>])/g && return;
+
+	# Cell: '<EDID>' (<FORMID>) (3, 1) in world '<EDID>' (<FORMID>)
+	s/(?<=\(<FORMID>\) )\(-?\d+, -?\d+\)(?= in world)/(<COORDS>)/g && return;
+
+	# REFR Form '<EDID>' (<FORMID>) to STAT form '<EDID>' (<FORMID>) in Cell '<EDID>' (<FORMID>) (12, -2) in WorldSpace '<EDID>' (<FORMID>)
+	s/\(-?\d+, -?\d+\)(?= in WorldSpace)/(<COORDS>)/g && return;
+
+	# MASTERFILE:			REFR '<EDID>' (<FORMID>)	Potentially Invalid Z value (-51128.34) on reference:
+	s/(?<=Potentially Invalid Z value )\(-?[.\d]+\)/<VALUE>/g && return;
+
+	# MASTERFILE:				DLC file 'DLCRobot.esm' contains non-partial QUST '<EDID>' (<FORMID>)
+	s/(?<=DLC file )'[^']+'/'<PLUGIN>'/g && return;
+
+	# MASTERFILE:			PACK '<EDID>' (<FORMID>)	LoadProcedureTreeItem:  File 'DLCCoast.esm' has package with missing procedure tree item.
+	s/(?<=File )'[^']+'(?= has)/'<PLUGIN>'/g && return;
+
+	# FORMS:				Non-parent NAVI form '<EDID>' (<FORMID>) exists in both file 'DLCworkshop01.esm' and 'DLCRobot.esm'
+	s/(?<=both file )'[^']+' and '[^']+'/'<PLUGIN>' and '<PLUGIN>'/g && return;
+
+	# FORMS:				Form '<EDID>' (<FORMID>) of type NAVI in file 'CombinedObjects.esp' was not freed.
+	s/(?<=in file )'[^']+'/<PLUGIN>/g && return;
+
+	# MASTERFILE:			LVLI '<EDID>' (<FORMID>)	Unable to find Leveled Object Form (<FORMID>) for owner object "DLC03_LL_Armor_Trapper_Coast_Underwear".
+	s/(?<=for owner object )"[^"]+"/"<EDID>"/g && return;
+
+	# MASTERFILE:			TXST '<EDID>' (<FORMID>)	Could not find <FORMID> 'DLC04\Decals\DLC04_ChalkVines01.BGSM' to init texture set '<EDID>' (<FORMID>).
+	s/(?<=Could not find <FORMID> )'[^']+'/'<PATH>'/g && return;
+
+	# MASTERFILE:				LOCALIZATION: Zero entries or empty block size read from strings file STRINGS/DLCWorkshop02_en.ILSTRINGS. Strings will be missing.
+	s/(?<=from strings file ).+(?=. Strings will be missing)/<PATH>/g && return;
+
+	# FORMS:			RACE '<EDID>' (<FORMID>)	Could not find face customization texture 'Actors/Synths/Gen2SkinHead_d.dds' on race '<EDID>' (<FORMID>)
+	s/(?<=face customization texture )'[^']+'/'<PATH>'/g && return;
+
+	# SHADERS:				Could not find material data\materials\Props\VltAtmosphereSensor\VltAtmosphereSensor01_Damage.BGSM
+	s/(?<=Could not find material ).+/<PATH>/g && return;
+
+	# MASTERFILE:			RACE '<EDID>' (<FORMID>)	Race 'HumanRaceSubGraphDataAdditiveDLC06' needs to have at least one Biped Object Name in the editor.
+	s/(?<=Race )'[^']+'(?= needs to have)/'<EDID>'/g && return;
+
+	# MAGIC:			SPEL '<EDID>' (<FORMID>)	Magic Item (<FORMID>) 'DLC03VRDataRetrieverAbility' has no effects defined.
+	s/(?<=Magic Item \(<FORMID>\) )'[^']+'(?= has no)/'<EDID>'/g && return;
+
+	# QUESTS:			QUST '<EDID>' (<FORMID>)	Could not find forced ref (<FORMID>) for Ref Alias 'Frog'.
+	s/(?<=forced ref \(<FORMID>\) for Ref Alias )'[^']+'/'<EDID>'/g && return;
+
+	# DEFAULT:				Failed to collect ref	BannerBaseball1946	<FORMID>	gamebryo anims
+	s/(?<=Failed to collect ref\t).+(?=\t<FORMID>)/<EDID>/g && return;
+
+	# MASTERFILE:			NAVI '<EDID>' (<FORMID>)	NavmeshInfo 0600f61a has no parent space, ignoring
+	s/(?<=NavmeshInfo )[0-9a-f]{8}(?= has no parent)/<FORMID>/g && return;
+
+	# MASTERFILE:			PACK '<EDID>' (<FORMID>)	Unable to find Package Location Reference (<FORMID>) on owner object "f3DNPC_AudreyTraveltoChild".
+	s/(?<=on owner object )"[^"]+"/"<EDID>"/g && return;
+
+	# DEFAULT:				Generating for interior cell f3DNPCDorm...
+	s/(?<=Generating for interior cell ).+(?=\.\.\.)/<CELL>/g && return;
+
+	# FORMS:				Could not find NPC for FillAttackSecondsFromAnimation for weapon DLC03WeapPaintballOrangeRight (<FORMID>)
+	s/(?<=Could not find NPC for ).+(?= for weapon ).+(?= \(<FORMID>\))/<EDID> for weapon <EDID>/g && return;
+
+	# MASTERFILE:			INFO '<EDID>' (<FORMID>)	Topic info (<FORMID>) cannot set quest stage 20 on end because the parent quest FFDiamondCity07 (<FORMID>) doesn't have a stage with that index.
+	s/(?<=the parent quest ).+(?= \(<FORMID>\))/<EDID>/g && return;
+
+	# SCRIPTS:                        QUST '<EDID>' (<FORMID>)        Property DLC04GageRef on script DLC04:DLC04_BaseGameAffinityEventsScript on DLC04_CompanionAffinity (<FORMID>) is pointing at an invalid object
+	s/(?<=Property ).+(?= on script ).+(?= on ).+(?= \(<FORMID>\) ).+(?= is pointing)/<SCRIPT_PROPERTY> on script <SCRIPT> on <EDID> (<FORMID>)/g && return;
+
+	# SCRIPTS:			QUST '<EDID>' (<FORMID>)	Property CoasterData on script DLC04:DLC04GZNukaGalaxyQuestScript on DLC04GZNukaGalaxy (<FORMID>) array element 0 struct variable ETrigger01 is pointing at an invalid object
+	s/(?<=Property ).+(?= on script ).+(?= on ).+(?= \(<FORMID>\) array element ).+(?= struct variable ).+(?= is pointing)/<SCRIPT_PROPERTY> on script <SCRIPT> on <EDID> (<FORMID>) array element <IDX> struct variable <SCRIPT_VARIABLE>/g && return;
+
+	# SCRIPTS:			DOOR '<EDID>' (<FORMID>)	Property Robots on script MAX_CompBoss_SwitchScript on 1MAX_CompBossLever (<FORMID>) array element 15 is pointing at an invalid object
+	s/(?<=Property ).+(?= on script ).+(?= on ).+(?= \(<FORMID>\) array element ).+(?= is pointing)/<SCRIPT_PROPERTY> on script <SCRIPT> on <EDID> (<FORMID>) array element <IDX>/g && return;
+
+	# MASTERFILE:			SCEN '<EDID>' (<FORMID>)	Could not find topic <FORMID> on dialogue action 2 for scene DLC04RaidWipeOut_001_ShankEarlyShutDown (<FORMID>).
+	s/(?<=on dialogue action ).+(?= for scene ).+(?= \(<FORMID>\))/<IDX> for scene <EDID>/g && return;
+
+
+#	s/(?<=).+(?= )//g && return;
+
+}
+
+sub main {
+	my $ret = 1;
+	my $help = 0;
+	my $noop = 0;
+	my $reverse;
+
+	local @ARGV = @_;
+	GetOptions(
+                'h|help' => \$help,
+		'v|verbose+' => \$verbose,
+		'r|reverse+' => \$reverse,
+		'n|dry-run+' => \$noop,
+        ) && (!$help && ($ret = 1));
+
+        $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	while (<>) {
+		/cubemap which will cause D3D errors/ && next;
+		/Warnings were encountered/ && next;
+		/Unable to map bone/ && next;
+		/GENERATING!! ROOTCELL/ && next;
+		/ERROR: duplicate model ID/ && next;
+		/marked for flutter animation, but has no vertex colors/ && next;
+		/invalid smoothness/ && next;
+		/\s+m_pcAVObjectName\s+/ && next;
+
+		s/\R//g;
+		s/(?<=\W)[A-F0-9]{8}(?:(?=\W)|$)/<FORMID>/g;
+		s/(?:"[^"]*"|'[^']*')(?= \(<FORMID>\))/'<EDID>'/g;
+		s/, Text: ".+"/, Text: "<TEXT>"/g;
+
+		# MASTERFILE:			REFR '<EDID>' (<FORMID>)	Reference <FORMID> ('RockPileL01RubbleRock01') has a custom material swap. Please change to a standard material swap.
+		s/(?<=<FORMID> )\('[^']+'\)/('<EDID>')/g;
+
+		# MASTERFILE:                   REFR '<EDID>' (<FORMID>)        Unable to find linked reference <FORMID> for reference DLC03FarHarborResidentF02Fisherwoman (<FORMID>). Linked reference data will be removed.
+		s/(?<=reference ).+(?= \(<FORMID>\))/<EDID>/g;
+
+		# LOOTJOY:			REFR '<EDID>' (<FORMID>)	Unable to find default template item for Bound Object 'MQ302InstituteBoss01' (001cfb17). First Object Template Item used.
+		s/'[^']+' \([a-f0-9]+\)/'<EDID>' (<FORMID>)/g;
+
+		# EDITOR:			KYWD '<EDID>' (<FORMID>)	Editor ID 'ap_bot_HeadArmorRoboBrain' for KYWD (<FORMID>) is not unique, <FORMID> object (<FORMID>) is type KYWD. Editor ID will be set to 'ap_bot_HeadArmorRoboBrainDUPLICATE000'.
+		s/(?<=Editor ID )'[^']+'/'<EDID>'/g;
+		s/(?<=Editor ID will be set to )'[^']+'/'<EDID>'/g;
+
+		gen_sub($_);
+
+		print STDOUT $_, "\n";
+	}
+
+	return $ret;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__
