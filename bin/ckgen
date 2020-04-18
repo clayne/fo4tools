@@ -1483,14 +1483,15 @@ function ck_log_wrap() {
 	{
 		if (!length) {
 			next;
-		} else if ($0 ~ /^==> /) {
+		} else if (index($1, "==>")) { #  $0 ~ /^==> /) {
 			if (match($0, "^==> .+/([0-9]+)/.+ <==$", a)) {
 				id_cur=a[1];
+
+				# extract build info from info file in each build dir
 				f = sprintf("%s/%d/%s", build_dir, id_cur, info_file);
-				while (getline < f > 0) {
-					split($0, info, "\t");
-				}
+				while (getline < f > 0) { split($0, info, "\t"); }
 				close(f);
+
 				plugin=info[5];
 				file=info[6];
 				mode=info[7];
@@ -1502,7 +1503,10 @@ function ck_log_wrap() {
 				ctl=1
 			}
 			next;
-		} else if (wrap_mode == "cell") {
+		}
+
+		switch (wrap_mode) {
+		case "cell":
 			if (ctl) {
 				split($0, info, "\t");
 				id_cur=info[1];
@@ -1514,57 +1518,77 @@ function ck_log_wrap() {
 				area_ck=info[7];
 				$0=info[8];
 				usepcnt=0;
-			} else {
-				if ($0 !~ /generat.*for.*cell|Number of registered paths|^(SUCCESS|FAILURE)/)
+			} else if ($0 ~ /generat.*for.*cell|^(SUCCESS|FAILURE)/) {
+				switch ($0) {
+				case /Successful generation generated no data/:
+				case /ROOTCELL/:
 					next;
-				if ($0 ~ /Successful generation generated no data/)
-					next;
-#				if ($0 ~ /^SUCCESS \(.+\)/)
-#					next;
-				if ($0 ~ /ROOTCELL/)
-					next;
-				if ($0 ~ /^(SUCCESS|FAILURE)/)
+				case /^(SUCCESS|FAILURE)/:
 					usepcnt=0;
-				else
-					usepcnt=1;
+					break;
+				case /Generating.* for.*cell/:
+					switch ($0) {
+					# DEFAULT: Generating for interior cell USAFSatellite01...
+					# DEFAULT: GeneratingVisibility for Interior cell 'WarehouseAmbushes' (00051947)
+					case / interior cell /:
+						cell_out_log = ints_log;
+						break;
 
-				if ($0 ~ /Generating.* for.*cell/) {
-					if ($0 ~ / interior cell /) {
-						print > ints_log;
-						fflush(ints_log);
-					} else if ($0 ~ / Commonwealth /) {
-						print > main_log;
-						fflush(main_log);
-					} else {
-						print > other_log;
-						fflush(other_log);
+					# DEFAULT: Generating for cell Wilderness Commonwealth (21, 33)...
+					# DEFAULT: GeneratingVisibility for cell 'DiamondCityOrigin' (00000FEE), (0, 0)
+					case / Commonwealth | \(00[0-9A-F]{6}\), /:
+						cell_out_log = main_log;
+						break;
+
+					# DEFAULT: Generating for cell Wilderness DLC03FarHarbor (20, 1)...
+					# DEFAULT: GeneratingVisibility for cell 'DLC03POI18' (03000B3A), (15, 3)
+					default:
+						cell_out_log = other_log;
+						break;
 					}
+
+					print > cell_out_log;
+					fflush(cell_out_log);
+
+					usepcnt=1;
+					break;
 				}
+			} else {
+				next;
 			}
-		} else if (wrap_mode == "all") {
+
+			break;
+		case "all":
 			if (ctl)
 				next;
-			if ($0 ~ /gen.*for.*cell/ && $0 !~ /ROOTCELL/)
+
+			# General noise lines that are for the most part not helpful or handled elsewhere
+			# Note: these are sorted in order of occurrence for performance reasons
+			switch ($0) {
+			case /(Warnings|Errors) were encountered|See warnings file/:
+			case /D3D error/:
+			case /Multibound for ref.*outside.*extents/:
+			case /Ref .+ to base object XMarker .+ in cell .+ should be persistent but is not/:
+			case /Reference .* attached to wrong cell for its location: Persistent cell/:
+			case /Unable to find reference group/:
+			case /Failed to collect ref/:
+			case /marked for flutter animation, but has no vertex colors/:
+			case /contains a material with invalid smoothness value/:
+			case /Could not find face customization texture/:
+			case /Unable to map bone/:
+			case /Missing root material: template\/WetRiverRockTemplate_Wet.bgsm/:
+			case /Could not find material data\\materials\\test\\TempArtShader01.bgsm/:
+			case /Could not find material data\\materials\\landscape\\ground\\grassdried01.bgsm/:
+			case /Could not find material data\\materials\\\*/:
+			case /need 64bit file size|Need to move to 64-bit file sizes/:
+			case /OUT OF HANDLE|Could not get file pointer|Number of registered paths/:
+			case /generat.*for.*cell/:
 				next;
-			if ($0 ~ /(Warnings|Errors) were encountered|See warnings file/)
-				next;
-			if ($0 ~ /D3D error|Reference .* attached to wrong cell for its location: Persistent cell|Unable to find reference group/)
-				next;
-			if ($0 ~ /Multibound for ref.*outside.*extents/)
-				next;
-			if ($0 ~ /Missing root material: template\/WetRiverRockTemplate_Wet.bgsm/)
-				next;
-			if ($0 ~ /Could not find material data\\materials\\test\\TempArtShader01.bgsm/)
-				next;
-			if ($0 ~ /Could not find material data\\materials\\landscape\\ground\\grassdried01.bgsm/)
-				next;
-			if ($0 ~ /Failed to collect ref/)
-				next;
-			if ($0 ~ /need 64bit file size|Need to move to 64-bit file sizes/)
-				next;
+			}
+
 			usepcnt=1;
-		} else {
-			next;
+			break;
+		default: next;
 		}
 
 #		fname=(plugin != file) ? sprintf("%s(%s)", plugin, gensub(plugin, "", 1, file)) : plugin;
