@@ -63,6 +63,7 @@ const
 	P_MODE_FORMID_DUMP = 20;
 	P_MODE_FINAL = 30;
 
+	O_TYPE_NONE = 0;
 	O_TYPE_CELL = 1;
 	O_TYPE_EACH = 2;
 	O_TYPE_COMBINED = 3;
@@ -70,19 +71,44 @@ const
 var
 	process_area: integer;
 	process_mode: integer;
-	plugin_output_cell_use, plugin_output_cell_base_use: boolean;
-	plugin_output_each_use, plugin_output_each_base_use: boolean;
-	plugin_output_combined_use, plugin_output_combined_base_use: boolean;
-	plugin_base_process, plugin_base_master_force: boolean;
-	winning_only, non_winning_only, cell_check, stat_check, rvis_check, require_static: boolean;
-	cell_clean, rfgp_clean, refr_clean, promote_winning_only, xcri_clean, xpri_clean, previs_flag_clear: boolean;
+	winning_only, non_winning_only, promote_winning_only: boolean;
+	cell_check, stat_check, rvis_check, require_static: boolean;
+	cell_clean, rfgp_clean, refr_clean: boolean;
+	xcri_clean, xpri_clean, previs_flag_clear: boolean;
+	xcri_clean_master, xpri_clean_master, previs_flag_clear_master: boolean;
 	stat_promote, stat_promote_all, stat_promote_marker_prefer, stat_promote_marker_door: boolean;
 	stat_master_add, rvis_master_add: boolean;
 	cell_clean_cnt, refr_clean_cnt: integer;
-	plugin_output_prefix, plugin_output_cell_prefix, plugin_output_each_prefix, plugin_output_combined_prefix: string;
+
+	plugin_process_all: boolean;
+	plugin_base_process, plugin_base_esm, plugin_base_master_force: boolean;
+
+	plugin_output_base_cell_use, plugin_output_base_cell_esm: boolean;
+	plugin_output_base_each_use, plugin_output_base_each_esm: boolean;
+	plugin_output_base_combined_use, plugin_output_base_combined_esm: boolean;
+	plugin_output_base_use, plugin_output_base_esm: boolean;
+	plugin_output_base_cell_prefix: string;
+	plugin_output_base_each_prefix: string;
+	plugin_output_base_combined_prefix: string;
+	plugin_output_base_prefix: string;
+
+	plugin_output_cell_use, plugin_output_cell_esm: boolean;
+	plugin_output_each_use, plugin_output_each_esm: boolean;
+	plugin_output_combined_use, plugin_output_combined_esm: boolean;
+	plugin_output_use, plugin_output_esm: boolean;
+	plugin_output_cell_prefix: string;
+	plugin_output_each_prefix: string;
+	plugin_output_combined_prefix: string;
+	plugin_output_prefix: string;
+
+	plugin_output_cell_list: THashedStringList;
+	plugin_output_each_list: THashedStringList;
+	plugin_output_combined_list: THashedStringList;
+	plugin_output_list: THashedStringList;
+
+	plugin_output_log_list: THashedStringList;
 	plugin_output_log, plugin_output_log_prefix: string;
 	plugin_output_log_use: boolean;
-	plugin_process_all: boolean;
 
 	cell_keep_use: boolean;
 	cell_keep_xy: array[0..1] of TwbGridCell;
@@ -93,6 +119,20 @@ var
 	pc_base_keep_map: THashedStringList;
 	pv_keep_map: THashedStringList;
 	pv_base_keep_map: THashedStringList;
+
+	plugin_generated_list: THashedStringList;
+	plugin_cell_master_exclude_list: THashedStringList;
+
+	plugin_file_map: THashedStringList;
+	plugin_exclude_list: THashedStringList;
+	plugin_include_list: THashedStringList;
+	plugin_use_list: THashedStringList;
+
+	plugin_master_force_queue: THashedStringList;
+	plugin_master_force_seen: THashedStringList;
+	plugin_master_force_list: THashedStringList;
+	plugin_master_base_list: THashedStringList;
+	plugin_master_exclude_list: THashedStringList;
 
 	cell_queue: TList;
 	cell_queue_seen: THashedStringList;
@@ -108,39 +148,87 @@ var
 	cell_cache_hits: integer;
 	cell_cache_misses: integer;
 
-	plugin_output_cell_list: THashedStringList;
-	plugin_output_each_list: THashedStringList;
-	plugin_output_combined_list: THashedStringList;
-
-	plugin_generated_list: THashedStringList;
-	plugin_cell_master_exclude_list: THashedStringList;
-
-	plugin_output_list: THashedStringList;
-
-	plugin_file_map: THashedStringList;
-	plugin_master_queue: THashedStringList;
-	plugin_exclude_list: THashedStringList;
-	plugin_include_list: THashedStringList;
-	plugin_use_list: THashedStringList;
-
-	plugin_master_force_seen: THashedStringList;
-	plugin_master_force_list: THashedStringList;
-	plugin_master_base_list: THashedStringList;
-	plugin_master_exclude_list: THashedStringList;
-
 function Initialize: integer;
 var
 	i: integer;
 	tl: TList;
 begin
+	process_mode := P_MODE_MASTER_CLEAN;
+	process_area := P_AREA_MAIN;
+
+	cell_keep_use := false;
+	cell_keep_xy[0].x := -96;
+	cell_keep_xy[0].y := -96;
+	cell_keep_xy[1].x := 96;
+	cell_keep_xy[1].y := 96;
+
+	stat_promote := true;
+	stat_promote_all := true;
+	stat_promote_marker_prefer := true;
+	stat_promote_marker_door := false;
+	stat_master_add := true;
+	rvis_master_add := true;
+	cell_clean := true;
+	refr_clean := false;
+	rfgp_clean := false;
+	xcri_clean := true;
+	xpri_clean := true;
+	previs_flag_clear := true;
+	xcri_clean_master := false;
+	xpri_clean_master := false;
+	previs_flag_clear_master := false;
+	require_static := false;
+	winning_only := false;
+	non_winning_only := false;
+	promote_winning_only := false;
+	cell_check := true;
+	stat_check := false;
+	rvis_check := false;
+
+	plugin_process_all := false;
+
+	plugin_base_esm := false;
+	plugin_base_process := false;
+	plugin_base_master_force := false;
+
+	plugin_output_base_cell_use := false;
+	plugin_output_base_each_use := false;
+	plugin_output_base_combined_use := false;
+	plugin_output_base_use := false;
+	plugin_output_base_cell_esm := false;
+	plugin_output_base_each_esm := false;
+	plugin_output_base_combined_esm := false;
+	plugin_output_base_esm := false;
+	plugin_output_base_cell_prefix := nil;
+	plugin_output_base_each_prefix := nil;
+	plugin_output_base_combined_prefix := nil;
+	plugin_output_base_prefix := nil;
+
+	plugin_output_cell_use := false;
+	plugin_output_each_use := false;
+	plugin_output_combined_use := false;
+	plugin_output_use := true;
+	plugin_output_cell_esm := false;
+	plugin_output_each_esm := false;
+	plugin_output_combined_esm := false;
+	plugin_output_esm := false;
+	plugin_output_cell_prefix := nil;
+	plugin_output_each_prefix := nil;
+	plugin_output_combined_prefix := nil;
+	plugin_output_prefix := nil;
+
+	plugin_output_log_use := false;
+	plugin_output_log_prefix := nil;
+	plugin_output_log := nil;
+
 	// Precombine specific signatures
 	pc_sig_tab[0] := 'XCRI';
 	pc_sig_tab[1] := 'PCMB';
 
 	// Previs specific signatures
 	pv_sig_tab[0] := 'XPRI';
-	pv_sig_tab[1] := 'RVIS';
-	pv_sig_tab[2] := 'VISI';
+	pv_sig_tab[1] := 'VISI';
+	pv_sig_tab[2] := 'RVIS';
 
 	pc_keep_map := THashedStringList.create;
 	pc_keep_map.Sorted := true;
@@ -170,100 +258,6 @@ begin
 	pv_base_keep_map.add('STAT');
 	pv_base_keep_map.add('TACT');
 	pv_base_keep_map.add('TERM');
-
-	cell_rvis_grid_cache := THashedStringList.create;
-	cell_rvis_grid_cache.Sorted := true;
-	cell_rvis_grid_cache.Duplicates := dupIgnore;
-
-	cell_rvis_cache := THashedStringList.create;
-	cell_rvis_cache.Sorted := true;
-	cell_rvis_cache.Duplicates := dupIgnore;
-
-	cell_cache := THashedStringList.create;
-	cell_cache.Sorted := true;
-	cell_cache.Duplicates := dupIgnore;
-
-	cell_queue_seen := THashedStringList.create;
-	cell_queue_seen.sorted := true;
-	cell_queue_seen.duplicates := dupIgnore;
-
-	cell_queue := TList.create;
-	cell_queue.count := FileCount;
-
-	cell_rvis_grid_cache_hits := 0;
-	cell_rvis_grid_cache_misses := 0;
-	cell_rvis_cache_hits := 0;
-	cell_rvis_cache_misses := 0;
-	cell_cache_hits := 0;
-	cell_cache_misses := 0;
-
-	plugin_generated_list := THashedStringList.create;
-	plugin_generated_list.sorted := true;
-	plugin_generated_list.duplicates := dupIgnore;
-	plugin_generated_list.add('.' + InitFileSuffix);
-	plugin_generated_list.add(PrecombineFileBase + '.');
-	plugin_generated_list.add('.' + PrecombineFileSuffix);
-	plugin_generated_list.add(PrevisFileBase + '.');
-	plugin_generated_list.add('.' + PrevisFileSuffix);
-	plugin_generated_list.add('.' + FinalFileSuffix);
-
-	plugin_file_map := THashedStringList.create;
-	plugin_file_map.sorted := true;
-	plugin_file_map.duplicates := dupIgnore;
-
-	plugin_master_queue := THashedStringList.create;
-	plugin_master_queue.sorted := false;
-	plugin_master_queue.duplicates := dupIgnore;
-
-	plugin_output_cell_list := THashedStringList.create;
-	plugin_output_each_list := THashedStringList.create;
-	plugin_output_combined_list := THashedStringList.create;
-
-	plugin_output_list := THashedStringList.create;
-
-	plugin_use_list := nil;
-	plugin_exclude_list := nil;
-	plugin_include_list := nil;
-	plugin_cell_master_exclude_list := nil;
-
-	cell_clean_cnt := 0;
-	refr_clean_cnt := 0;
-
-	stat_promote := true;
-	stat_promote_all := true;
-	stat_promote_marker_prefer := true;
-	stat_promote_marker_door := false;
-	stat_master_add := true;
-	rvis_master_add := true;
-	plugin_base_process := false;
-	plugin_base_master_force := false;
-	cell_clean := true;
-	refr_clean := false;
-	rfgp_clean := false;
-	xcri_clean := true;
-	xpri_clean := true;
-	previs_flag_clear := true;
-	require_static := false;
-	winning_only := false;
-	non_winning_only := false;
-	promote_winning_only := false;
-	cell_check := true;
-	stat_check := false;
-	rvis_check := false;
-	plugin_output_cell_use := false;
-	plugin_output_each_use := false;
-	plugin_output_combined_use := false;
-	plugin_output_cell_base_use := false;
-	plugin_output_each_base_use := false;
-	plugin_output_combined_base_use := false;
-	plugin_output_prefix := nil;
-	plugin_output_cell_prefix := nil;
-	plugin_output_each_prefix := nil;
-	plugin_output_combined_prefix := nil;
-	plugin_process_all := false;
-	plugin_output_log_use := false;
-	plugin_output_log_prefix := nil;
-	plugin_output_log := nil;
 
 	plugin_master_base_list := THashedStringList.create;
 	plugin_master_base_list.sorted := false;
@@ -296,18 +290,68 @@ begin
 	plugin_master_exclude_list.duplicates := dupIgnore;
 	plugin_master_exclude_list.add('DLCUltraHighResolution.esm');
 
+	plugin_generated_list := THashedStringList.create;
+	plugin_generated_list.sorted := true;
+	plugin_generated_list.duplicates := dupIgnore;
+	plugin_generated_list.add('.' + InitFileSuffix);
+	plugin_generated_list.add(PrecombineFileBase + '.');
+	plugin_generated_list.add('.' + PrecombineFileSuffix);
+	plugin_generated_list.add(PrevisFileBase + '.');
+	plugin_generated_list.add('.' + PrevisFileSuffix);
+	plugin_generated_list.add('.' + FinalFileSuffix);
+
+	plugin_file_map := THashedStringList.create;
+	plugin_file_map.sorted := true;
+	plugin_file_map.duplicates := dupIgnore;
+
 	plugin_master_force_seen := THashedStringList.create;
 	plugin_master_force_seen.sorted := true;
 	plugin_master_force_seen.duplicates := dupIgnore;
 
-	process_mode := P_MODE_MASTER_CLEAN;
-	process_area := P_AREA_MAIN;
+	plugin_master_force_queue := THashedStringList.create;
+	plugin_master_force_queue.sorted := false;
+	plugin_master_force_queue.duplicates := dupIgnore;
 
-	cell_keep_use := false;
-	cell_keep_xy[0].x := -96;
-	cell_keep_xy[0].y := -96;
-	cell_keep_xy[1].x := 96;
-	cell_keep_xy[1].y := 96;
+	plugin_output_list := THashedStringList.create;
+	plugin_output_cell_list := THashedStringList.create;
+	plugin_output_each_list := THashedStringList.create;
+	plugin_output_combined_list := THashedStringList.create;
+
+	plugin_output_log_list := THashedStringList.create;
+
+	plugin_use_list := nil;
+	plugin_exclude_list := nil;
+	plugin_include_list := nil;
+	plugin_cell_master_exclude_list := nil;
+
+	cell_rvis_grid_cache := THashedStringList.create;
+	cell_rvis_grid_cache.Sorted := true;
+	cell_rvis_grid_cache.Duplicates := dupIgnore;
+
+	cell_rvis_cache := THashedStringList.create;
+	cell_rvis_cache.Sorted := true;
+	cell_rvis_cache.Duplicates := dupIgnore;
+
+	cell_cache := THashedStringList.create;
+	cell_cache.Sorted := true;
+	cell_cache.Duplicates := dupIgnore;
+
+	cell_queue_seen := THashedStringList.create;
+	cell_queue_seen.sorted := true;
+	cell_queue_seen.duplicates := dupIgnore;
+
+	cell_queue := TList.create;
+	cell_queue.count := FileCount;
+
+	cell_rvis_grid_cache_hits := 0;
+	cell_rvis_grid_cache_misses := 0;
+	cell_rvis_cache_hits := 0;
+	cell_rvis_cache_misses := 0;
+	cell_cache_hits := 0;
+	cell_cache_misses := 0;
+
+	cell_clean_cnt := 0;
+	refr_clean_cnt := 0;
 
 	// Parse all command line options, optionally overriding various
 	// defaults and lists.
@@ -321,7 +365,7 @@ begin
 		plugin_output_cell_use := false;
 		plugin_output_each_use := false;
 		plugin_output_combined_use := true;
-		plugin_output_combined_base_use := false;
+		plugin_output_base_combined_use := false;
 
 {
 		// XXX: remove
@@ -497,8 +541,20 @@ begin
 			xpri_clean := str_to_bool(v);
 
 		// should 'no previs' flags be removed?
-		end else if p = 'previs_flag_clear' then begin
+		end else if p = 'previs-flag-clear' then begin
 			previs_flag_clear  := str_to_bool(v);
+
+		// should existing xcri/pcmb data be removed from masters?
+		end else if p = 'xcri-clean-master' then begin
+			xcri_clean_master := str_to_bool(v);
+
+		// should existing xpri/visi data be removed from masters?
+		end else if p = 'xpri-clean-master' then begin
+			xpri_clean_master := str_to_bool(v);
+
+		// should 'no previs' flags be removed from masters?
+		end else if p = 'previs-flag-clear-master' then begin
+			previs_flag_clear_master  := str_to_bool(v);
 
 		// should cells not matching filter be removed?
 		end else if p = 'cell-check' then begin
@@ -552,33 +608,93 @@ begin
 		end else if p = 'plugin-process-all' then begin
 			plugin_process_all := str_to_bool(v);
 
+		// should "base" plugins be esm flagged?
+		end else if p = 'plugin-base-esm' then begin
+			plugin_base_esm := str_to_bool(v);
+
 		// should "base" plugins be considered candidates for processing?
 		end else if p = 'plugin-base-process' then begin
 			plugin_base_process := str_to_bool(v);
+
+		// should a per-plugin-per-cell output plugin be generated for base plugins?
+		end else if p = 'plugin-output-base-cell-use' then begin
+			plugin_output_base_cell_use := str_to_bool(v);
+
+		// should per-plugin-per-cell output plugins for base plugins be esm flagged?
+		end else if p = 'plugin-output-base-cell-esm' then begin
+			plugin_output_base_cell_esm := str_to_bool(v);
+
+		// should a per-plugin output plugin be generated for base plugins?
+		end else if p = 'plugin-output-base-each-use' then begin
+			plugin_output_base_each_use := str_to_bool(v);
+
+		// should a per-plugin output plugins for base plugins be esm flaggd?
+		end else if p = 'plugin-output-base-each-esm' then begin
+			plugin_output_base_each_esm := str_to_bool(v);
+
+		// should a single output plugin oriented around area (e.g. main, ints, others) be used for base plugins?
+		end else if p = 'plugin-output-base-combined-use' then begin
+			plugin_output_base_combined_use := str_to_bool(v);
+
+		// should a single output plugin oriented around area (e.g. main, ints, others) be esm flagged?
+		end else if p = 'plugin-output-base-combined-esm' then begin
+			plugin_output_base_combined_esm := str_to_bool(v);
+
+		// should plugin output files for base plugins be generated at all?
+		end else if p = 'plugin-output-base-use' then begin
+			plugin_output_base_use := str_to_bool(v);
+
+		// should plugin output files for base plugins be esm flagged?
+		end else if p = 'plugin-output-base-esm' then begin
+			plugin_output_base_esm := str_to_bool(v);
+
+		// force a prefix to be added to generated output plugin names?
+		end else if p = 'plugin-output-base-cell-prefix' then begin
+			plugin_output_base_cell_prefix := v;
+
+		// force a prefix to be added to generated output plugin names?
+		end else if p = 'plugin-output-base-each-prefix' then begin
+			plugin_output_base_each_prefix := v;
+
+		// force a prefix to be added to generated output plugin names?
+		end else if p = 'plugin-output-base-combined-prefix' then begin
+			plugin_output_base_combined_prefix := v;
+
+		// force a prefix to be added to generated output plugin names?
+		end else if p = 'plugin-output-base-prefix' then begin
+			plugin_output_base_prefix := v;
 
 		// should a per-plugin-per-cell output plugin be generated?
 		end else if p = 'plugin-output-cell-use' then begin
 			plugin_output_cell_use := str_to_bool(v);
 
-		// should a per-plugin-per-cell output plugin be generated for base plugins?
-		end else if p = 'plugin-output-cell-base-use' then begin
-			plugin_output_cell_base_use := str_to_bool(v);
+		// should a per-plugin-per-cell output plugins be esm flagged?
+		end else if p = 'plugin-output-cell-esm' then begin
+			plugin_output_cell_esm := str_to_bool(v);
 
 		// should a per-plugin output plugin be generated?
 		end else if p = 'plugin-output-each-use' then begin
 			plugin_output_each_use := str_to_bool(v);
 
-		// should a per-plugin output plugin be generated for base plugins?
-		end else if p = 'plugin-output-each-base-use' then begin
-			plugin_output_each_base_use := str_to_bool(v);
+		// should a per-plugin output plugins be esm flagged?
+		end else if p = 'plugin-output-each-esm' then begin
+			plugin_output_each_esm := str_to_bool(v);
 
 		// should a single output plugin oriented around area (e.g. main, ints, others) be used?
 		end else if p = 'plugin-output-combined-use' then begin
 			plugin_output_combined_use := str_to_bool(v);
 
-		// should a single output plugin oriented around area (e.g. main, ints, others) be used for base plugins?
-		end else if p = 'plugin-output-combined-base-use' then begin
-			plugin_output_combined_base_use := str_to_bool(v);
+		// should a single output plugin oriented around area (e.g. main, ints, others) be esm flagged?
+		end else if p = 'plugin-output-combined-esm' then begin
+			plugin_output_combined_esm := str_to_bool(v);
+
+		// should plugin output files be generated at all?
+		end else if p = 'plugin-output-use' then begin
+			plugin_output_use := str_to_bool(v);
+
+		// should plugin output files be esm flagged?
+		end else if p = 'plugin-output-esm' then begin
+			plugin_output_esm := str_to_bool(v);
 
 		// force a prefix to be added to generated output plugin names?
 		end else if p = 'plugin-output-cell-prefix' then begin
@@ -595,6 +711,22 @@ begin
 		// force a prefix to be added to generated output plugin names?
 		end else if p = 'plugin-output-prefix' then begin
 			plugin_output_prefix := v;
+
+		// list of plugins that should be used in 'cell' output mode
+		end else if p = 'plugin-output-cell-list' then begin
+			comma_split(v, plugin_output_cell_list, true, false);
+
+		// list of plugins that should be used in 'each' output mode
+		end else if p = 'plugin-output-each-list' then begin
+			comma_split(v, plugin_output_each_list, true, false);
+
+		// list of plugins that should be used in 'combined' output mode
+		end else if p = 'plugin-output-combined-list' then begin
+			comma_split(v, plugin_output_combined_list, true, false);
+
+		// list of plugins that should be used in any mode
+		end else if p = 'plugin-output-list' then begin
+			comma_split(v, plugin_output_list, true, false);
 
 		// emit output plugin names to this log file?
 		end else if p = 'plugin-output-log' then begin
@@ -654,18 +786,6 @@ begin
 		end else if p = 'plugin-master-exclude-list-add' then begin
 			comma_split(v, plugin_master_exclude_list, false, true);
 
-		// list of plugins that should be used in 'cell' output mode
-		end else if p = 'plugin-cell-list' then begin
-			comma_split(v, plugin_output_cell_list, true, false);
-
-		// list of plugins that should be used in 'each' output mode
-		end else if p = 'plugin-each-list' then begin
-			comma_split(v, plugin_output_each_list, true, false);
-
-		// list of plugins that should be used in 'combined' output mode
-		end else if p = 'plugin-combined-list' then begin
-			comma_split(v, plugin_output_combined_list, true, false);
-
 		// list of plugins to exclude from processing
 		end else if p = 'plugin-exclude-list' then begin
 			plugin_exclude_list := comma_split(v, nil, true, false);
@@ -697,6 +817,9 @@ begin
 	AddMessage(Format('%s == %s', [ 'xcri_clean', bool_to_str(xcri_clean) ]));
 	AddMessage(Format('%s == %s', [ 'xpri_clean', bool_to_str(xpri_clean) ]));
 	AddMessage(Format('%s == %s', [ 'previs_flag_clear', bool_to_str(previs_flag_clear) ]));
+	AddMessage(Format('%s == %s', [ 'xcri_clean_master', bool_to_str(xcri_clean_master) ]));
+	AddMessage(Format('%s == %s', [ 'xpri_clean_master', bool_to_str(xpri_clean_master) ]));
+	AddMessage(Format('%s == %s', [ 'previs_flag_clear_master', bool_to_str(previs_flag_clear_master) ]));
 	AddMessage(Format('%s == %s', [ 'cell_check', bool_to_str(cell_check) ]));
 	AddMessage(Format('%s == %s', [ 'stat_check', bool_to_str(stat_check) ]));
 	AddMessage(Format('%s == %s', [ 'rvis_check', bool_to_str(rvis_check) ]));
@@ -709,24 +832,45 @@ begin
 	AddMessage(Format('%s == %s', [ 'stat_promote_marker_door', bool_to_str(stat_promote_marker_door) ]));
 	AddMessage(Format('%s == %s', [ 'stat_master_add', bool_to_str(stat_master_add) ]));
 	AddMessage(Format('%s == %s', [ 'rvis_master_add', bool_to_str(rvis_master_add) ]));
+
 	AddMessage(Format('%s == %s', [ 'plugin_process_all', bool_to_str(plugin_process_all) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_base_esm', bool_to_str(plugin_base_esm) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_base_process', bool_to_str(plugin_base_process) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_base_master_force', bool_to_str(plugin_base_master_force) ]));
+
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_use', bool_to_str(plugin_output_base_cell_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_esm', bool_to_str(plugin_output_base_cell_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_use', bool_to_str(plugin_output_base_each_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_esm', bool_to_str(plugin_output_base_each_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_use', bool_to_str(plugin_output_base_combined_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_esm', bool_to_str(plugin_output_base_combined_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_use', bool_to_str(plugin_output_base_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_esm', bool_to_str(plugin_output_base_esm) ]));
+
+	if Assigned(plugin_output_base_cell_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_prefix', plugin_output_base_cell_prefix ]));
+	end;
+
+	if Assigned(plugin_output_base_each_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_base_each_prefix', plugin_output_base_each_prefix ]));
+	end;
+
+	if Assigned(plugin_output_base_combined_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_prefix', plugin_output_base_combined_prefix ]));
+	end;
+
+	if Assigned(plugin_output_base_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_base_prefix', plugin_output_base_prefix ]));
+	end;
+
 	AddMessage(Format('%s == %s', [ 'plugin_output_cell_use', bool_to_str(plugin_output_cell_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_cell_base_use', bool_to_str(plugin_output_cell_base_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_cell_esm', bool_to_str(plugin_output_cell_esm) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_output_each_use', bool_to_str(plugin_output_each_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_each_base_use', bool_to_str(plugin_output_each_base_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_each_esm', bool_to_str(plugin_output_each_esm) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_output_combined_use', bool_to_str(plugin_output_combined_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_combined_base_use', bool_to_str(plugin_output_combined_base_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_log_use', bool_to_str(plugin_output_log_use) ]));
-
-	if Assigned(plugin_output_log) then begin
-		AddMessage(Format('%s == %s', [ 'plugin_output_log', plugin_output_log ]));
-	end;
-
-	if Assigned(plugin_output_log_prefix) then begin
-		AddMessage(Format('%s == %s', [ 'plugin_output_log_prefix', plugin_output_log_prefix ]));
-	end;
+	AddMessage(Format('%s == %s', [ 'plugin_output_combined_esm', bool_to_str(plugin_output_combined_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_use', bool_to_str(plugin_output_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_esm', bool_to_str(plugin_output_esm) ]));
 
 	if Assigned(plugin_output_cell_prefix) then begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_cell_prefix', plugin_output_cell_prefix ]));
@@ -744,24 +888,6 @@ begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_prefix', plugin_output_prefix ]));
 	end;
 
-	if Assigned(plugin_master_base_list) then begin
-		for i := 0 to Pred(plugin_master_base_list.count) do begin
-			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_base_list', i, plugin_master_base_list[i] ]));
-		end;
-	end;
-
-	if Assigned(plugin_master_force_list) then begin
-		for i := 0 to Pred(plugin_master_force_list.count) do begin
-			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_force_list', i, plugin_master_force_list[i] ]));
-		end;
-	end;
-
-	if Assigned(plugin_master_exclude_list) then begin
-		for i := 0 to Pred(plugin_master_exclude_list.count) do begin
-			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_exclude_list', i, plugin_master_exclude_list[i] ]));
-		end;
-	end;
-
 	if Assigned(plugin_output_cell_list) then begin
 		for i := 0 to Pred(plugin_output_cell_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_cell_list', i, plugin_output_cell_list[i] ]));
@@ -777,6 +903,39 @@ begin
 	if Assigned(plugin_output_combined_list) then begin
 		for i := 0 to Pred(plugin_output_combined_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_combined_list', i, plugin_output_combined_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_output_list) then begin
+		for i := 0 to Pred(plugin_output_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_list', i, plugin_output_list[i] ]));
+		end;
+	end;
+
+	AddMessage(Format('%s == %s', [ 'plugin_output_log_use', bool_to_str(plugin_output_log_use) ]));
+
+	if Assigned(plugin_output_log_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_log_prefix', plugin_output_log_prefix ]));
+	end;
+	if Assigned(plugin_output_log) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_log', plugin_output_log ]));
+	end;
+
+	if Assigned(plugin_master_base_list) then begin
+		for i := 0 to Pred(plugin_master_base_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_base_list', i, plugin_master_base_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_master_force_list) then begin
+		for i := 0 to Pred(plugin_master_force_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_force_list', i, plugin_master_force_list[i] ]));
+		end;
+	end;
+
+	if Assigned(plugin_master_exclude_list) then begin
+		for i := 0 to Pred(plugin_master_exclude_list.count) do begin
+			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_exclude_list', i, plugin_master_exclude_list[i] ]));
 		end;
 	end;
 
@@ -818,6 +977,17 @@ begin
 	Result := true;
 end;
 
+function __is_in_list(sl: THashedStringList; key: string): boolean;
+begin
+	Result := false;
+
+	if not Assigned(sl) then begin
+		Exit;
+	end else if sl.indexOf(key) >= 0 then begin
+		Result := true;
+	end;
+end;
+
 function is_root_plugin(plugin: IwbFile): boolean;
 var
 	idx: integer;
@@ -828,24 +998,12 @@ end;
 
 function is_plugin_base(plugin: IwbFile): boolean;
 begin
-	Result := false;
-
-	if not Assigned(plugin_master_base_list) then begin
-		Exit;
-	end else if plugin_master_base_list.indexOf(GetFileName(plugin)) >= 0 then begin
-		Result := true;
-	end;
+	Result := __is_in_list(plugin_master_base_list, GetFileName(plugin));
 end;
 
 function is_plugin_excluded(plugin: IwbFile): boolean;
 begin
-	Result := false;
-
-	if not Assigned(plugin_exclude_list) then begin
-		Exit;
-	end else if plugin_exclude_list.indexOf(GetFileName(plugin)) >= 0 then begin
-		Result := true;
-	end;
+	Result := __is_in_list(plugin_exclude_list, GetFileName(plugin));
 end;
 
 function is_plugin_included(plugin: IwbFile): boolean;
@@ -876,6 +1034,26 @@ begin
 			Exit;
 		end;
 	end;
+end;
+
+function is_plugin_output_cell(plugin: IwbFile): boolean;
+begin
+	Result := __is_in_list(plugin_output_cell_list, GetFileName(plugin));
+end;
+
+function is_plugin_output_each(plugin: IwbFile): boolean;
+begin
+	Result := __is_in_list(plugin_output_each_list, GetFileName(plugin));
+end;
+
+function is_plugin_output_combined(plugin: IwbFile): boolean;
+begin
+	Result := __is_in_list(plugin_output_combined_list, GetFileName(plugin));
+end;
+
+function is_plugin_output(plugin: IwbFile): boolean;
+begin
+	Result := __is_in_list(plugin_output_list, GetFileName(plugin));
 end;
 
 function override_or_master(m: IInterface; idx: integer): IInterface;
@@ -1050,10 +1228,10 @@ begin
 	fname := GetFileName(plugin);
 
 	// Already queued?
-	if plugin_master_queue.indexOf(fname) >= 0 then
+	if plugin_master_force_queue.indexOf(fname) >= 0 then
 		Exit;
 
-	plugin_master_queue.addObject(fname, plugin);
+	plugin_master_force_queue.addObject(fname, plugin);
 end;
 
 procedure plugin_master_force_queue_proc;
@@ -1064,12 +1242,12 @@ begin
 	// Add any explicit masters to each processed plugin and sort their
 	// MAST entries for any other added masters (e.g. plugin_master_add,
 	// plugin_cell_stat_master_add).
-	for i := 0 to Pred(plugin_master_queue.count) do begin
-		plugin := ObjectToElement(plugin_master_queue.Objects[i]);
+	for i := 0 to Pred(plugin_master_force_queue.count) do begin
+		plugin := ObjectToElement(plugin_master_force_queue.Objects[i]);
 		__plugin_master_force(plugin);
 	end;
 
-	plugin_master_queue.clear;
+	plugin_master_force_queue.clear;
 end;
 
 function plugin_file_resolve_existing(pfile: string): IInterface;
@@ -1162,107 +1340,201 @@ end;
 
 function plugin_output_type(e: IInterface): integer;
 var
-	fname: string;
+	plugin: IwbFile;
+	base: boolean;
 begin
-	fname := GetFileName(GetFile(e));
+	Result := 0;
 
-	if plugin_output_cell_list.indexOf(fname) >= 0 then begin
+	plugin := GetFile(e);
+	base := is_plugin_base(plugin);
+
+	if plugin_output_base_cell_use and base then begin
 		Result := O_TYPE_CELL;
-	end else if plugin_output_each_list.indexOf(fname) >= 0 then begin
+	end else if plugin_output_base_each_use and base then begin
 		Result := O_TYPE_EACH;
-	end else if plugin_output_combined_list.indexOf(fname) >= 0 then begin
+	end else if plugin_output_base_combined_use and base then begin
 		Result := O_TYPE_COMBINED;
-	end else if plugin_output_cell_base_use and (plugin_master_base_list.indexOf(fname) >= 0) then begin
+	end else if plugin_output_base_use and base then begin
+		Result := O_TYPE_DIRECT;
+	end else if is_plugin_output_cell(plugin) then begin
 		Result := O_TYPE_CELL;
-	end else if plugin_output_each_base_use and (plugin_master_base_list.indexOf(fname) >= 0) then begin
+	end else if is_plugin_output_each(plugin) then begin
 		Result := O_TYPE_EACH;
-	end else if plugin_output_combined_base_use and (plugin_master_base_list.indexOf(fname) >= 0) then begin
+	end else if is_plugin_output_combined(plugin) then begin
 		Result := O_TYPE_COMBINED;
+	end else if is_plugin_output(plugin) then begin
+		Result := O_TYPE_DIRECT;
 	end else if plugin_output_cell_use then begin
 		Result := O_TYPE_CELL;
 	end else if plugin_output_each_use then begin
 		Result := O_TYPE_EACH;
 	end else if plugin_output_combined_use then begin
 		Result := O_TYPE_COMBINED;
-	end else if not IsEditable(e) then begin
-		Result := O_TYPE_EACH;
-	end else begin
-		Result := O_TYPE_DIRECT;
+	end else if plugin_output_use then begin
+		if not IsEditable(e) then begin
+			Result := O_TYPE_EACH;
+		end else begin
+			Result := O_TYPE_DIRECT;
+		end;
 	end;
 end;
 
-{
-function plugin_output_prefix_str(e: IInterface; otype: integer): string;
+function plugin_output_file_string(e: IInterface): string;
 var
-begin
-end;
-}
-
-function plugin_output_resolve(e: IInterface): IwbFile;
-var
-	plugin, plugin_output: IwbFile;
-	m: IInterface;
-	i, otype: integer;
-	fname, ofstr: string;
+	plugin: IwbFile;
+	fname, ofstr, pfx: string;
+	base: boolean;
 begin
 	plugin := GetFile(e);
 	fname := GetFileName(plugin);
+	base := is_plugin_base(plugin);
+	ofstr := fname;
+	pfx := '';
 
-	otype := plugin_output_type(e);
-	case otype of
-
-	O_TYPE_DIRECT: begin
-		Result := GetFile(e);
-		Exit;
-	end;
+	case plugin_output_type(e) of
 
 	O_TYPE_CELL: begin
+		if Assigned(plugin_output_base_cell_prefix) and base then begin
+			pfx := plugin_output_base_cell_prefix;
+		end else if Assigned(plugin_output_cell_prefix) then begin
+			pfx := plugin_output_cell_prefix;
+		end;
 		ofstr := fname + '.' + IntToHex(GetLoadOrderFormID(e), 8);
-		if Assigned(plugin_output_cell_prefix) then begin
-			ofstr := plugin_output_cell_prefix + ofstr;
+	end;
+
+	O_TYPE_EACH: begin
+		if Assigned(plugin_output_base_each_prefix) and base then begin
+			pfx := plugin_output_base_each_prefix;
+		end else if Assigned(plugin_output_each_prefix) then begin
+			pfx := plugin_output_each_prefix;
+		end;
+		ofstr := fname;
+	end;
+
+	O_TYPE_COMBINED: begin
+		if Assigned(plugin_output_base_combined_prefix) and base then begin
+			pfx := plugin_output_base_combined_prefix;
+		end else if Assigned(plugin_output_combined_prefix) then begin
+			pfx := plugin_output_combined_prefix;
+		end;
+		ofstr := p_area_to_str(process_area);
+	end;
+{
+	O_TYPE_DIRECT: begin
+		if Assigned(plugin_output_base_prefix) and base then begin
+			pfx := plugin_output_base_prefix;
 		end else if Assigned(plugin_output_prefix) then begin
-			ofstr := plugin_output_prefix + ofstr;
+			pfx := plugin_output_prefix;
+		end;
+	end;
+}
+	end;
+
+	Result := pfx + ofstr;
+end;
+
+function plugin_output_esm_check(e: IInterface): boolean;
+var
+	plugin: IwbFile;
+	base: boolean;
+begin
+	Result := false;
+
+	plugin := GetFile(e);
+	base := is_plugin_base(plugin);
+
+	case plugin_output_type(e) of
+
+	O_TYPE_CELL: begin
+		if plugin_output_base_cell_esm and base then begin
+			Result := true;
+		end else if plugin_output_cell_esm then begin
+			Result := true;
 		end;
 	end;
 
 	O_TYPE_EACH: begin
-		ofstr := fname;
-		if Assigned(plugin_output_each_prefix) then begin
-			ofstr := plugin_output_each_prefix + ofstr;
-		end else if Assigned(plugin_output_prefix) then begin
-			ofstr := plugin_output_prefix + ofstr;
+		if plugin_output_base_each_esm and base then begin
+			Result := true;
+		end else if plugin_output_each_esm then begin
+			Result := true;
 		end;
 	end;
 
 	O_TYPE_COMBINED: begin
-		ofstr := p_area_to_str(process_area);
-		if Assigned(plugin_output_combined_prefix) then begin
-			ofstr := plugin_output_combined_prefix + ofstr;
-		end else if Assigned(plugin_output_prefix) then begin
-			ofstr := plugin_output_prefix + ofstr;
+		if plugin_output_base_combined_esm and base then begin
+			Result := true;
+		end else if plugin_output_combined_esm then begin
+			Result := true;
+		end;
+	end;
+
+	O_TYPE_DIRECT: begin
+		if plugin_output_base_esm and base then begin
+			Result := true;
+		end else if plugin_output_esm then begin
+			Result := true;
 		end;
 	end;
 
 	end;
 
-	plugin_output := plugin_output_file_resolve(ofstr, process_mode, process_area, 0);
+end;
+
+function plugin_output_resolve(e: IInterface): IwbFile;
+var
+	plugin, plugin_output: IwbFile;
+	fname, ofstr: string;
+	i, otype: integer;
+begin
+	plugin := GetFile(e);
+
+	otype := plugin_output_type(e);
+	if otype = O_TYPE_NONE then begin
+		Result := nil;
+		Exit;
+	end else if otype = O_TYPE_DIRECT then begin
+		plugin_output := GetFile(e);
+	end else begin
+		ofstr := plugin_output_file_string(e);
+		plugin_output := plugin_output_file_resolve(ofstr, process_mode, process_area, 0);
+	end;
+
+	// flag as esm if necessary
+	if plugin_output_esm_check(e) then
+		plugin_esm_set(plugin_output, true);
 
 	// queue this plugin for processing of any additional masters
 	plugin_master_force(plugin_output);
 
 	// add the plugin this was based off of as a master
-	if not Equals(plugin_output, plugin) then
-		plugin_master_add(plugin_output, plugin, true, true, true);
+	plugin_master_add(plugin_output, plugin, true, true, true);
 
 	// Add plugin filename to tracking list so it can be emitted
 	// along with all other plugins being operated on.
 	if plugin_output_log_use and Assigned(plugin_output_log) then begin
 		fname := GetFileName(plugin_output);
-		if not plugin_output_list.indexOf(fname) >= 0 then
-			plugin_output_list.add(fname);
+		if not plugin_output_log_list.indexOf(fname) >= 0 then
+			plugin_output_log_list.add(fname);
 	end;
 
 	Result := plugin_output;
+end;
+
+procedure plugin_esm_set(plugin: IwbFile; enable: boolean);
+var
+	flags: cardinal;
+begin
+	if not (enable xor GetIsESM(plugin)) then
+		Exit;
+
+	if enable then begin
+		AddMessage(Format('%s: setting ESM flag', [GetFileName(plugin)]));
+	end else begin
+		AddMessage(Format('%s: removing ESM flag', [GetFileName(plugin)]));
+	end;
+
+	SetIsESM(plugin, enable);
 end;
 
 procedure plugin_elem_remove(plugin: IwbFile; e: IInterface);
@@ -1368,7 +1640,7 @@ var
 	m: IInterface;
 	flags, mflags: cardinal;
 begin
-	if not PrevisFlagRemove then
+	if not (PrevisFlagRemove or PrevisFlagForceRemove) then
 		Exit;
 
 	m := MasterOrSelf(e);
@@ -1378,7 +1650,8 @@ begin
 
 	// If record has 'no previs' set but master does not, remove it
 	if ((flags and F_NOPREVIS) <> 0) and (PrevisFlagForceRemove or ((mflags and F_NOPREVIS) = 0)) then begin
-		AddMessage(Format('%s: Warning: clearing explicitly set "no previs" flag: %s', [GetFileName(e), Name(e)]));
+		if not PrevisFlagForceRemove then
+			AddMessage(Format('%s: Warning: clearing explicitly set "no previs" flag: %s', [GetFileName(e), Name(e)]));
 		SetElementNativeValues(e, 'Record Header\Record Flags', flags and not F_NOPREVIS);
 	end;
 end;
@@ -2235,6 +2508,10 @@ begin
 	// In the above, 3,3 and 6,3 are RVIS cells whereas
 	// 4,3 and 5,3 are part of each 3v3 grid respectively.
 
+	// GetGridCell returns objects with 'x' and 'y' members
+	// but due to the way the for loop works, its harder
+	// to work with things in that manner. Reorient x,y
+	// into an array like so: xy[x,y][in,out]
 	cxy[0] := GetGridCell(e);
 	xy[0,0] := cxy[0].x;
 	xy[1,0] := cxy[0].y;
@@ -2260,6 +2537,7 @@ begin
 		end;
 	end;
 
+	// copy calculation back out, but keep original
 	cxy[1].x := xy[0,1];
 	cxy[1].y := xy[1,1];
 
@@ -3447,13 +3725,13 @@ begin
 
 	// Pre-clean precombined and previs data from cells
 	if editable then begin
-		if xcri_clean then
-			cell_xcri_clean(e);
-		if xpri_clean then
-			cell_xpri_clean(e);
 		if refr_clean then
 			cell_refr_clean(e);
-		if previs_flag_clear then
+		if xcri_clean_master then
+			cell_xcri_clean(e);
+		if xpri_clean_master then
+			cell_xpri_clean(e);
+		if previs_flag_clear_master then
 			elem_previs_flag_clear(e);
 	end;
 
@@ -3706,7 +3984,7 @@ begin
 		e := winning_override(e, false);
 
 		// XXX: reexamine if this is actually correct
-		if plugin_master_base_list.indexOf(GetFileName(e)) >= 0 then
+		if is_plugin_base(GetFile(e)) then
 			Exit;
 		if cell_queue_add(e) then
 			AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
@@ -3927,8 +4205,10 @@ var
 	ws, fname: string;
 	cq, sq, tq, wq: TList;
 	main_allow, interior_allow, other_allow, is_main: boolean;
+	editable: boolean;
 begin
 	fname := GetFileName(GetFile(plugin));
+	editable := IsEditable(plugin);
 
 	case process_mode of
 	P_MODE_MASTER_CLEAN: begin
@@ -3938,8 +4218,22 @@ begin
 			Exit;
 		end else if not is_plugin_included(plugin) then begin
 			Exit;
-		end else if not plugin_base_process and is_plugin_base(plugin) then begin
-			Exit;
+		end else if is_plugin_base(plugin) then begin
+			if not plugin_base_process then
+				Exit;
+			if plugin_base_esm then
+				plugin_esm_set(plugin, true);
+		end;
+
+		// Remove RFGPs
+		if rfgp_clean then begin
+			if editable then begin
+				g := GroupBySignature(plugin, 'RFGP');
+				if Assigned(g) then begin
+					AddMessage(Format('%s: Removing: %s', [fname, Name(g)]));
+					RemoveNode(g);
+				end;
+			end;
 		end;
 	end;
 
@@ -4027,24 +4321,6 @@ begin
 	if not Assigned(cq) then
 		Exit;
 
-	case process_mode of
-	P_MODE_MASTER_CLEAN: begin
-
-		// Remove RFGPs
-		if rfgp_clean then begin
-			if IsEditable(plugin) then begin
-				g := GroupBySignature(plugin, 'RFGP');
-				if Assigned(g) then begin
-					AddMessage(Format('%s: Removing: %s', [fname, Name(g)]));
-					RemoveNode(g);
-				end;
-			end;
-		end;
-
-	end;
-
-	end;
-
 	AddMessage(Format('%s: Processing %d cells', [ fname, cq.count ]));
 	for i := 0 to Pred(cq.count) do begin
 		e := ObjectToElement(cq[i]);
@@ -4080,6 +4356,8 @@ begin
 	P_MODE_FINAL: begin
 		if not plugin_output_cell_use then begin
 			plugin_out := plugin_output_resolve(plugin);
+			if not Assigned(plugin_out) then
+				Exit;
 			fname_out := GetFileName(plugin_out);
 
 			AddMessage(Format('%s: Adding cell masters for %d cells into %s', [ fname, tl.count, fname_out ]));
@@ -4094,8 +4372,11 @@ begin
 			if not Assigned(t) then
 				continue;
 
-			if plugin_output_cell_use then
+			if plugin_output_cell_use then begin
 				plugin_out := plugin_output_resolve(t);
+				if not Assigned(plugin_out) then
+					continue;
+			end;
 
 			plugin_master_add(plugin_out, t, true, sort, true);
 
@@ -4114,8 +4395,11 @@ begin
 			if not Assigned(t) then
 				continue;
 
-			if plugin_output_cell_use then
+			if plugin_output_cell_use then begin
 				plugin_out := plugin_output_resolve(t);
+				if not Assigned(plugin_out) then
+					continue;
+			end;
 
 			plugin_cell_copy_safe(plugin_out, t, false, false, false);
 
@@ -4133,6 +4417,8 @@ begin
 
 		if not plugin_output_cell_use then begin
 			plugin_out := plugin_output_resolve(plugin);
+			if not Assigned(plugin_out) then
+				Exit;
 			fname_out := GetFileName(plugin_out);
 
 			AddMessage(Format('%s: Adding cell masters for %d cells into %s', [ fname, tl.count, fname_out ]));
@@ -4147,8 +4433,11 @@ begin
 
 //			if Debug then AddMessage(Format('tl[%d]: %s', [i,FullPath(t)]));
 
-			if plugin_output_cell_use then
+			if plugin_output_cell_use then begin
 				plugin_out := plugin_output_resolve(t);
+				if not Assigned(plugin_out) then
+					continue;
+			end;
 
 			// if this cell has STAT refrs, promote them to the output
 			// plugin so they will be generated by CK.
@@ -4230,6 +4519,7 @@ begin
 	if MasterForceQueue then
 		plugin_master_force_queue_proc;
 
+	// XXX: only relevant during master_clean mode
 	AddMessage(Format('Removed %d cells', [ cell_clean_cnt ]));
 	AddMessage(Format('Removed %d refs', [ refr_clean_cnt ]));
 
@@ -4271,16 +4561,18 @@ begin
 	pv_base_keep_map.free;
 
 	plugin_file_map.free;
-	plugin_master_queue.free;
 
+	plugin_master_base_list.free;
 	plugin_master_exclude_list.free;
+
+	plugin_master_force_queue.free;
 	plugin_master_force_seen.free;
 	plugin_master_force_list.free;
-	plugin_master_base_list.free;
 
 	plugin_output_cell_list.free;
 	plugin_output_each_list.free;
 	plugin_output_combined_list.free;
+	plugin_output_list.free;
 
 	if Assigned(plugin_exclude_list) then
 		plugin_exclude_list.free;
@@ -4294,8 +4586,8 @@ begin
 		plugin_cell_master_exclude_list.free;
 
 	if plugin_output_log_use and Assigned(plugin_output_log) then
-		plugin_output_list.savetofile(plugin_output_log);
-	plugin_output_list.free;
+		plugin_output_log_list.savetofile(plugin_output_log);
+	plugin_output_log_list.free;
 
 //	frmMain.Close;
 
