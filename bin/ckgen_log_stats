@@ -136,16 +136,26 @@ sub main {
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
 	while (<>) {
-		/cubemap which will cause D3D errors/ && next;
-		/Warnings were encountered/ && next;
-		/Unable to map bone/ && next;
-		/GENERATING!! ROOTCELL/ && next;
-		/ERROR: duplicate model ID/ && next;
-		/marked for flutter animation, but has no vertex colors/ && next;
-		/invalid smoothness/ && next;
-		/\s+m_pcAVObjectName\s+/ && next;
-
 		s/\R//g;
+
+		if (/cubemap which will cause D3D errors/) {
+			print STDOUT "cubemap D3D errors\n"; next;
+		} elsif (/(?:Errors|Warnings) were encountered/) {
+			print STDOUT "generic errors/warnings were encountered\n"; next;
+		} elsif (/Unable to map bone/) {
+			print STDOUT "Unable to map bone\n"; next;
+		} elsif (/GENERATING!! ROOTCELL/) {
+			print STDOUT "GENERATING!! ROOTCELL\n"; next;
+		} elsif (/ERROR: duplicate model ID/) {
+			print STDOUT "ERROR: duplicate model ID\n"; next;
+		} elsif (/marked for flutter animation, but has no vertex colors/) {
+			print STDOUT "marked for flutter animation, but has no vertex colors\n"; next;
+		} elsif (/invalid smoothness/) {
+			print STDOUT "invalid smoothness\n"; next;
+		} elsif (/\s+m_pcAVObjectName\s+/) {
+			print STDOUT "m_pcAVObjectName\n"; next;
+		}
+
 		s/(?<=\W)[A-F0-9]{8}(?:(?=\W)|$)/<FORMID>/g;
 		s/(?:"[^"]*"|'[^']*')(?= \(<FORMID>\))/'<EDID>'/g;
 		s/, Text: ".+"/, Text: "<TEXT>"/g;
