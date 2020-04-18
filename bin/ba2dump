@@ -33,7 +33,7 @@ sub main {
 		my $dump = ($verbose ? 1 : 0);
 		my $dump_file = undef;
 		my $bsarch_opt = $verbose ? '-dump' : '-list';
-		open(my $fd, '-|', "bsarch '$ba2_file' $bsarch_opt") or die "open: bsarch: $!";
+		open(my $fd, '-|', "bsarch '$ba2_file' $bsarch_opt 2>&1") or die "open: bsarch: $!";
 		while (<$fd>) {
 			chomp; s/\R//g;
 
@@ -49,9 +49,12 @@ sub main {
 			if (!$dump_file && s/\\/\//g) {
 				$dump_file = $_;
 			} elsif ($dump_file && /Size: (\d+)\s+PackedSize: (\d+)/) {
-				printf("%s%12d\t%12d\t%s\n",
+				my ($size, $size_packed) = ($1, $2 ? $2 : $1);
+				printf("%s%12d\t%12d\t%12.2f%%\t%s\n",
 					$filename ? sprintf("%s\t", $ba2_file) : "",
-					$1, $2, $dump_file);
+					$size, $size_packed,
+					100.0 - ($size_packed / $size * 100.0),
+					$dump_file);
 				undef $dump_file;
 			}
 		}
