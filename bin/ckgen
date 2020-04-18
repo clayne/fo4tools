@@ -1263,6 +1263,11 @@ function ck_wrap() {
 		# is highly convenient as it avoids having to copy CombinedObjects.esp to
 		# a temporary file with the same file base.
 
+		if [[ ! -f "$bdir/$job/Data/$plugin_base - Geometry.psg" ]]; then
+			echo "SUCCESS (noop)" >> "$bdir/$job/EditorWarnings.txt"
+			return 0
+		fi
+
 		ck_exec_wrap "$bdir" "$cdir" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "$cur" "$max" "$job" "$interactive" "$ctl_log"
 
 		# -BuildCDX depends on these files and the emitted plugin to generate accurate data. As such
@@ -1378,10 +1383,17 @@ function ck_proc() {
 			rm -rf "$i"
 		done
 
-		# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs).
-		for ext in csg psg; do
-			if [[ -f "$bdir/$plugin/Data/$plugin_base - Geometry.$ext" ]]; then
-				while ! cp --remove-destination -flp -t "$cdir/Data" "$bdir/$plugin/Data/$plugin_base - Geometry.$ext"; do
+		for ext in csg psg cdx; do
+			case "$ext" in
+			# Copy into cached data so subsequent runs will have access to shared geometry (e.g. previs).
+			csg|psg) src="$bdir/$plugin/Data/$plugin_base - Geometry.$ext" ;;
+
+			# Copy CDX file into cached data so it's conveniently in one place with the others.
+			cdx) src="$bdir/$plugin/Data/$plugin_base.$ext" ;;
+			esac
+
+			if [[ -f "$src" ]]; then
+				while ! cp --remove-destination -flp -t "$cdir/Data" "$src"; do
 					sleep $((1 + (RANDOM % 4)))
 				done
 			fi
