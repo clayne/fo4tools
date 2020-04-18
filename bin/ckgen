@@ -873,9 +873,12 @@ function ck_exec_wrap() {
 		args=( -$target:"$file_ck" $type $area_ck $cur $max )
 
 		[[ -d "$bdir/$job/Data/Vis" ]] && rm -rf "$bdir/$job/Data/Vis"
+
+		# XXX: Not sure this is necessary (looks like it's trying to prioritize psg files)
 		[[ -f "$bdir/$job/Data/$file_base - Geometry.csg" ]] && rm -f "$bdir/$job/Data/$file_base - Geometry.csg"
 
 		for ext in csg psg; do
+			# XXX: Document what's going on here
 			if [[ "$file_base" != "$file_ck_base" && -f "$bdir/$job/Data/$file_base - Geometry.$ext" ]]; then
 				while ! cp --remove-destination -flp "$bdir/$job/Data/$file_base - Geometry.$ext" "$bdir/$job/Data/$file_ck_base - Geometry.$ext"; do
 					perm_debug "$bdir/$job/Data/$file_ck_base - Geometry.$ext"
@@ -989,6 +992,7 @@ function ck_exec_wrap() {
 		;;
 
 	csg)
+		# XXX: Document what's going on here
 		if [[ "$file_ck_base" != "$plugin_base" && -f "$bdir/$job/Data/$file_ck_base - Geometry.csg" ]]; then
 			rename "$file_ck_base" "$plugin_base" "$bdir/$job/Data/$file_ck_base - Geometry.csg"
 		fi
@@ -996,6 +1000,7 @@ function ck_exec_wrap() {
 		;;
 
 	cdx)
+		# XXX: Document what's going on here
 		if [[ "$file_ck_base" != "$plugin_base" && -f "$bdir/$job/Data/$file_ck_base.cdx" ]]; then
 			rename "$file_ck_base" "$plugin_base" "$bdir/$job/Data/$file_ck_base.cdx"
 		fi
