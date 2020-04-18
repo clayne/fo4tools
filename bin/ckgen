@@ -105,6 +105,7 @@ function ck_ini_rewrite() {
 	# bOnlyLoadCombinable3D:General
 	# fPreVisCameraBufferNear:General
 	# fPreVisCameraZShift:General
+	# fAccurateOcclusionThreshold:General
 	# bDoMultithreadedVisQuery:General
 	# bUsePreCulledObjects:Display
 	# bPreCulledObjectsEnabled:General
@@ -148,11 +149,11 @@ function ck_ini_rewrite() {
 #		shash["General"]["bSkipValidateInfos"]=1;
 #		shash["General"]["bSkipProgramFlows"]=1;
 #		shash["General"]["bSkipInitializationFlows"]=1;
+#		shash["General"]["bDoMultithreadedVisQuery"]=1;
 		shash["General"]["bGeneratePreCombinedGeometryPreVis"]=1;
 		shash["General"]["bExportSceneOnUmbraGenerate"]=0;
 		shash["General"]["bExportTomeOnUmbraGenerate"]=0;
 		shash["General"]["iMaxUmbraBakeThreads"]=threads;
-		shash["General"]["bThrowProcessCompleteExceptions"]=0;
 		shash["General"]["iNumHWThreads"]=threads;
 		shash["General"]["iMaxJobThreads"]=threads;
 		shash["General"]["bKeepPluginWhenMerging"]=1;
@@ -161,7 +162,8 @@ function ck_ini_rewrite() {
 		shash["General"]["bAllowMultipleMasterLoads"]=1;
 		shash["General"]["bLoadTheUserPlugin"]=0;
 		shash["General"]["bUseVersionControl"]=0;
-		shash["General"]["bBackgroundLoading"]=1;
+#		shash["General"]["bBackgroundLoading"]=0;
+		shash["General"]["bThrowProcessCompleteExceptions"]=0;
 		shash["Pathfinding"]["bFixNavmeshInfosOnLoad"]=0;
 #		shash["BackgroundLoad"]["bBackgroundCellLoads"]=1;
 #		shash["BackgroundLoad"]["bUseBackgroundFileLoader"]=1;
