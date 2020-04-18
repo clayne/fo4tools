@@ -170,13 +170,13 @@ begin
 	rvis_master_add := true;
 	cell_clean := true;
 	refr_clean := false;
-	rfgp_clean := false;
+	rfgp_clean := true;
 	xcri_clean := true;
 	xpri_clean := true;
 	previs_flag_clear := true;
-	xcri_clean_master := false;
-	xpri_clean_master := false;
-	previs_flag_clear_master := false;
+	xcri_clean_master := true;
+	xpri_clean_master := true;
+	previs_flag_clear_master := true;
 	require_static := false;
 	winning_only := false;
 	non_winning_only := false;
