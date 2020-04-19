@@ -1106,9 +1106,7 @@ begin
 	tl := TList.create;
 	tl.add(GetFile(e));
 	while tl.count <> 0 do begin
-		mfile := ObjectToElement(tl[0]);
-		tl.delete(0);
-
+		mfile := ObjectToElement(tl[0]); tl.delete(0);
 		mfstr := GetFileName(mfile);
 		m_idx := GetLoadOrder(mfile);
 
