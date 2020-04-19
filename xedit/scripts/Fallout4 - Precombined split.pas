@@ -116,6 +116,8 @@ var
 	pv_keep_map: THashedStringList;
 	pv_base_keep_map: THashedStringList;
 
+	plugin_group_list: THashedStringList;
+
 	plugin_generated_list: THashedStringList;
 	plugin_cell_master_exclude_list: THashedStringList;
 
@@ -145,9 +147,6 @@ var
 	cell_cache_misses: integer;
 
 function Initialize: integer;
-var
-	i: integer;
-	tl: TList;
 begin
 	process_mode := P_MODE_MASTER_CLEAN;
 	process_area := P_AREA_MAIN;
@@ -254,6 +253,10 @@ begin
 	pv_base_keep_map.add('STAT');
 	pv_base_keep_map.add('TACT');
 	pv_base_keep_map.add('TERM');
+
+	plugin_group_list := THashedStringList.create;
+	plugin_group_list.sorted := false;
+	plugin_group_list.duplicates := dupIgnore;
 
 	plugin_master_base_list := THashedStringList.create;
 	plugin_master_base_list.sorted := false;
@@ -370,6 +373,172 @@ begin
 	end;
 end;
 
+procedure plugin_group_list_free(group: string);
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	idx := plugin_group_list.indexOf(group);
+	if idx >= 0 then begin
+		sl := THashedStringList(plugin_group_list.Objects[idx]);
+		sl.free;
+
+		plugin_group_list.delete(idx);
+	end;
+end;
+
+procedure plugin_group_list_clear(group: string);
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	idx := plugin_group_list.indexOf(group);
+	if idx >= 0 then begin
+		sl := THashedStringList(plugin_group_list.Objects[idx]);
+		sl.clear;
+	end;
+end;
+
+function plugin_group_list_get(group: string; create: boolean): THashedStringList;
+var
+	idx: integer;
+begin
+	idx := plugin_group_list.indexOf(group);
+	if idx >= 0 then begin
+		Result := THashedStringList(plugin_group_list.Objects[idx]);
+		Exit;
+	end else if create then begin
+		sl := THashedStringList.create;
+		sl.sorted := false;
+		sl.duplicates := dupIgnore;
+		plugin_group_list.addObject(group, sl);
+
+		Result := sl;
+		Exit;
+	end;
+
+	Result := nil;
+end;
+
+procedure plugin_group_list_add(group, name: string);
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	idx := plugin_group_list.indexOf(group);
+	if not idx >= 0 then begin
+		sl := THashedStringList.create;
+		sl.sorted := false;
+		sl.duplicates := dupIgnore;
+		plugin_group_list.addObject(group, sl);
+	end else begin
+		sl := THashedStringList(plugin_group_list.Objects[idx]);
+	end;
+
+	// Prevent dupes (list is unsorted)
+	if not sl.indexOf(name) >= 0 then
+		sl.add(name);
+end;
+
+procedure plugin_group_list_delete(group, name: string);
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	idx := plugin_group_list.indexOf(group);
+	if not idx >= 0 then
+		Exit;
+
+	sl := THashedStringList(plugin_group_list.Objects[idx]);
+	if sl.indexOf(name) >= 0 then
+		sl.remove(name);
+end;
+
+procedure plugin_group_list_add_list(group: string; sl: THashedStringList);
+var
+	i: integer;
+begin
+	for i := 0 to Pred(sl.count) do begin
+		plugin_group_list_add(group, sl[i]);
+	end;
+end;
+
+procedure plugin_group_list_delete_list(group: string; sl: THashedStringList);
+var
+	i: integer;
+begin
+	for i := 0 to Pred(sl.count) do begin
+		plugin_group_list_delete(group, sl[i]);
+	end;
+end;
+
+function is_in_plugin_group(group, name: string): boolean;
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	Result := false;
+
+	idx := plugin_group_list.indexOf(group);
+	if not idx >= 0 then
+		Exit;
+
+	sl := THashedStringList(plugin_group_list.Objects[idx]);
+	if sl.indexOf(name) >= 0 then
+		Result := true;
+end;
+
+function group_expand(sl: THashedStringList; free: boolean): THashedStringList;
+var
+	out, seen, queue, members: THashedStringList;
+	s, group: string;
+	i, j: integer;
+begin
+	out := THashedStringList.create;
+	out.sorted := sl.sorted;
+	out.duplicates := out.duplicates;
+
+	seen := THashedStringList.create;
+	seen.sorted := true;
+	seen.duplicates := dupIgnore;
+
+	queue := THashedStringList.create;
+	queue.addstrings(sl);
+
+	// expand all '@group' values to their literal members,
+	// taking care to avoid any cycles at all depth levels.
+	while queue.count <> 0 do begin
+		s := queue[0]; queue.delete(0);
+		if pos('@', s) = 0 then begin
+			out.add(s);
+			continue;
+		end;
+
+		group := copy(s, 2, length(s) - 1);
+
+		// prevent cycles
+		if seen.indexOf(group) >= 0 then
+			continue;
+		seen.add(group);
+
+		members := plugin_group_list_get(group, false);
+		if not Assigned(members) then
+			continue;
+
+		for j := Pred(members.count) downto 0 do begin
+			queue.insert(0, members[j]);
+		end;
+	end;
+
+	queue.free;
+	seen.free;
+
+	if free then
+		sl.free;
+
+	Result := out;
+end;
+
 function bool_to_str(b: boolean): string;
 begin
 	if not b then begin
@@ -444,7 +613,7 @@ begin
 	end;
 end;
 
-function comma_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function __split(delim, v: string; sl: THashedStringList; sort, add: boolean): TStringList;
 var
 	tl: THashedStringList;
 	i: integer;
@@ -453,7 +622,7 @@ begin
 	tl.sorted := sort;
 	tl.duplicates := dupIgnore;
 	tl.strictdelimiter := true;
-	tl.delimiter := ',';
+	tl.delimiter := delim;
 	tl.delimitedtext := v;
 
 	if sl = nil then begin
@@ -473,11 +642,32 @@ begin
 	Result := sl;
 end;
 
+function space_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+begin
+	Result := __split(' ', v, sl, sort, add);
+end;
+
+function comma_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+begin
+	Result := __split(',', v, sl, sort, add);
+end;
+
+function colon_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+begin
+	Result := __split(':', v, sl, sort, add);
+end;
+
+function semicolon_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+begin
+	Result := __split(';', v, sl, sort, add);
+end;
+
 function opts_parse: boolean;
 var
 	i, j, k, opl, idx: integer;
 	s, p, v: string;
 	sl, sl2: THashedStringList;
+	group, members, options: THashedStringList;
 begin
 	opl := length(OptionPrefix);
 
@@ -488,7 +678,7 @@ begin
 		if pos(OptionPrefix, s) = 0 then
 			continue;
 
-		idx := pos('=', s) or pos(':', s);
+		idx := pos('=', s);
 		if idx <> 0 then begin
 			// --<OptionPrefix>-<opt>=value
 			p := copy(s, (opl + 2), idx - (opl + 2));
@@ -736,10 +926,7 @@ begin
 
 		// should cells only be kept if they fall within x0y0 - x1y1?
 		end else if p = 'cell-keep-xy' then begin
-			sl := TStringList.create;
-			sl.strictdelimiter := true;
-			sl.delimiter := ' ';
-			sl.delimitedtext := v;
+			sl := space_split(v, nil, false, false);
 
 			for j := 0 to Pred(sl.count) do begin
 				sl2 := comma_split(sl[j], nil, false, false);
@@ -754,6 +941,55 @@ begin
 
 			sl.free;
 			cell_keep_use := true;
+
+		// generic group manipulation
+		end else if p = 'plugin-group-list' then begin
+			sl := semicolon_split(v, nil, false, false);
+			for j := 0 to Pred(sl.count) do begin
+				group := colon_split(sl[j], nil, false, false);
+				if not Assigned(group) then continue;
+
+				members := nil;
+				options := nil;
+
+				if group.count <= 1 then continue;
+				if group.count  > 1 then members := comma_split(group[1], nil, false, false);
+				if group.count  > 2 then options := comma_split(group[2], nil, false, false);
+
+				// XXX: handle options (esm, combined, each, use, etc)
+
+				plugin_group_list_clear(group[0]);
+				plugin_group_list_add_list(group[0], members);
+
+				if Assigned(options) then options.free;
+				if Assigned(members) then members.free;
+				group.free;
+			end;
+			sl.free;
+
+		// generic group manipulation
+		end else if p = 'plugin-group-list-add' then begin
+			sl := semicolon_split(v, nil, false, false);
+			for j := 0 to Pred(sl.count) do begin
+				group := colon_split(sl[j], nil, false, false);
+				if not Assigned(group) then continue;
+
+				members := nil;
+				options := nil;
+
+				if group.count <= 1 then continue;
+				if group.count  > 1 then members := comma_split(group[1], nil, false, false);
+				if group.count  > 2 then options := comma_split(group[2], nil, false, false);
+
+				// XXX: handle options (esm, combined, each, use, etc)
+
+				plugin_group_list_add_list(group[0], members);
+
+				if Assigned(options) then options.free;
+				if Assigned(members) then members.free;
+				group.free;
+			end;
+			sl.free;
 
 		// list of "base" masters
 		end else if p = 'plugin-master-base-list' then begin
@@ -828,14 +1064,14 @@ begin
 	AddMessage(Format('%s == %s', [ 'plugin_base_process', bool_to_str(plugin_base_process) ]));
 	AddMessage(Format('%s == %s', [ 'plugin_base_master_force', bool_to_str(plugin_base_master_force) ]));
 
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_use', bool_to_str(plugin_output_base_cell_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_esm', bool_to_str(plugin_output_base_cell_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_use', bool_to_str(plugin_output_base_each_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_esm', bool_to_str(plugin_output_base_each_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_use', bool_to_str(plugin_output_base_combined_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_esm', bool_to_str(plugin_output_base_combined_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_use', bool_to_str(plugin_output_base_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_base_esm', bool_to_str(plugin_output_base_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_log_use', bool_to_str(plugin_output_log_use) ]));
+
+	if Assigned(plugin_output_log_prefix) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_log_prefix', plugin_output_log_prefix ]));
+	end;
+	if Assigned(plugin_output_log) then begin
+		AddMessage(Format('%s == %s', [ 'plugin_output_log', plugin_output_log ]));
+	end;
 
 	if Assigned(plugin_output_base_cell_prefix) then begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_prefix', plugin_output_base_cell_prefix ]));
@@ -853,14 +1089,14 @@ begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_base_prefix', plugin_output_base_prefix ]));
 	end;
 
-	AddMessage(Format('%s == %s', [ 'plugin_output_cell_use', bool_to_str(plugin_output_cell_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_cell_esm', bool_to_str(plugin_output_cell_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_each_use', bool_to_str(plugin_output_each_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_each_esm', bool_to_str(plugin_output_each_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_combined_use', bool_to_str(plugin_output_combined_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_combined_esm', bool_to_str(plugin_output_combined_esm) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_use', bool_to_str(plugin_output_use) ]));
-	AddMessage(Format('%s == %s', [ 'plugin_output_esm', bool_to_str(plugin_output_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_use', bool_to_str(plugin_output_base_cell_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_cell_esm', bool_to_str(plugin_output_base_cell_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_use', bool_to_str(plugin_output_base_each_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_each_esm', bool_to_str(plugin_output_base_each_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_use', bool_to_str(plugin_output_base_combined_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_combined_esm', bool_to_str(plugin_output_base_combined_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_use', bool_to_str(plugin_output_base_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_base_esm', bool_to_str(plugin_output_base_esm) ]));
 
 	if Assigned(plugin_output_cell_prefix) then begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_cell_prefix', plugin_output_cell_prefix ]));
@@ -878,85 +1114,106 @@ begin
 		AddMessage(Format('%s == %s', [ 'plugin_output_prefix', plugin_output_prefix ]));
 	end;
 
+	AddMessage(Format('%s == %s', [ 'plugin_output_cell_use', bool_to_str(plugin_output_cell_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_cell_esm', bool_to_str(plugin_output_cell_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_each_use', bool_to_str(plugin_output_each_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_each_esm', bool_to_str(plugin_output_each_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_combined_use', bool_to_str(plugin_output_combined_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_combined_esm', bool_to_str(plugin_output_combined_esm) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_use', bool_to_str(plugin_output_use) ]));
+	AddMessage(Format('%s == %s', [ 'plugin_output_esm', bool_to_str(plugin_output_esm) ]));
+
+	if Assigned(plugin_group_list) then begin
+		for i := 0 to Pred(plugin_group_list.count) do begin
+			sl := plugin_group_list_get(plugin_group_list[i], false);
+			for j := 0 to Pred(sl.count) do begin
+				AddMessage(Format('%s[%s][%d] == %s', [ 'plugin_group_list', plugin_group_list[i], j, sl[j] ]));
+			end;
+		end;
+	end;
+
 	if Assigned(plugin_output_cell_list) then begin
 		for i := 0 to Pred(plugin_output_cell_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_cell_list', i, plugin_output_cell_list[i] ]));
 		end;
+		plugin_output_cell_list := group_expand(plugin_output_cell_list, true);
 	end;
 
 	if Assigned(plugin_output_each_list) then begin
 		for i := 0 to Pred(plugin_output_each_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_each_list', i, plugin_output_each_list[i] ]));
 		end;
+		plugin_output_each_list := group_expand(plugin_output_each_list, true);
 	end;
 
 	if Assigned(plugin_output_combined_list) then begin
 		for i := 0 to Pred(plugin_output_combined_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_combined_list', i, plugin_output_combined_list[i] ]));
 		end;
+		plugin_output_combined_list := group_expand(plugin_output_combined_list, true);
 	end;
 
 	if Assigned(plugin_output_list) then begin
 		for i := 0 to Pred(plugin_output_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_output_list', i, plugin_output_list[i] ]));
 		end;
-	end;
-
-	AddMessage(Format('%s == %s', [ 'plugin_output_log_use', bool_to_str(plugin_output_log_use) ]));
-
-	if Assigned(plugin_output_log_prefix) then begin
-		AddMessage(Format('%s == %s', [ 'plugin_output_log_prefix', plugin_output_log_prefix ]));
-	end;
-	if Assigned(plugin_output_log) then begin
-		AddMessage(Format('%s == %s', [ 'plugin_output_log', plugin_output_log ]));
+		plugin_output_list := group_expand(plugin_output_list, true);
 	end;
 
 	if Assigned(plugin_master_base_list) then begin
 		for i := 0 to Pred(plugin_master_base_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_base_list', i, plugin_master_base_list[i] ]));
 		end;
+		plugin_master_base_list := group_expand(plugin_master_base_list, true);
 	end;
 
 	if Assigned(plugin_master_force_list) then begin
 		for i := 0 to Pred(plugin_master_force_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_force_list', i, plugin_master_force_list[i] ]));
 		end;
+		plugin_master_force_list := group_expand(plugin_master_force_list, true);
 	end;
 
 	if Assigned(plugin_master_exclude_list) then begin
 		for i := 0 to Pred(plugin_master_exclude_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_exclude_list', i, plugin_master_exclude_list[i] ]));
 		end;
+		plugin_master_exclude_list := group_expand(plugin_master_exclude_list, true);
 	end;
 
 	if Assigned(plugin_exclude_list) then begin
 		for i := 0 to Pred(plugin_exclude_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_exclude_list', i, plugin_exclude_list[i] ]));
 		end;
+		plugin_exclude_list := group_expand(plugin_exclude_list, true);
 	end;
 
 	if Assigned(plugin_include_list) then begin
 		for i := 0 to Pred(plugin_include_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_include_list', i, plugin_include_list[i] ]));
 		end;
+		plugin_include_list := group_expand(plugin_include_list, true);
 	end;
 
 	if Assigned(plugin_use_list) then begin
 		for i := 0 to Pred(plugin_use_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_use_list', i, plugin_use_list[i] ]));
 		end;
+		plugin_use_list := group_expand(plugin_use_list, true);
 	end;
 
 	if Assigned(plugin_generated_list) then begin
 		for i := 0 to Pred(plugin_generated_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_generated_list', i, plugin_generated_list[i] ]));
 		end;
+		plugin_generated_list := group_expand(plugin_generated_list, true);
 	end;
 
 	if Assigned(plugin_cell_master_exclude_list) then begin
 		for i := 0 to Pred(plugin_cell_master_exclude_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_cell_master_exclude_list', i, plugin_cell_master_exclude_list[i] ]));
 		end;
+		plugin_plugin_cell_master_exclude_list_list := group_expand(plugin_plugin_cell_master_exclude_list_list, true);
 	end;
 
 	if cell_keep_use then begin
@@ -4456,6 +4713,12 @@ begin
 	pv_base_keep_map.free;
 
 	plugin_file_map.free;
+
+	for i := 0 to Pred(plugin_group_list.count) do begin
+		plugin_group_list_free(plugin_group_list[i]);
+	end;
+
+	plugin_group_list.free;
 
 	plugin_master_base_list.free;
 	plugin_master_exclude_list.free;
