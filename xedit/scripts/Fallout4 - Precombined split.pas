@@ -26,9 +26,7 @@ const
 	OptionPrefix = '--pcv';
 	InitFileSuffix = 'pcv';
 	PrecombineFileBase = 'precombine';
-	PrecombineFileSuffix = 'precombine_split';
 	PrevisFileBase = 'previs';
-	PrevisFileSuffix = 'previs_split';
 	FinalFileSuffix = 'pcv.final';
 	PluginSuffix = 'esp';
 	MaxFileAttempts = 20;
@@ -53,12 +51,10 @@ const
 	P_MODE_INIT = 1;
 	P_MODE_INIT_ALT = 2;
 	P_MODE_STATS = 3;
-	P_MODE_PRECOMBINE_SPLIT = 4;
-	P_MODE_PRECOMBINE_MERGE = 5;
-	P_MODE_PRECOMBINE_EXTRACT = 6;
-	P_MODE_PREVIS_SPLIT = 6;
-	P_MODE_PREVIS_MERGE = 7;
-	P_MODE_PREVIS_EXTRACT = 8;
+	P_MODE_PRECOMBINE_MERGE = 4;
+	P_MODE_PRECOMBINE_EXTRACT = 5;
+	P_MODE_PREVIS_MERGE = 6;
+	P_MODE_PREVIS_EXTRACT = 7;
 	P_MODE_MASTER_CLEAN = 10;
 	P_MODE_FORMID_DUMP = 20;
 	P_MODE_FINAL = 30;
@@ -295,9 +291,7 @@ begin
 	plugin_generated_list.duplicates := dupIgnore;
 	plugin_generated_list.add('.' + InitFileSuffix);
 	plugin_generated_list.add(PrecombineFileBase + '.');
-	plugin_generated_list.add('.' + PrecombineFileSuffix);
 	plugin_generated_list.add(PrevisFileBase + '.');
-	plugin_generated_list.add('.' + PrevisFileSuffix);
 	plugin_generated_list.add('.' + FinalFileSuffix);
 
 	plugin_file_map := THashedStringList.create;
@@ -423,10 +417,8 @@ begin
 	P_MODE_INIT:				Result := 'init';
 	P_MODE_INIT_ALT:			Result := 'init_alt';
 	P_MODE_STATS:				Result := 'stats';
-	P_MODE_PRECOMBINE_SPLIT:		Result := 'precombine_split';
 	P_MODE_PRECOMBINE_MERGE:		Result := 'precombine_merge';
 	P_MODE_PRECOMBINE_EXTRACT:		Result := 'precombine_extract';
-	P_MODE_PREVIS_SPLIT:			Result := 'previs_split';
 	P_MODE_PREVIS_MERGE:			Result := 'previs_merge';
 	P_MODE_PREVIS_EXTRACT:			Result := 'previs_extract';
 	P_MODE_MASTER_CLEAN:			Result := 'master_clean';
@@ -440,10 +432,8 @@ begin
 	if s = 'init' then begin					Result := P_MODE_INIT;
 	end else if s = 'init_alt' then begin				Result := P_MODE_INIT_ALT;
 	end else if s = 'stats' then begin				Result := P_MODE_STATS;
-	end else if s = 'precombine_split' then begin			Result := P_MODE_PRECOMBINE_SPLIT;
 	end else if s = 'precombine_merge' then begin			Result := P_MODE_PRECOMBINE_MERGE;
 	end else if s = 'precombine_extract' then begin			Result := P_MODE_PRECOMBINE_EXTRACT;
-	end else if s = 'previs_split' then begin			Result := P_MODE_PREVIS_SPLIT;
 	end else if s = 'previs_merge' then begin			Result := P_MODE_PREVIS_MERGE;
 	end else if s = 'previs_extract' then begin			Result := P_MODE_PREVIS_EXTRACT;
 	end else if s = 'master_clean' then begin			Result := P_MODE_MASTER_CLEAN;
@@ -1298,8 +1288,6 @@ begin
 	for i := Pred(idx) to Pred(idx + MaxFileAttempts) do begin
 		case mode of
 		P_MODE_MASTER_CLEAN: begin		b := ofstr; s := InitFileSuffix; end;
-		P_MODE_PRECOMBINE_SPLIT: begin		b := ofstr; s := PrecombineFileSuffix; end;
-		P_MODE_PREVIS_SPLIT: begin		b := ofstr; s := PrevisFileSuffix; end;
 		P_MODE_FINAL: begin			b := ofstr; s := FinalFileSuffix; end;
 		else
 			Exit;
@@ -3005,6 +2993,19 @@ begin
 	end;
 
 	try
+{
+		// Only applies to CELLs, preserved from precombine_split
+
+		// Always defer to the previs data of the preceding override due to a CK bug
+		// when >2 masters are used for precombine generation. 99% of the time the most
+		// recent overridden refs are the actual refs used and these values will be
+		// overwritten by previs generation anyway.
+		elem_pv_sync(o, r);
+
+		// Ensure any 'no previs' flags are removed if master also does not have
+		elem_previs_flag_clear(r);
+}
+
 		// Copy form version info
 		elem_version_sync(e, r);
 	except
@@ -3108,102 +3109,6 @@ begin
 	except
 		on Ex: Exception do begin
 			plugin_elem_remove(plugin, r);
-			Raise Exception.Create(Ex.Message);
-		end;
-	end;
-
-	Result := true;
-end;
-
-function precombine_split(plugin: IwbFile; e, o: IInterface): Boolean;
-var
-	r, t: IInterface;
-	i, j: integer;
-	s: string;
-begin
-	if Debug then
-		AddMessage(Format('%s: precombine_split: %s', [GetFileName(plugin), Name(e)]));
-
-	try
-		// XXX: xEdit will choke on delocalized plugins containing strings like '$Farm05Location'
-		// XXX: due to it wrongly interpreting it as a hex/integer value and will also disallow copying
-		// XXX: an element with busted references. Attempt a normal deepcopy first and if it does not
-		// XXX: succeed then attempt an element by element copy whilst avoiding bogus XPRI data.
-
-		elem_masters_add(plugin, e);
-
-		r := wbCopyElementToFile(e, plugin, false, true);
-	except
-		// Deep copy failed, most likely due to bad XPRI data, attempt a per-element copy.
-		// The vast majority of the time this branch will only be taken for XPRI data.
-		on Ex: Exception do begin
-			if Debug then begin
-				AddMessage('Failed to deep copy: ' + FullPath(e));
-				AddMessage('             reason: ' + Ex.Message);
-				AddMessage('Attempting per element copy');
-			end;
-
-			try
-//				elem_masters_add(plugin, e);
-
-				r := wbCopyElementToFile(e, plugin, false, true);
-				SetElementNativeValues(r, 'Record Header\Record Flags', GetElementNativeValues(e, 'Record Header\Record Flags'));
-
-				for i := 0 to Pred(ElementCount(e)) do begin
-					t := ElementByIndex(e, i);
-					if not Assigned(t) then continue;
-
-					s := Signature(t);
-					if not Assigned(s) then continue;
-
-					// If the previous deep copy failed it is extremely likely
-					// it was due to these elements and they will be copied
-					// from the prior override (see comment below).
-					if pv_sig_tab.indexOf(s) >= 0 then
-						continue;
-
-					if not ElementExists(r, s) then
-						Add(r, s, true);
-					ElementAssign(ElementBySignature(r, s), LowInteger, t, false);
-				end;
-			except
-				on Ex: Exception do begin
-					Remove(r);
-					Raise Exception.Create(Ex.Message);
-				end;
-			end;
-		end;
-	end;
-
-	try
-		// Always defer to the previs data of the preceding override due to a CK bug
-		// when >2 masters are used for precombine generation. 99% of the time the most
-		// recent overridden refs are the actual refs used and these values will be
-		// overwritten by previs generation anyway.
-		elem_pv_sync(o, r);
-
-		// Copy form version info
-		elem_version_sync(e, r);
-
-		// Ensure any 'no previs' flags are removed if master also does not have
-		elem_previs_flag_clear(r);
-	except
-		on Ex: Exception do begin
-			Remove(r);
-			Raise Exception.Create(Ex.Message);
-		end;
-	end;
-
-	try
-		// temp: nuke xcri/xpri
-//		Remove(ElementBySignature(e, 'XCRI'));
-//		Remove(ElementBySignature(e, 'XPRI'));
-
-		// Promote static references from any containing cells to generated plugin
-		stat_refr_promote(plugin, r, stat_promote_all);
-	except
-		on Ex: Exception do begin
-			Remove(r);
 			Raise Exception.Create(Ex.Message);
 		end;
 	end;
@@ -3845,9 +3750,9 @@ begin
 		// Copy CELL data from last master into plugin
 		t := plugin_cell_copy_safe(plugin, t, false, false, false);
 {
-		if (process_mode = PRECOMBINE_MERGE) or (process_mode = PRECOMBINE_SPLIT) then begin
+		if (process_mode = PRECOMBINE_MERGE) then begin
 			t := override_timestamp_latest(e, 'PCMB');
-		end else if (process_mode = PREVIS_MERGE) or (process_mode = PREVIS_SPLIT) then begin
+		end else if (process_mode = PREVIS_MERGE) then begin
 			t := override_timestamp_latest(e, 'VISI');
 		end;
 }
@@ -3901,14 +3806,6 @@ begin
 
 			P_MODE_PREVIS_EXTRACT: begin
 				previs_extract(plugin, e, o);
-			end;
-
-			P_MODE_PRECOMBINE_SPLIT: begin
-				precombine_split(plugin, e, o);
-			end;
-
-			P_MODE_PREVIS_SPLIT: begin
-				previs_split(plugin, e, o);
 			end;
 
 			end;
