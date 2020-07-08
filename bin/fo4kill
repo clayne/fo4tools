@@ -1,0 +1,3 @@
+#!/bin/bash
+
+ps -efW | awk '/Fallout4.exe/{ print $2 }' | xargs kill -f
