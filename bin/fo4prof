@@ -83,17 +83,17 @@ use() {
 	elif [[ ! -d "$PROGDIR/Fallout 4.$PROFILE" ]]; then
 		echo "$PROGDIR/Fallout 4.$PROFILE does not exist!" 1>&2
 		exit -1
-	elif [[ ! -d "$USERDIR/Fallout4.$PROFILE" ]]; then
-		echo "$USERDIR/Fallout4.$PROFILE does not exist!" 1>&2
-		exit -1
 	elif [[ ! -d "$DATADIR/Fallout4.$PROFILE" ]]; then
 		echo "$DATADIR/Fallout4.$PROFILE does not exist!" 1>&2
+		exit -1
+	elif [[ ! -d "$USERDIR/Fallout4.$PROFILE" ]]; then
+		echo "$USERDIR/Fallout4.$PROFILE does not exist!" 1>&2
 		exit -1
 	fi
 
 	link "$PROGDIR/Fallout 4.$PROFILE" "$PROGDIR/Fallout 4"
-	link "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
 	link "$DATADIR/Fallout4.$PROFILE" "$DATADIR/Fallout4"
+	link "$USERDIR/Fallout4.$PROFILE" "$USERDIR/Fallout4"
 }
 
 # XXX: Handle multiple args
@@ -114,39 +114,39 @@ new() {
 	elif [[ -d "$PROGDIR/Fallout 4.$PROFILE" ]] && ((!FORCE)); then
 		echo "$PROGDIR/Fallout 4.$PROFILE already exists!" 1>&2
 		exit -1
-	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]] && ((!FORCE)); then
-		echo "$USERDIR/Fallout4.$PROFILE already exists!" 1>&2
-		exit -1
 	elif [[ -d "$DATADIR/Fallout4.$PROFILE" ]] && ((!FORCE)); then
 		echo "$DATADIR/Fallout4.$PROFILE already exists!" 1>&2
+		exit -1
+	elif [[ -d "$USERDIR/Fallout4.$PROFILE" ]] && ((!FORCE)); then
+		echo "$USERDIR/Fallout4.$PROFILE already exists!" 1>&2
 		exit -1
 	fi
 
 	PROGDIR_SHARED_BASE="$PROGDIR_SHARED"
-	USERDIR_SHARED_BASE="$USERDIR_SHARED"
 	DATADIR_SHARED_BASE="$DATADIR_SHARED"
+	USERDIR_SHARED_BASE="$USERDIR_SHARED"
 
 	if [[ -n "$PROFILE_SRC" ]]; then
 		PROGDIR_SHARED="$PROGDIR/Fallout 4.$PROFILE_SRC"
-		USERDIR_SHARED="$USERDIR/Fallout4.$PROFILE_SRC"
 		DATADIR_SHARED="$DATADIR/Fallout4.$PROFILE_SRC"
+		USERDIR_SHARED="$USERDIR/Fallout4.$PROFILE_SRC"
 
 		if ((PROFILE_SRC_SHARED)); then
 			PROGDIR_SHARED_BASE="$PROGDIR_SHARED"
-			USERDIR_SHARED_BASE="$USERDIR_SHARED"
 			DATADIR_SHARED_BASE="$DATADIR_SHARED"
+			USERDIR_SHARED_BASE="$USERDIR_SHARED"
 		fi
 
 		if false; then
 			# XXX: template copying is probably unnecessary when using -s
 			# XXX: because the entire source has already been rsynced
 			PROGDIR_TEMPLATE="$PROGDIR/Fallout 4.$PROFILE_SRC"
-			USERDIR_TEMPLATE="$USERDIR/Fallout4.$PROFILE_SRC"
 			DATADIR_TEMPLATE="$DATADIR/Fallout4.$PROFILE_SRC"
+			USERDIR_TEMPLATE="$USERDIR/Fallout4.$PROFILE_SRC"
 		else
 			PROGDIR_TEMPLATE=""
-			USERDIR_TEMPLATE=""
 			DATADIR_TEMPLATE=""
+			USERDIR_TEMPLATE=""
 		fi
 	fi
 
@@ -156,21 +156,32 @@ new() {
 	# Clone shared directory using hard links only so as to effectively share
 	# the files between profiles but consume no additional disk space.
 	[[ -d "$PROGDIR_SHARED" ]] && rsync -aSH --link-dest="$PROGDIR_SHARED_BASE" "$PROGDIR_SHARED"/ "$PROGDIR/Fallout 4.$PROFILE"/
-	[[ -d "$USERDIR_SHARED" ]] && rsync -aSH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
 	[[ -d "$DATADIR_SHARED" ]] && rsync -aSH --link-dest="$DATADIR_SHARED_BASE" "$DATADIR_SHARED"/ "$DATADIR/Fallout4.$PROFILE"/
+
+	# USERDIR_SHARED needs special handling due to USERDIR_LINK_SAVES being optional
+	if [[ -d "$USERDIR_SHARED" ]]; then
+		if ((USERDIR_LINK_SAVES)); then
+			rsync -aSH --exclude Saves --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
+			ln -sf -T "$USERDIR_SHARED"/Saves "$USERDIR/Fallout4.$PROFILE"/Saves
+		else
+			rsync -aSH --link-dest="$USERDIR_SHARED_BASE" "$USERDIR_SHARED"/ "$USERDIR/Fallout4.$PROFILE"/
+		fi
+	fi
 
 	# For the template directories, hard copy (and overwrite) into profile directory.
 	# Any modifications to these files will be per-profile and explicitly not shared.
 	[[ -d "$PROGDIR_TEMPLATE" ]] && rsync -aSH "$PROGDIR_TEMPLATE"/ "$PROGDIR/Fallout 4.$PROFILE"/
-	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -aSH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
 	[[ -d "$DATADIR_TEMPLATE" ]] && rsync -aSH "$DATADIR_TEMPLATE"/ "$DATADIR/Fallout4.$PROFILE"/
+	[[ -d "$USERDIR_TEMPLATE" ]] && rsync -aSH "$USERDIR_TEMPLATE"/ "$USERDIR/Fallout4.$PROFILE"/
 
 	# For any additional template directories, merge them into the profile directory in order.
 	for t in "${TEMPLATE[@]}"; do
-		pt="$PROGDIR/Fallout 4.template.${t}"; ut="$USERDIR/Fallout4.template.${t}"; dt="$DATADIR/Fallout4.template.${t}"
+		pt="$PROGDIR/Fallout 4.template.${t}"
+		dt="$DATADIR/Fallout4.template.${t}"
+		ut="$USERDIR/Fallout4.template.${t}"
 		[[ -d "$pt" ]] && rsync -aSH "$pt"/ "$PROGDIR/Fallout 4.$PROFILE"/
-		[[ -d "$ut" ]] && rsync -aSH "$ut"/ "$USERDIR/Fallout4.$PROFILE"/
 		[[ -d "$dt" ]] && rsync -aSH "$dt"/ "$DATADIR/Fallout4.$PROFILE"/
+		[[ -d "$ut" ]] && rsync -aSH "$ut"/ "$USERDIR/Fallout4.$PROFILE"/
 	done
 
 	# Convert paths in templated CreationKit.ini to be per-profile specific.
