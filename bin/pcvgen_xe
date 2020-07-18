@@ -208,8 +208,12 @@ sub xedit_run {
 }
 
 sub plugins_tmp_write {
+	my %seen;
 	my ($fh, $tmpfile) = tempfile(UNLINK => 0);
-	foreach (@_) { printf $fh ("%s%s\n", ($_ !~ /^\*/ ? '*' : ''), $_) }
+	foreach (@_) {
+		next if ($seen{$_}++);
+		printf $fh ("%s%s\n", ($_ !~ /^\*/ ? '*' : ''), $_);
+	}
 	close($fh);
 	return $tmpfile;
 }
@@ -269,7 +273,7 @@ sub main {
 
 			foreach (map stdin_or_file($_), @plugin_files) {
 				open(my $fd, '<', $_) or die "open: $_: $!";
-				while (<$fd>) { chomp; push @plugins, $_ };
+				while (<$fd>) { s/\R//g; s/^\*//g; push @plugins, $_ };
 				close($fd) or die "close: $_: $!";
 			}
 		}
