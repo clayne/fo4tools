@@ -801,11 +801,15 @@ function ck_datafiles_dump {
 	local file="$1"; shift
 	local job="$1"; shift
 
+	[[ -f "$bdir/$job/DataFiles.txt" ]] || return
+
+	cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+
 	local lmax=$(awk '{ l=length($0); if (l > lmax) lmax=l }END{ print lmax }' "$bdir/$job/DataFiles.txt")
 	paste \
 		<(plugin-master-reloc --include-self -v "$bdir/$job/Data/$file" 2>&1 | awk -v lmax="$lmax" '/^\[/{ printf("%*s\n", -lmax, $0) }') \
 		<(tr -d '\r' < "$bdir/$job/DataFiles.txt" | awk -v lmax="$lmax" '{ printf("%*s\n", -lmax, $0) }') \
-		<(sed -e "s#Data File Loaded '\|'\.\.\..*##g" < "$bdir/$job/DataFiles.txt" | (cd "$bdir/$job/Data" && xargs -d '\n' -r ls -dlU))
+		<(sed -e "s#Data File Loaded '\|'\.\.\..*##g" < "$bdir/$job/DataFiles.txt" | (cd "$bdir/$job/Data" && xargs -d '\n' -r ls -dlU)) 1>&2
 }
 
 function ck_exec_wrap() {
@@ -924,7 +928,7 @@ function ck_exec_wrap() {
 			&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Number of registered paths has exceeded maximum' "EditorWarnings.txt" \
 	);
 	then
-		cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+		ck_datafiles_dump "$bdir" "$file_ck" "$job"
 
 		echo "SUCCESS ($target)" >> "$bdir/$job/EditorWarnings.txt"
 		mkdir -p "$bdir/$plugin"
