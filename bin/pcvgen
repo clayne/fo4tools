@@ -81,6 +81,7 @@ case "$MODE" in
 base)
 	log_prefix="pcvgen_xe"
 	plugin_output_base_combined_prefix="base-"
+	master_base_list=()
 	ckgen_scol_args=()
 	ckgen_args=()
 
@@ -102,7 +103,9 @@ base)
 	fi
 
 	# grab base plugins from plugins file
-	IFS=$'\n' MASTER_BASE_LIST=( $(grep '^\*' "$PLUGINS_FILE_BASE" | tr -d '*') ); IFS="$OIFS"
+	if [[ -s "$PLUGINS_FILE_BASE" ]]; then
+		IFS=$'\n' master_base_list=( $(grep '^\*' "$PLUGINS_FILE_BASE" | tr -d '*') ); IFS="$OIFS"
+	fi
 
 	STATE=pcv_init; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
 		# build base esps
@@ -119,7 +122,7 @@ base)
 				--pcv-plugin-output-base-combined-esm \
 				--pcv-plugin-output-base-combined-prefix="${plugin_output_base_combined_prefix}" \
 				--pcv-plugin-master-force-list-add="${plugin_output_base_combined_prefix}\$area.pcv.esp" \
-				"${MASTER_BASE_LIST[@]/#/--pcv-plugin-master-base-list-add=}"
+				"${master_base_list[@]/#/--pcv-plugin-master-base-list-add=}"
 		touch "$STATE_DIR/$STATE"
 	fi
 
