@@ -12,11 +12,13 @@ function data_clone() {
 #	rm -rf "$dst" && mkdir -p "$dst"
 	mkdir -p "$dst"
 
+	# TODO: exclude base- or pcv related data
+
 	# Copy plugins so xedit can work with them directly
-	rsync -aSH --include="*.es[pml]" --exclude="Merging" --delete "$src"/ "$dst"/
+	rsync -aSH --include="*.es[pml]" --exclude="*" --delete "$src"/ "$dst"/
 
 	# Hard link assets so xedit can find localized string files
-	rsync -aSH --exclude="*.es[pml]" --exclude="Merging" --link-dest="$PWD/$src" "$src"/ "$dst"/
+	rsync -aSH --exclude="*.es[pml]" --exclude="Merging" --delete --link-dest="$PWD/$src" "$src"/ "$dst"/
 }
 
 PLUGINS_FILE_BASE="plugins.pcvgen.base"
