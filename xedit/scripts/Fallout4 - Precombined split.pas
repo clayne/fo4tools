@@ -613,7 +613,7 @@ begin
 	end;
 end;
 
-function __split(delim, v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function __split(delim, v: string; sl: THashedStringList; sort, add: boolean): THashedStringList;
 var
 	tl: THashedStringList;
 	i: integer;
@@ -642,22 +642,22 @@ begin
 	Result := sl;
 end;
 
-function space_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function space_split(v: string; sl: THashedStringList; sort, add: boolean): THashedStringList;
 begin
 	Result := __split(' ', v, sl, sort, add);
 end;
 
-function comma_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function comma_split(v: string; sl: THashedStringList; sort, add: boolean): THashedStringList;
 begin
 	Result := __split(',', v, sl, sort, add);
 end;
 
-function colon_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function colon_split(v: string; sl: THashedStringList; sort, add: boolean): THashedStringList;
 begin
 	Result := __split(':', v, sl, sort, add);
 end;
 
-function semicolon_split(v: string; sl: THashedStringList; sort, add: boolean): TStringList;
+function semicolon_split(v: string; sl: THashedStringList; sort, add: boolean): THashedStringList;
 begin
 	Result := __split(';', v, sl, sort, add);
 end;
@@ -1352,7 +1352,7 @@ begin
 	p_idx := GetLoadOrder(plugin);
 	pfstr := GetFileName(plugin);
 
-	mq := TStringList.create;
+	mq := THashedStringList.create;
 	mq.sorted := false;
 	mq.duplicates := dupIgnore;
 
@@ -1854,7 +1854,7 @@ end;
 procedure elem_masters_add(plugin: IwbFile; e: IInterface);
 var
 	tfile: IwbFile;
-	sl: TStringList;
+	sl: THashedStringList;
 	i: integer;
 begin
 	if not PerElementMasters then begin
@@ -1862,7 +1862,7 @@ begin
 		Exit;
 	end;
 
-	sl := TStringList.create;
+	sl := THashedStringList.create;
 	ReportRequiredMasters(e, sl, false, true);
 	for i := 0 to Pred(sl.count) do begin
 		if sl[i] = GetFileName(plugin) then
