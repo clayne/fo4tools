@@ -122,6 +122,8 @@ var
 	plugin_cell_master_exclude_list: THashedStringList;
 
 	plugin_file_map: THashedStringList;
+	plugin_parent_map: THashedStringList;
+	plugin_child_map: THashedStringList;
 	plugin_exclude_list: THashedStringList;
 	plugin_include_list: THashedStringList;
 	plugin_use_list: THashedStringList;
@@ -297,6 +299,14 @@ begin
 	plugin_generated_list.add(PrevisFileBase + '.');
 	plugin_generated_list.add('.' + FinalFileSuffix);
 
+	plugin_child_map := THashedStringList.create;
+	plugin_child_map.duplicates := dupIgnore;
+	plugin_child_map.sorted := true;
+
+	plugin_parent_map := THashedStringList.create;
+	plugin_parent_map.duplicates := dupIgnore;
+	plugin_parent_map.sorted := true;
+
 	plugin_file_map := THashedStringList.create;
 	plugin_file_map.sorted := true;
 	plugin_file_map.duplicates := dupIgnore;
@@ -371,6 +381,8 @@ begin
 		plugin_master_exclude_list.add('other.pcv.esp');
 }
 	end;
+
+	plugin_map_update;
 end;
 
 procedure plugin_group_list_free(group: string);
@@ -1341,6 +1353,141 @@ begin
 	Result := Equals(e, winning_override(e, ignore_generated));
 end;
 
+procedure plugin_map_update;
+var
+	cfile, mfile: IwbFile;
+	cfstr, mfstr: string;
+	sl: THashedStringList;
+	i, j, idx: integer;
+begin
+	plugin_file_map.clear;
+	plugin_child_map.clear;
+	plugin_parent_map.clear;
+
+	for i := 0 to Pred(FileCount) do begin
+		cfile := FileByLoadOrder(i);
+		if not Assigned(cfile) then
+			continue;
+		cfstr := GetFileName(cfile);
+
+		// file map
+		plugin_file_map.addObject(cfstr, cfile);
+
+		for j := 0 to Pred(MasterCount(cfile)) do begin
+			mfile := MasterByIndex(cfile, j);
+			mfstr := GetFileName(mfile);
+
+			// parent map
+			idx := plugin_parent_map.indexOf(cfstr);
+			if not (idx >= 0) then begin
+				sl := THashedStringList.create;
+				sl.duplicates := dupIgnore;
+				sl.sorted := false;
+				idx := plugin_parent_map.addObject(cfstr, sl);
+			end;
+
+			sl := plugin_parent_map.Objects[idx];
+			sl.addObject(mfstr, mfile);
+
+			// child map
+			idx := plugin_child_map.indexOf(mfstr);
+			if not (idx >= 0) then begin
+				sl := THashedStringList.create;
+				sl.duplicates := dupIgnore;
+				sl.sorted := false;
+				idx := plugin_child_map.addObject(mfstr, sl);
+			end;
+
+			sl := plugin_child_map.Objects[idx];
+			sl.addObject(cfstr, cfile);
+		end;
+	end;
+end;
+
+function plugin_parents(plugin: IwbFile; include_self: boolean): THashedStringList;
+var
+	mfile: IwbFile;
+	pfstr: string;
+	i, idx: integer;
+	tl: TList;
+	sl: THashedStringList;
+	parents: THashedStringList;
+begin
+	parents := THashedStringList.create;
+	parents.duplicates := dupIgnore;
+	parents.sorted := false;
+
+	// DFS (with minor modifications)
+	tl := TList.create;
+	tl.insert(0, GetFile(plugin));
+	while tl.count <> 0 do begin
+		plugin := ObjectToElement(tl[0]); tl.delete(0);
+		pfstr := GetFileName(plugin);
+		if parents.indexOf(pfstr) >= 0 then
+			continue;
+		parents.insertObject(0, pfstr, plugin);
+
+		idx := plugin_parent_map.indexOf(pfstr);
+		if not (idx >= 0) then
+			continue;
+		sl := plugin_parent_map.Objects[idx];
+
+		for i := Pred(sl.count) downto 0 do begin
+			mfile := ObjectToElement(sl.Objects[i]);
+			tl.add(mfile);
+		end;
+	end;
+
+	tl.free;
+
+	if not include_self then
+		parents.delete(parents.count - 1);
+
+	Result := parents;
+end;
+
+function plugin_children(plugin: IwbFile; include_self: boolean): THashedStringList;
+var
+	cfile: IwbFile;
+	pfstr: string;
+	i, idx: integer;
+	tl: TList;
+	sl: THashedStringList;
+	children: THashedStringList;
+begin
+	children := THashedStringList.create;
+	children.duplicates := dupIgnore;
+	children.sorted := false;
+
+	// BFS
+	tl := TList.create;
+	tl.add(GetFile(plugin));
+	while tl.count <> 0 do begin
+		plugin := ObjectToElement(tl[0]); tl.delete(0);
+		pfstr := GetFileName(plugin);
+		if children.indexOf(pfstr) >= 0 then
+			continue;
+		children.addObject(pfstr, plugin);
+
+		idx := plugin_child_map.indexOf(pfstr);
+		if not (idx >= 0) then
+			continue;
+		sl := plugin_child_map.Objects[idx];
+
+		for i := 0 to Pred(sl.count) do begin
+			cfile := ObjectToElement(sl.Objects[i]);
+			tl.add(cfile);
+		end;
+	end;
+
+	tl.free;
+
+	if not include_self then
+		children.delete(0);
+
+	Result := children;
+end;
+
 procedure plugin_master_add(plugin: IwbFile; e: IInterface; parents, sort, ordered: boolean);
 var
 	mfile, f: IwbFile;
@@ -1507,15 +1654,6 @@ begin
 		Exit;
 	end;
 
-	for i := Pred(FileCount) downto 0 do begin
-		t := FileByIndex(i);
-		if GetFileName(t) = pfile then begin
-			plugin_file_map.addObject(pfile, t);
-			Result := t;
-			Exit;
-		end;
-	end;
-
 	Result := nil;
 end;
 
@@ -1565,8 +1703,10 @@ begin
 			// create new plugin
 			AddMessage('Creating file: ' + pfile);
 			plugin := AddNewFileName(pfile);
-			if Assigned(plugin) then
+			if Assigned(plugin) then begin
+				plugin_map_update;
 				break;
+			end;
 		except
 			on Ex: Exception do begin
 				if pos('exists already', Ex.Message) <> 0 then
@@ -2451,7 +2591,8 @@ begin
 
 	// Plugins
 	for i := 0 to Pred(FileCount) do begin
-		plugin := FileByIndex(i);
+		plugin := FileByLoadOrder(i);
+		if not Assigned(plugin) then continue;
 
 		wg := GroupBySignature(plugin, 'WRLD');
 		if not Assigned(wg) then continue;
@@ -2508,7 +2649,8 @@ begin
 
 	// Plugins
 	for i := 0 to Pred(FileCount) do begin
-		plugin := FileByIndex(i);
+		plugin := FileByLoadOrder(i);
+		if not Assigned(plugin) then continue;
 
 		wg := GroupBySignature(plugin, 'WRLD');
 		if not Assigned(wg) then continue;
@@ -4645,6 +4787,7 @@ end;
 function Finalize: integer;
 var
 	tl: TList;
+	sl: THashedStringList;
 	t, r, plugin: IInterface;
 	i, j: integer;
 	fname: string;
@@ -4713,7 +4856,19 @@ begin
 	pv_keep_map.free;
 	pv_base_keep_map.free;
 
+	for i := 0 to Pred(plugin_parent_map.count) do begin
+		sl := plugin_parent_map.Objects[i];
+		sl.free;
+	end;
+
+	for i := 0 to Pred(plugin_child_map.count) do begin
+		sl := plugin_child_map.Objects[i];
+		sl.free;
+	end;
+
 	plugin_file_map.free;
+	plugin_parent_map.free;
+	plugin_child_map.free;
 
 	for i := 0 to Pred(plugin_group_list.count) do begin
 		plugin_group_list_free(plugin_group_list[i]);
