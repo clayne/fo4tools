@@ -1494,29 +1494,28 @@ var
 	mfstr, pfstr: string;
 	i, m_idx, p_idx: integer;
 	mq, sl: THashedStringList;
-	tl: TList;
 begin
-	p_idx := GetLoadOrder(plugin);
 	pfstr := GetFileName(plugin);
+	p_idx := GetLoadOrder(plugin);
 
 	mq := THashedStringList.create;
-	mq.sorted := false;
 	mq.duplicates := dupIgnore;
+	mq.sorted := false;
 
-	sl := THashedStringList.create;
-	sl.sorted := true;
-	sl.duplicates := dupIgnore;
+	// Normalize both conditions to a list
+	if parents then begin
+		sl := plugin_parents(GetFile(e), true);
+	end else begin
+		sl := THashedStringList.create;
+		sl.duplicates := dupIgnore;
+		sl.sorted := false;
+		sl.addObject(GetFileName(e), GetFile(e));
+	end;
 
-	tl := TList.create;
-	tl.add(GetFile(e));
-	while tl.count <> 0 do begin
-		mfile := ObjectToElement(tl[0]); tl.delete(0);
+	for i := 0 to Pred(sl.count) do begin
+		mfile := ObjectToElement(sl.Objects[i]);
 		mfstr := GetFileName(mfile);
 		m_idx := GetLoadOrder(mfile);
-
-		if sl.indexOf(mfstr) >= 0 then
-			continue;
-		sl.add(mfstr);
 
 		// dont allow adding self
 		if pfstr = mfstr then
@@ -1525,16 +1524,6 @@ begin
 		// dont add masters to a plugin that is before the master
 		if p_idx <= m_idx and ordered then
 			continue;
-
-		if parents then begin
-			// Add masters of the master being added otherwise
-			// CK will emit these after all plugins have been
-			// loaded and totally screw up the formid indexes.
-			for i := 0 to Pred(MasterCount(mfile)) do begin
-				f := MasterByIndex(mfile, i);
-				tl.add(f);
-			end;
-		end;
 
 		// skip if the master has already been added
 		if HasMaster(plugin, mfstr) then
@@ -1553,7 +1542,6 @@ begin
 			AddMasters(plugin, mq);
 	end else begin
 		for i := 0 to Pred(mq.count) do begin
-//			AddMasterIfMissing(plugin, mq[i], sort);
 			AddMasterIfMissing(plugin, mq[i], false);
 		end;
 	end;
@@ -1561,7 +1549,6 @@ begin
 	if sort then
 		SortMasters(plugin);
 
-	tl.free;
 	sl.free;
 	mq.free;
 end;
