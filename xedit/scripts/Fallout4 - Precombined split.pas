@@ -4371,10 +4371,11 @@ begin
 		end else if not is_plugin_included(plugin) then begin
 			Exit;
 		end else if is_plugin_base(plugin) then begin
-			if not plugin_base_process then
+			if not plugin_base_process then begin
 				Exit;
-			if plugin_base_esm then
+			end else if plugin_base_esm then begin
 				plugin_esm_set(plugin, true);
+			end;
 		end;
 
 		// Remove RFGPs
