@@ -149,7 +149,7 @@ var
 function Initialize: integer;
 begin
 	process_mode := P_MODE_MASTER_CLEAN;
-	process_area := P_AREA_MAIN;
+	process_area := P_AREA_ALL;
 
 	cell_keep_use := false;
 	cell_keep_xy[0].x := -96;
