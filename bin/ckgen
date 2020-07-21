@@ -489,9 +489,6 @@ function ck_archive_rewrite() {
 			master_archive_out="$master_archive"
 		fi
 
-		# XXX: Temporary for debugging
-		echo "$master_archive_out" >> "/tmp/archive_queue.tmp.$$"
-
 		case "$method" in
 		sanitize)
 			plugin-master-reloc -qr --include-self "$bdir/$job/Data/$master" | while read __master; do
@@ -662,16 +659,6 @@ fi
 			;;
 		esac
 	done
-
-	# XXX: Temporary for debugging
-	cat "/tmp/archive_queue.tmp.$$" \
-		| awk '!seen[$0]++' \
-		| xargs -d '\n' -tr ba2dump -f \
-		| egrep '\.es[pml]' \
-		| egrep -v '/(Fallout4|DLC)' \
-		| awk -v method="$method" -v mode="$mode" '{ printf("archive_queue | %s | %s | %s\n", method, mode, $0) }' 1>&2 \
-		|| true
-	rm -f "/tmp/archive_queue.tmp.$$"
 
 	return 0
 }
