@@ -4,6 +4,32 @@ set -e
 set -o pipefail
 
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
+source "$HOME/git/fo4tools/etc/ckgen.conf" || source /usr/local/etc/ckgen.conf
+
+if [[ -z "$CKGEN_BUILD_DIR" ]]; then
+	echo "Unable to resolve ckgen build directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_CACHE_DIR" ]]; then
+	echo "Unable to resolve ckgen cache directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_DATA_DIR" ]]; then
+	echo "Unable to resolve ckgen data directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_OUT_DIR" ]]; then
+	echo "Unable to resolve ckgen output directory" 1>&2
+	exit -1
+fi
+
+# Force Windows (rather than Cygwin) compatible symlinks
+export CYGWIN=winsymlinks:nativestrict
+
+# Prereq check
+for i in rsync; do
+	if ! which $i &>/dev/null; then
+		echo "$i not found" 1>&2
+		exit -1
+	fi
+done
 
 function data_clone() {
 	local src="$1"; shift
@@ -23,10 +49,6 @@ function data_clone() {
 
 PLUGINS_FILE_BASE="plugins.pcvgen.base"
 PLUGINS_FILE="plugins.pcvgen"
-CKGEN_BUILD="ckgen.build"
-CKGEN_CACHE="ckgen.cache"
-CKGEN_DATA="ckgen.data"
-CKGEN_OUT="ckgen.out"
 SELF="$(basename "$0")"
 OIFS="$IFS"
 MODE="final"
@@ -63,8 +85,8 @@ fi
 if [[ ! -d "$SRC/Data" || ! -x "$SRC/CreationKit.exe" ]]; then
 	echo "'$SRC' is not a Fallout4 related directory" 1>&2
 	exit -1
-elif [[ -d "$CKGEN_OUT" ]] && ((!FORCE && !RESUME)); then
-	echo "'$CKGEN_OUT' exists but force option not given" 1>&2
+elif [[ -d "$CKGEN_OUT_DIR" ]] && ((!FORCE && !RESUME)); then
+	echo "'$CKGEN_OUT_DIR' exists but force option not given" 1>&2
 	exit -1
 fi
 
@@ -73,7 +95,7 @@ STATE_DIR="/tmp/$SELF/$PROFILE.$MODE"
 mkdir -p "$STATE_DIR"
 
 STATE=ckgen_clean; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
-	rm -rf "$CKGEN_BUILD" "$CKGEN_OUT" "$CKGEN_CACHE"
+	rm -rf "$CKGEN_BUILD_DIR" "$CKGEN_OUT_DIR" "$CKGEN_CACHE_DIR"
 	touch "$STATE_DIR/$STATE"
 fi
 
@@ -141,7 +163,7 @@ base)
 			else
 				ckgen_args+=( "$j:$i@all" )
 			fi
-			ckgen_files+=( "$CKGEN_DATA/$i/$j" )
+			ckgen_files+=( "$CKGEN_DATA_DIR/$i/$j" )
 		done
 	done
 
@@ -150,8 +172,8 @@ base)
 		scol)
 			STATE="${mode}_pre"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
 				if ((!ALL)); then
-					mkdir -p "$CKGEN_DATA/all"
-					cp -lfpt "$CKGEN_DATA/all" "${ckgen_scol_args[@]}"
+					mkdir -p "$CKGEN_DATA_DIR/all"
+					cp -lfpt "$CKGEN_DATA_DIR/all" "${ckgen_scol_args[@]}"
 				fi
 				touch "$STATE_DIR/$STATE"
 			fi
@@ -171,16 +193,16 @@ base)
 			fi
 
 			STATE="${mode}_merge"; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
-				# copy generated precombine or previs plugins back into $CKGEN_DATA dirs
+				# copy generated precombine or previs plugins back into $CKGEN_DATA_DIR dirs
 				# and merge precombine or previs data back into base plugins
 				for i in "${ckgen_base_args[@]}" "${ckgen_args[@]}"; do
 					d="${i/:*}"; d="${d/.esp.*/.esp}"; d="${d/.esm.*/.esm}"; d="${d/.esl.*/.esl}";
 					a="${i/*:}"; a="${a/@*}"
 
 					# XXX: check for missing output files and emit warnings
-					[[ -d "$CKGEN_OUT/$d" ]] || continue
-					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -print0 | xargs -tr0 cp -lfpt "$CKGEN_DATA/$a"
-					find "$CKGEN_OUT/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -printf '%f\n'
+					[[ -d "$CKGEN_OUT_DIR/$d" ]] || continue
+					find "$CKGEN_OUT_DIR/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -print0 | xargs -tr0 cp -lfpt "$CKGEN_DATA_DIR/$a"
+					find "$CKGEN_OUT_DIR/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -printf '%f\n'
 				done | pcvgen_xe -v ${INTERACTIVE:+-i} ${ALL:+-a all} \
 					--plugins=- \
 					--pcv-mode="${mode}_merge" \
@@ -212,11 +234,11 @@ exit -1
 			d="${i/:*}"; d="${d/.esp.*/.esp}"; d="${d/.esm.*/.esm}"; d="${d/.esl.*/.esl}";
 			a="${i/*:}"; a="${a/@*}"
 
-			[[ -d "$CKGEN_OUT/$d" ]] || continue
+			[[ -d "$CKGEN_OUT_DIR/$d" ]] || continue
 			find "$d" -type f '(' -name '*.[cp]sg' -o -name '*.ba2' -o -name '*.cdx' ')' -print0 | xargs -tr0 cp -lfpt "Data"/
 
-			[[ -d "$CKGEN_DATA/$a" ]] || continue
-			find "$CKGEN_DATA/$a" -type f -name "${plugin_output_base_combined_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -lfpt "Data"/
+			[[ -d "$CKGEN_DATA_DIR/$a" ]] || continue
+			find "$CKGEN_DATA_DIR/$a" -type f -name "${plugin_output_base_combined_prefix}${i}.pcv.esp" -print0 | xargs -tr0 cp -lfpt "Data"/
 		done
 
 		touch "$STATE_DIR/$STATE"
