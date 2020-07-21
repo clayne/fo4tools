@@ -380,8 +380,14 @@ sub main {
 		next if ($unlink{$path});
 
 		if ($verbose) {
+			my @add;
+			push @add, [ 'size', $size, 0 ] if (defined $size);
+			push @add, [ 'flags', flags_str($flags), 1 ] if ($flags);
 			printf STDERR ("\n") if ($head++);
-			printf STDERR ("%s (size: %d, flags: [%s]):\n", $path, $size, flags_str($flags));
+			printf STDERR ("%s (%s):\n", $path, join(', ', map {
+				my ($label, $value, $bracket) = @$_;
+				sprintf("%s: %s", $label, $bracket ? "[$value]" : $value);
+			} @add));
 		}
 
 		if ($include_self) {
