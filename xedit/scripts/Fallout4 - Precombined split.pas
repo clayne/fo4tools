@@ -1357,6 +1357,51 @@ begin
 	Result := Equals(e, winning_override(e, ignore_generated));
 end;
 
+procedure hlist_clear(list: THashedStringList);
+var
+	i: integer;
+	sl: THashedStringList;
+begin
+	for i := 0 to Pred(list.count) do begin
+		sl := list.Objects[i];
+		if Assigned(sl) then
+			sl.free;
+	end;
+
+	list.clear;
+end;
+
+procedure hlist_free(list: THashedStringList);
+begin
+	hlist_clear(list);
+	list.free;
+end;
+
+function hlist_create(sort: boolean): THashedStringList;
+var
+	sl: THashedStringList;
+begin
+	sl := THashedStringList.create;
+	sl.duplicates := dupIgnore;
+	sl.sorted := sort;
+
+	Result := sl;
+end;
+
+procedure hlist_hlist_free(list: THashedStringList; key: string);
+var
+	idx: integer;
+	sl: THashedStringList;
+begin
+	idx := list.indexOf(key);
+	if not (idx >= 0) then
+		Exit;
+
+	sl := list.Objects[idx];
+	if Assigned(sl) then
+		sl.free;
+end;
+
 function hlist_hlist_get(list: THashedStringList; key: string; sort: boolean): THashedStringList;
 var
 	idx: integer;
@@ -1364,70 +1409,40 @@ var
 begin
 	idx := list.indexOf(key);
 	if not (idx >= 0) then begin
-		sl := THashedStringList.create;
-		sl.duplicates := dupIgnore;
-		sl.sorted := sort;
+		sl := hlist_create(sort);
 		idx := list.addObject(key, sl);
 	end;
 
 	Result := list.Objects[idx];
 end;
 
-procedure plugin_map_pcr_update(plugin: IwbFile);
-var
-	mfile: IwbFile;
-	mfstr, pfstr: string;
-	i, idx: integer;
-	sl, parents, children: THashedStringList;
+procedure plugin_map_free;
 begin
-	pfstr := GetFileName(plugin);
-
-	// create parent map if needed
-	parents := hlist_hlist_get(plugin_parent_map, pfstr, false);
-
-	for i := 0 to Pred(MasterCount(plugin)) do begin
-		mfile := MasterByIndex(plugin, i);
-		mfstr := GetFileName(mfile);
-
-		// add master as a parent for this plugin
-		parents.addObject(mfstr, mfile);
-
-		// create child map if needed
-		children := hlist_hlist_get(plugin_child_map, mfstr, false);
-
-		// add plugin as a child for this master
-		children.addObject(pfstr, plugin);
-	end;
+	hlist_free(plugin_parent_map);
+	hlist_free(plugin_child_map);
+	plugin_file_map.free;
 end;
 
 procedure plugin_map_clear;
-var
-	i: integer;
-	sl: THashedStringList;
 begin
-	for i := 0 to Pred(plugin_parent_map.count) do begin
-		sl := plugin_parent_map.Objects[i];
-		sl.free;
-	end;
-
-	for i := 0 to Pred(plugin_child_map.count) do begin
-		sl := plugin_child_map.Objects[i];
-		sl.free;
-	end;
-
-	plugin_parent_map.clear;
-	plugin_child_map.clear;
+	hlist_clear(plugin_parent_map);
+	hlist_clear(plugin_child_map);
 	plugin_file_map.clear;
 end;
 
 procedure plugin_map_generate;
 var
-	plugin, mfile: IwbFile;
-	pfstr: string;
+	plugin, cfile, mfile: IwbFile;
+	pfstr, cfstr, mfstr: string;
 	i, j, idx: integer;
-	sl: THashedStringList;
+	sl, pmlist, cmlist, pmap, cmap: THashedStringList;
+	tl: TList;
 begin
 	plugin_map_clear;
+
+	// create temporary parent/children maps for use by DFS/BFS blocks
+	pmap := hlist_create(false);
+	cmap := hlist_create(false);
 
 	for i := 0 to Pred(FileCount) do begin
 		plugin := FileByLoadOrder(i);
@@ -1438,52 +1453,167 @@ begin
 		pfstr := GetFileName(plugin);
 		plugin_file_map.addObject(pfstr, plugin);
 
-		plugin_map_pcr_update(plugin);
+		// create temporary parent list for this plugin if needed
+		pmlist := hlist_hlist_get(pmap, pfstr, false);
+
+		for j := 0 to Pred(MasterCount(plugin)) do begin
+			mfile := MasterByIndex(plugin, j);
+			mfstr := GetFileName(mfile);
+
+			// create temporary child list for this master if needed
+			cmlist := hlist_hlist_get(cmap, mfstr, false);
+
+			// add plugin as a child of this master
+			cmlist.addObject(pfstr, plugin);
+
+			// add master as a parent of this plugin
+			pmlist.addObject(mfstr, mfile);
+		end;
 	end;
+
+{
+	for i := 0 to Pred(pmap.count) do begin
+		sl := pmap.Objects[i];
+		if not Assigned(sl) then begin
+			AddMessage(Format('%s[%d] | %s', [ 'pmap', i, 'null' ]));
+			continue;
+		end;
+
+		for j := 0 to Pred(sl.count) do begin
+			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'pmap', i, pmap[i], j, sl[j] ]));
+		end;
+	end;
+
+	for i := 0 to Pred(cmap.count) do begin
+		sl := cmap.Objects[i];
+		if not Assigned(sl) then begin
+			AddMessage(Format('%s[%d] | %s', [ 'cmap', i, 'null' ]));
+			continue;
+		end;
+
+		for j := 0 to Pred(sl.count) do begin
+			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'cmap', i, cmap[i], j, sl[j] ]));
+		end;
+	end;
+}
+
+	for i := 0 to Pred(FileCount) do begin
+		plugin := FileByLoadOrder(i);
+		if not Assigned(plugin) then
+			continue;
+		pfstr := GetFileName(plugin);
+
+		tl := TList.create;
+
+		// DFS (with minor modifications)
+		tl.insert(0, plugin);
+		while tl.count <> 0 do begin
+			mfile := ObjectToElement(tl[0]); tl.delete(0);
+			mfstr := GetFileName(mfile);
+
+			// add plugin to parent map if not already present
+			pmlist := hlist_hlist_get(plugin_parent_map, pfstr, false);
+			if pmlist.indexOf(mfstr) >= 0 then
+				continue;
+			pmlist.insertObject(0, mfstr, mfile);
+
+			// queue any parents of this plugin
+			idx := pmap.indexOf(mfstr);
+			if not (idx >= 0) then
+				continue;
+			sl := pmap.Objects[idx];
+
+			for j := Pred(sl.count) downto 0 do begin
+				mfile := ObjectToElement(sl.Objects[j]);
+				tl.add(mfile);
+			end;
+		end;
+
+		// BFS
+		tl.add(plugin);
+		while tl.count <> 0 do begin
+			cfile := ObjectToElement(tl[0]); tl.delete(0);
+			cfstr := GetFileName(cfile);
+
+			// add plugin to child map if not already present
+			cmlist := hlist_hlist_get(plugin_child_map, pfstr, false);
+			if cmlist.indexOf(cfstr) >= 0 then
+				continue;
+			cmlist.addObject(cfstr, cfile);
+
+			// queue any children of this plugin
+			idx := cmap.indexOf(cfstr);
+			if not (idx >= 0) then
+				continue;
+			sl := cmap.Objects[idx];
+
+			for j := 0 to Pred(sl.count) do begin
+				cfile := ObjectToElement(sl.Objects[j]);
+				tl.add(cfile);
+			end;
+		end;
+
+		tl.free;
+	end;
+
+	hlist_free(pmap);
+	hlist_free(cmap);
 
 {
 	AddMessage(' ');
 
 	for i := 0 to Pred(plugin_parent_map.count) do begin
 		sl := plugin_parent_map.Objects[i];
+		if not Assigned(sl) then begin
+			AddMessage(Format('%s[%d] | %s', [ 'parent_map', i, 'null' ]));
+			continue;
+		end;
+
 		for j := 0 to Pred(sl.count) do begin
 			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'parent_map', i, plugin_parent_map[i], j, sl[j] ]));
 		end;
-	end;
 
-	AddMessage(' ');
-
-	for i := 0 to Pred(plugin_parent_map.count) do begin
 		idx := plugin_file_map.indexOf(plugin_parent_map[i]);
-		if not (idx >= 0) then continue;
+		if not (idx >= 0) then begin
+			AddMessage(' ');
+			continue;
+		end;
 
 		mfile := ObjectToElement(plugin_file_map.Objects[idx]);
 		sl := plugin_parents(mfile, false);
 		for j := 0 to Pred(sl.count) do begin
 			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'parent', i, plugin_parent_map[i], j, sl[j] ]));
 		end;
+
+		AddMessage(' ');
 	end;
 
 	AddMessage(' ');
 
 	for i := 0 to Pred(plugin_child_map.count) do begin
 		sl := plugin_child_map.Objects[i];
+		if not Assigned(sl) then begin
+			AddMessage(Format('%s[%d] | %s', [ 'child_map', i, 'null' ]));
+			continue;
+		end;
+
 		for j := 0 to Pred(sl.count) do begin
 			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'child_map', i, plugin_child_map[i], j, sl[j] ]));
 		end;
-	end;
 
-	AddMessage(' ');
-
-	for i := 0 to Pred(plugin_child_map.count) do begin
 		idx := plugin_file_map.indexOf(plugin_child_map[i]);
-		if not (idx >= 0) then continue;
+		if not (idx >= 0) then begin
+			AddMessage(' ');
+			continue;
+		end;
 
 		mfile := ObjectToElement(plugin_file_map.Objects[idx]);
 		sl := plugin_children(mfile, false);
 		for j := 0 to Pred(sl.count) do begin
 			AddMessage(Format('%s[%d] | %s[%d] | %s', [ 'child', i, plugin_child_map[i], j, sl[j] ]));
 		end;
+
+		AddMessage(' ');
 	end;
 
 	AddMessage(' ');
@@ -1493,86 +1623,34 @@ end;
 
 function plugin_parents(plugin: IwbFile; include_self: boolean): THashedStringList;
 var
-	mfile: IwbFile;
-	pfstr: string;
-	i, idx: integer;
-	tl: TList;
-	sl: THashedStringList;
-	parents: THashedStringList;
+	sl, parents: THashedStringList;
 begin
-	parents := THashedStringList.create;
-	parents.duplicates := dupIgnore;
-	parents.sorted := false;
+	sl := hlist_create(false);
+	parents := hlist_hlist_get(plugin_parent_map, GetFileName(plugin), false);
+	if Assigned(parents) then begin
+		sl.assign(parents);
 
-	// DFS (with minor modifications)
-	tl := TList.create;
-	tl.insert(0, GetFile(plugin));
-	while tl.count <> 0 do begin
-		plugin := ObjectToElement(tl[0]); tl.delete(0);
-		pfstr := GetFileName(plugin);
-		if parents.indexOf(pfstr) >= 0 then
-			continue;
-		parents.insertObject(0, pfstr, plugin);
-
-		idx := plugin_parent_map.indexOf(pfstr);
-		if not (idx >= 0) then
-			continue;
-		sl := plugin_parent_map.Objects[idx];
-
-		for i := Pred(sl.count) downto 0 do begin
-			mfile := ObjectToElement(sl.Objects[i]);
-			tl.add(mfile);
-		end;
+		if not include_self then
+			sl.delete(sl.count - 1);
 	end;
 
-	tl.free;
-
-	if not include_self then
-		parents.delete(parents.count - 1);
-
-	Result := parents;
+	Result := sl;
 end;
 
 function plugin_children(plugin: IwbFile; include_self: boolean): THashedStringList;
 var
-	cfile: IwbFile;
-	pfstr: string;
-	i, idx: integer;
-	tl: TList;
-	sl: THashedStringList;
-	children: THashedStringList;
+	sl, children: THashedStringList;
 begin
-	children := THashedStringList.create;
-	children.duplicates := dupIgnore;
-	children.sorted := false;
+	sl := hlist_create(false);
+	children := hlist_hlist_get(plugin_child_map, GetFileName(plugin), false);
+	if Assigned(children) then begin
+		sl.assign(children);
 
-	// BFS
-	tl := TList.create;
-	tl.add(GetFile(plugin));
-	while tl.count <> 0 do begin
-		plugin := ObjectToElement(tl[0]); tl.delete(0);
-		pfstr := GetFileName(plugin);
-		if children.indexOf(pfstr) >= 0 then
-			continue;
-		children.addObject(pfstr, plugin);
-
-		idx := plugin_child_map.indexOf(pfstr);
-		if not (idx >= 0) then
-			continue;
-		sl := plugin_child_map.Objects[idx];
-
-		for i := 0 to Pred(sl.count) do begin
-			cfile := ObjectToElement(sl.Objects[i]);
-			tl.add(cfile);
-		end;
+		if not include_self then
+			sl.delete(0);
 	end;
 
-	tl.free;
-
-	if not include_self then
-		children.delete(0);
-
-	Result := children;
+	Result := sl;
 end;
 
 procedure plugin_master_add(plugin: IwbFile; e: IInterface; parents, sort, ordered: boolean);
@@ -4933,11 +5011,7 @@ begin
 	pv_keep_map.free;
 	pv_base_keep_map.free;
 
-	plugin_map_clear;
-
-	plugin_parent_map.free;
-	plugin_child_map.free;
-	plugin_file_map.free;
+	plugin_map_free;
 
 	for i := 0 to Pred(plugin_group_list.count) do begin
 		plugin_group_list_free(plugin_group_list[i]);
