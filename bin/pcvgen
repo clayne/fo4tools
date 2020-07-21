@@ -129,14 +129,13 @@ base)
 	STATE=pcv_init; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
 		# build base esps
 		cat "$PLUGINS_FILE_BASE" "$PLUGINS_FILE" \
-			| pcvgen_xe -v ${INTERACTIVE:+-i} ${ALL:+-a all} \
+			| pcvgen_xe -v ${INTERACTIVE:+-i} ${area[@]/#/-a } \
 				--plugins=- \
 				--pcv-mode='master_clean' \
 				--pcv-plugin-base-process \
 				--pcv-plugin-base-master-force \
 				--pcv-plugin-base-esm \
 				--pcv-plugin-output-log-use \
-				--pcv-plugin-output-each-use \
 				--pcv-plugin-output-base-combined-use \
 				--pcv-plugin-output-base-combined-esm \
 				--pcv-plugin-output-base-combined-prefix="${plugin_output_base_combined_prefix}" \
