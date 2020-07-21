@@ -5,6 +5,8 @@ use Carp qw(confess);
 use File::Basename qw(dirname basename);
 use File::Temp qw(tempfile tempdir);
 use File::Copy qw(copy);
+use File::Spec;
+use List::Util qw(first);
 use Data::Dumper;
 use Pod::Usage;
 use IPC::Run qw(run start finish);
@@ -19,9 +21,6 @@ sub fatal { local $SIG{__DIE__}; die @_, "\n" };
 local $Data::Dumper::Sortkeys = 1;
 
 our $VERSION = '$Id$';
-
-my $fo4tools_conf = '/usr/local/etc/fo4tools.conf';
-my $ckgen_conf = '/usr/local/etc/ckgen.conf';
 
 # Autohotkey specific
 my $autohotkey_path = '/cygdrive/c/Program Files/AutoHotkey/AutoHotkey.exe',
@@ -61,6 +60,11 @@ my $log_prefix = basename($0);
 my $autohotkey = 1;
 my $verbose = 0;
 my $noop = 0;
+
+# Bash-based conf files
+my @conf_dirs = ("$ENV{'HOME'}/git/fo4tools/etc", '/usr/local/etc');
+my $fo4tools_conf = first { -f } map File::Spec->catfile($_, 'fo4tools.conf'), @conf_dirs;
+my $ckgen_conf = first { -f } map File::Spec->catfile($_, 'ckgen.conf'), @conf_dirs;
 
 sub conf_get {
 	my $conf = shift;
