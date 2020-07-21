@@ -4,6 +4,21 @@ set -e
 #set -o pipefail
 
 source "$HOME/git/fo4tools/etc/fo4tools.conf" || source /usr/local/etc/fo4tools.conf
+source "$HOME/git/fo4tools/etc/ckgen.conf" || source /usr/local/etc/ckgen.conf
+
+if [[ -z "$CKGEN_BUILD_DIR" ]]; then
+	echo "Unable to resolve ckgen build directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_CACHE_DIR" ]]; then
+	echo "Unable to resolve ckgen cache directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_DATA_DIR" ]]; then
+	echo "Unable to resolve ckgen data directory" 1>&2
+	exit -1
+elif [[ -z "$CKGEN_OUT_DIR" ]]; then
+	echo "Unable to resolve ckgen output directory" 1>&2
+	exit -1
+fi
 
 # Force Windows (rather than Cygwin) compatible symlinks
 export CYGWIN=winsymlinks:nativestrict
@@ -1733,10 +1748,6 @@ CORES=$(cpu_core_cnt)
 THREADS=$(cpu_thread_cnt)
 JOBS=$THREADS
 SELF=$(basename $0)
-CACHE=$SELF.cache
-BUILD=$SELF.build
-DATA=$SELF.data
-OUT=$SELF.out
 TYPE="clean"
 AREA="all"
 PRESERVE_BUILD=0
@@ -1864,30 +1875,30 @@ fi
 if ((PRESERVE_CACHE)); then
 	# Sink output for now
 	echo "Preserving cache data..." 2>/dev/null 1>&2
-elif [[ -d "$CACHE" ]]; then
+elif [[ -d "$CKGEN_CACHE_DIR" ]]; then
 	echo "Removing cache..." 1>&2
-	rm -rf "$CACHE" || exit -1
+	rm -rf "$CKGEN_CACHE_DIR" || exit -1
 fi
 
 if ((PRESERVE_BUILD)); then
 	echo "Preserving build data..." 1>&2
-elif [[ -d "$BUILD" ]]; then
-	find "$BUILD" -mindepth 1 -maxdepth 1 \! -regex '.*/[0-9]+$' -print0 \
+elif [[ -d "$CKGEN_BUILD_DIR" ]]; then
+	find "$CKGEN_BUILD_DIR" -mindepth 1 -maxdepth 1 \! -regex '.*/[0-9]+$' -print0 \
 		| xargs -r0 rm -rf || exit -1
 
 	# Cleanup any temporary files from prior runs
-	rm -rf "$BUILD/tmp" || exit -1
+	[[ -n "$CKGEN_BUILD_DIR" ]] && rm -rf "$CKGEN_BUILD_DIR/tmp" || exit -1
 fi
 
 if ((PRESERVE_OUT)); then
 	echo "Preserving output data..." 1>&2
-elif [[ -d "$OUT" ]]; then
-	rm -rf "$OUT" || exit -1
+elif [[ -d "$CKGEN_OUT_DIR" ]]; then
+	rm -rf "$CKGEN_OUT_DIR" || exit -1
 fi
 
-mkdir -p "$CACHE" "$CACHE/Data" "$CACHE/tmp" || exit -1
-mkdir -p "$BUILD" "$BUILD/tmp" || exit -1
-mkdir -p "$OUT" || exit -1
+mkdir -p "$CKGEN_CACHE_DIR" "$CKGEN_CACHE_DIR/Data" "$CKGEN_CACHE_DIR/tmp" || exit -1
+mkdir -p "$CKGEN_BUILD_DIR" "$CKGEN_BUILD_DIR/tmp" || exit -1
+mkdir -p "$CKGEN_OUT_DIR" || exit -1
 
 # Generate output file of jobs to be run by parallel
 for plugin in "${PLUGINS[@]}"; do
@@ -1942,7 +1953,7 @@ done | while read plugin; do
 		# Use tabs for arg separation and escape-quote $plugin so that when parallel
 		# interprets this input line to call ck_wrap it doesn't consume quotes.
 		for _s in $(seq -s ' ' $SHARDS_START $s); do
-			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$SRC" "$BUILD" "$OUT" "$CACHE" "$plugin" "$f" "$MODE" "$t" "$area_use" "$area_ck" "$_s" "$s"
+			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$SRC" "$CKGEN_BUILD_DIR" "$CKGEN_OUT_DIR" "$CKGEN_CACHE_DIR" "$plugin" "$f" "$MODE" "$t" "$area_use" "$area_ck" "$_s" "$s"
 		done
 
 	done
@@ -1973,36 +1984,36 @@ done | perl -e '
 	foreach (grep !$seen{$_}++, map $_->[0], sort { $b->[1] <=> $a->[1] } @a) {
 		print "$_\n" foreach (shuffle @{$plugins{$_}});
 	}
-' > "$BUILD/tmp/jobs.in"
+' > "$CKGEN_BUILD_DIR/tmp/jobs.in"
 
-if [[ ! -s "$BUILD/tmp/jobs.in" ]]; then
-	rm -f "$BUILD/tmp/jobs.in"
+if [[ ! -s "$CKGEN_BUILD_DIR/tmp/jobs.in" ]]; then
+	rm -f "$CKGEN_BUILD_DIR/tmp/jobs.in"
 	exit 0
 fi
 
-touch "$BUILD/tmp/jobs.log"
-rm -f "$BUILD/tmp/gen.err"
+touch "$CKGEN_BUILD_DIR/tmp/jobs.log"
+rm -f "$CKGEN_BUILD_DIR/tmp/gen.err"
 
 # Note: final 'read' commands are to prevent tmux from closing each sub-window
 if ((TMUX)); then
 	# tmux doesn't emit the exit status of child commands as part of it's own exit status
 	tmux new \
-		"ckgen --log-wrap '$BUILD' cell $JOBS" ';' \
+		"ckgen --log-wrap '$CKGEN_BUILD_DIR' cell $JOBS" ';' \
 		split -p 40 \
-		"ckgen --log-wrap '$BUILD' all $JOBS" ';' \
+		"ckgen --log-wrap '$CKGEN_BUILD_DIR' all $JOBS" ';' \
 		split -p 50 \
-		"ckgen --gen '$BUILD' '$BUILD/tmp/jobs.in' '$BUILD/tmp/gen.err' '$BUILD/tmp/ctl.log' $JOBS $INTERACTIVE $PROC_ONLY $WAIT 2>&1 || true; cat '$BUILD/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
-		set-option status-left "#(ckgen --status '$PWD/$BUILD')" ';' \
+		"ckgen --gen '$CKGEN_BUILD_DIR' '$CKGEN_BUILD_DIR/tmp/jobs.in' '$CKGEN_BUILD_DIR/tmp/gen.err' '$CKGEN_BUILD_DIR/tmp/ctl.log' $JOBS $INTERACTIVE $PROC_ONLY $WAIT 2>&1 || true; cat '$CKGEN_BUILD_DIR/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
+		set-option status-left "#(ckgen --status '$PWD/$CKGEN_BUILD_DIR')" ';' \
 		set-option status-interval 1 ';' \
 		set-option status-right '' ';' \
 		set-option status-left-length 180 ';' \
 		set-option status-style fg=black,reverse ';' \
 		set-window-option window-status-current-format '' \
-		&& [[ ! -f "$BUILD/tmp/gen.err" ]] \
+		&& [[ ! -f "$CKGEN_BUILD_DIR/tmp/gen.err" ]] \
 		|| exit -1
 #		set-option status off ';' \
 #		set-option alternate-screen off ';' \
 #		set -g terminal-overrides 'xterm*:smcup@:rmcup@' \
 else
-	ckgen --gen "$BUILD" "$BUILD/tmp/jobs.in" "$BUILD/tmp/gen.err" "$BUILD/tmp/ctl.log" $JOBS $INTERACTIVE $PROC_ONLY $WAIT
+	ckgen --gen "$CKGEN_BUILD_DIR" "$CKGEN_BUILD_DIR/tmp/jobs.in" "$CKGEN_BUILD_DIR/tmp/gen.err" "$CKGEN_BUILD_DIR/tmp/ctl.log" $JOBS $INTERACTIVE $PROC_ONLY $WAIT
 fi
