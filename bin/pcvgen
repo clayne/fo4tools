@@ -115,11 +115,8 @@ base)
 
 	STATE=ckgen_data_clone; if [[ ! -f "$STATE_DIR/$STATE" ]]; then
 		# copy orig plugins if not already present
-		data_clone "Data" "$CKGEN_DATA/orig"
-
-		# restore original plugins
 		for i in "${area[@]}"; do
-			data_clone "$CKGEN_DATA/orig" "$CKGEN_DATA/$i"
+			data_clone "Data" "$CKGEN_DATA_DIR/$i"
 		done
 		touch "$STATE_DIR/$STATE"
 	fi
@@ -150,7 +147,7 @@ base)
 
 	# XXX: hack, figure out a better way - this won't work for pcv generated plugins
 	# XXX: with SCOL overrides for instance.
-	IFS=$'\n' ckgen_scol_args=( $(fgrep -l 'SCOL' "$CKGEN_DATA/orig"/*.es[pml]) ); IFS="$OIFS"
+	IFS=$'\n' ckgen_scol_args=( $(fgrep -l 'SCOL' "Data"/*.es[pml] || true) ); IFS="$OIFS"
 
 	# add target plugins as args
 	for i in "${area[@]}"; do
