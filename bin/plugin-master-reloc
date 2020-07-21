@@ -72,6 +72,20 @@ sub plugin_sub {
 	return $plugin_sub;
 }
 
+# XXX: This can be done better
+my $flags_tab = [ 'esm', undef, undef, undef, undef, undef, undef, 'localized', undef, 'esl' ];
+sub flags_str {
+	my ($flags) = @_;
+	my @out;
+
+	for (my $i = 0; $i < 32; $i++) {
+		next unless ($flags_tab->[$i] && ($flags & (0x1 << $i)));
+		push @out, $flags_tab->[$i];
+	}
+
+	return join(', ', @out);
+}
+
 sub main {
 	my $ret;
 	my $help = 0;
@@ -324,7 +338,7 @@ sub main {
 
 		unshift @q, @qt if ($recurse);
 
-		push @$mout, { path => $_, dirname => $dirname, basename => $basename, mproc => $mproc };
+		push @$mout, { path => $_, size => $sz, flags => $flags, dirname => $dirname, basename => $basename, mproc => $mproc };
 	}
 
 	my %unlink = ();
@@ -361,10 +375,14 @@ sub main {
 	%seen = ();
 	my $head;
 	foreach my $ent (@$mout) {
-		my ($path, $dirname, $basename, $mproc) = map $ent->{$_}, qw(path dirname basename mproc);
+		my ($path, $size, $flags, $dirname, $basename, $mproc)
+			= map $ent->{$_}, qw(path size flags dirname basename mproc);
 		next if ($unlink{$path});
 
-		printf STDERR ("%s%s:\n", $head++ ? "\n" : "", $path) if ($verbose);
+		if ($verbose) {
+			printf STDERR ("\n") if ($head++);
+			printf STDERR ("%s (size: %d, flags: [%s]):\n", $path, $size, flags_str($flags));
+		}
 
 		if ($include_self) {
 			push @$mproc, { offset => 0, master => $basename, plugin => $basename };
