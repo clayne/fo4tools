@@ -11,6 +11,7 @@ const
 //	Debug = false;
 	Profile = true;
 	StopOnError = true;
+	StopAfterInit = false;
 	NegativeCaching = true;
 	CacheRvisGridCells = true;
 	CacheRvisCells = true;
@@ -383,6 +384,9 @@ begin
 	end;
 
 	plugin_map_update;
+
+	if StopAfterInit then
+		Result := true;
 end;
 
 procedure plugin_group_list_free(group: string);
