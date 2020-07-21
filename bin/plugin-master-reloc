@@ -221,7 +221,7 @@ sub main {
 		close($fd) or die "close: $!";
 
 		my @qt;
-		for (my $i = 0; $i < @$mproc; $i++) {
+		for (my $i = @$mproc; $i--; ) {
 			my ($offset, $master) = map $mproc->[$i]{$_}, qw(offset master);
 
 			my $is_protected = ($protect && $protect_tab{$basename});
@@ -336,9 +336,9 @@ sub main {
 			}
 		}
 
-		unshift @q, @qt if ($recurse);
+		push @q, @qt if ($recurse);
 
-		push @$mout, { path => $_, size => $sz, flags => $flags, dirname => $dirname, basename => $basename, mproc => $mproc };
+		unshift @$mout, { path => $_, size => $sz, flags => $flags, dirname => $dirname, basename => $basename, mproc => $mproc };
 	}
 
 	my %unlink = ();
