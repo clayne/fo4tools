@@ -129,6 +129,56 @@ sub plugin_file_resolve {
 	fatal "Unable to resolve plugin file";
 }
 
+sub xedit_settings_create {
+	my ($area, $plugin_file, $data_dir, $user_dir)  = @_;
+
+	# If <plugin_file (last extension removed).fo4viewsettings> doesn't exist, copy
+	# an existing one using the default name (usually 'plugins.fo4viewsettings').
+	my $plugin_file_base = ($plugin_file =~ /\./) ? ($plugin_file =~ /(.+)\..+$/)[0] : $plugin_file;
+	my $plugin_settings = join('.', $plugin_file_base, $xedit_settings_suffix);
+	return $plugin_settings if (-f $plugin_settings || $noop);
+
+	# Find the first matching settings file which exists
+	my $src = first { -f } (
+		$xedit_default_settings,
+		join('/', $user_dir, 'Fallout4', $xedit_default_settings),
+	);
+
+	my (@sects, %sects, $sect);
+
+	# Parse existing settings file if present
+	if ($src) {
+		open(my $fd, '<', $src) or die "open: $src: $!";
+		while (<$fd>) {
+			s/\R//g;
+			if (/^\[([^\]]+)\]$/) {
+				$sect = $1;
+				push @sects, $sect unless (exists $sects{$sect});
+			} elsif (length && $sect) {
+				push @{$sects{$sect}}, $_;
+			}
+		}
+		close($fd);
+	} else {
+		@sects = qw(WhatsNew DeveloperMessage);
+	}
+
+	# Make it stop being annoying
+	$sects{'WhatsNew'} = [ 'Version=9999999' ];
+	$sects{'DeveloperMessage'} = [ 'LastShownOn=99999', 'Version=9999999' ];
+
+	# Write the new settings file
+	open(my $fd, '>', $plugin_settings) or die "open: $plugin_settings: $!";
+	foreach (@sects) {
+		printf $fd ("[%s]\r\n", $_);
+		printf $fd ("%s\r\n", $_) foreach (@{$sects{$_}});
+		printf $fd ("\r\n");
+	}
+	close($fd);
+
+	return $plugin_settings;
+}
+
 sub xedit_run {
 	my %opts = @_;
 	my ($area, $args, $script, $data_dir, $user_dir, $plugin_file)
@@ -149,22 +199,7 @@ sub xedit_run {
 	foreach my $area (@$area) {
 		my $data_dir = data_dir_resolve($area, $data_dir);
 		my $plugin_file = plugin_file_resolve($area, $plugin_file, $data_dir, $user_dir);
-
-		# If <plugin_file (last extension removed).fo4viewsettings> doesn't exist, copy
-		# an existing one using the default name (usually 'plugins.fo4viewsettings').
-		my $plugin_file_base = ($plugin_file =~ /\./) ? ($plugin_file =~ /(.+)\..+$/)[0] : $plugin_file;
-		my $plugin_settings = join('.', $plugin_file_base, $xedit_settings_suffix);
-		if (! -f $plugin_settings) {
-			foreach (
-				$xedit_default_settings,
-				join('/', $user_dir, 'Fallout4', $xedit_default_settings),
-			) {
-				next unless -f;
-
-				copy($_, $plugin_settings) unless ($noop);
-				last;
-			}
-		}
+		my $plugin_settings = xedit_settings_create($area, $plugin_file, $data_dir, $user_dir);
 
 		my $pcv_mode = (map /--pcv-mode=(.+)/, @$args)[0];
 		my $log_file = $log_file || join('.', grep $_, ($log_prefix, $pcv_mode, $area, 'log'));
