@@ -353,13 +353,13 @@ fi
 	# The actual use case is rather specific in where a large amount of
 	# masters are involved and handle limits are being hit in CK, which
 	# prevents generation of any data.
-	if [[ -d "$bdir/$job/ckgen.data" ]]; then
+	if [[ -d "$bdir/$job/$CKGEN_DATA_DIR" ]]; then
 		# Multiple finds are used to workaround cp complaining about files it just
 		# overwrote. rsync is not an option because it sorts the input list.
 
-		# Copy of plugins from ckgen.data/*
+		# Copy of plugins from $CKGEN_DATA_DIR/*
 		(find \
-			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			"$bdir/$job/$CKGEN_DATA_DIR"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f -name '*.es[pml]' -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -372,10 +372,10 @@ fi
 			done
 		done || return 1
 
-		# Copy of plugins specifically setup as masters from ckgen.data/master/*
+		# Copy of plugins specifically setup as masters from $CKGEN_DATA_DIR/master/*
 		(find \
-			"$bdir/$job/ckgen.data"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
-			"$bdir/$job/ckgen.data/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
+			"$bdir/$job/$CKGEN_DATA_DIR"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"}/master \
+			"$bdir/$job/$CKGEN_DATA_DIR/master"{"","/$plugin"}{"","/$type","/$area","/$type/$area","/$area/$type"} \
 			-maxdepth 1 -mindepth 1 -type f -name '*.es[pml]' '!' -name "${plugin/.es[pml]*/.es[pml]}*" -printf '%h\n' 2>/dev/null || true) \
 			| awk '!seen[$0]++' \
 			| while read tmp
@@ -1459,7 +1459,7 @@ function ck_proc() {
 		if ls -d "$bdir/$plugin".*.error 2>/dev/null; then
 			echo "$plugin: Moving error output..." 1>&2
 		fi
-	fi | perl -e 'while (<STDIN>) { s#\Q$ARGV[0]/$ARGV[1]\E#$ARGV[1]#g; print }' -- "$bdir" "$plugin" \
+	fi | perl -we 'while (<STDIN>) { s#\Q$ARGV[0]/$ARGV[1]\E#$ARGV[1]#g; print }' -- "$bdir" "$plugin" \
 		| rsync --remove-source-files --protect-args -raS --relative --files-from=- --link-dest="$PWD/$bdir" "$bdir" "$odir" || true
 
 	find "$bdir/$plugin" -type d -empty -print0 | xargs -tr0 rmdir -p --ignore-fail-on-non-empty
@@ -1955,23 +1955,24 @@ done | perl -e '
 	use List::Util qw(shuffle);
 
 	my %plugins;
-	while (<>) {
+	while (<STDIN>) {
 		chomp;
 		my @b = split("\t", $_);
 		push @{$plugins{$b[4]}}, $_;
 	}
 
 	# Sort by count of CELL records within a plugin
-	my $ckgen_dir = (-d "ckgen.data" ? "ckgen.data" : "");
-	open(my $fd, "-|", "find Data/*.es[mpl] $ckgen_dir -type f -name \"*.es[mpl]\" -print0 | xargs -r0 grep -Hc CELL") or die;
+	my $ckgen_data_dir = (-d $ARGV[0] ? $ARGV[0] : "");
+	open(my $fd, "-|", "find Data/*.es[pml] ${ckgen_data_dir}/*/*.es[pml] -type f -print0 2>/dev/null | xargs -r0 grep -Hc CELL") or die;
 	my @a = map { chomp; my @b = split(":", $_, 2); [ basename($b[0]), $b[1] ]; } (<$fd>);
 	close($fd);
 
 	my %seen;
 	foreach (grep !$seen{$_}++, map $_->[0], sort { $b->[1] <=> $a->[1] } @a) {
+		next unless (exists $plugins{$_});
 		print "$_\n" foreach (shuffle @{$plugins{$_}});
 	}
-' > "$CKGEN_BUILD_DIR/tmp/jobs.in"
+' -- "$CKGEN_DATA_DIR" > "$CKGEN_BUILD_DIR/tmp/jobs.in"
 
 if [[ ! -s "$CKGEN_BUILD_DIR/tmp/jobs.in" ]]; then
 	rm -f "$CKGEN_BUILD_DIR/tmp/jobs.in"
