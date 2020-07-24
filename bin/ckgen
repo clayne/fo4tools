@@ -217,6 +217,8 @@ function perm_debug() {
 function ck_clone() {
 	set -x
 
+	local time_start="$(date +%s)"
+
 	local sdir="$1"; shift
 	local bdir="$1"; shift
 	local odir="$1"; shift
@@ -392,19 +394,29 @@ fi
 	# Propogate info file with information about cloned environment
 	echo -e "$sdir\t$bdir\t$odir\t$cdir\t$plugin\t$file\t$mode\t$type\t$area\t$area_ck\t$cur\t$max\t$job\t$interactive\t$$" > $bdir/$job/ck_wrap.info
 
+	local time_finish="$(date +%s)"
+	echo "ck_clone: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
 function ck_archive_unpack() {
+	local time_start="$(date +%s)"
+
 	echo "ck_archive_unpack" 1>&2
 	date 1>&2 || true
 	ls -lai "$1" 1>&2 2>/dev/null
 	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -e="$(cygpath -aw "$2")" -q
 #	find "$2" -ls 1>&2
 	date 1>&2 || true
+
+	local time_finish="$(date +%s)"
+	echo "ck_archive_unpack: time_delta == $((time_finish - time_start))" 1>&2
 }
 
 function ck_archive_pack() {
+	local time_start="$(date +%s)"
+
 	# Archive2 refuses to create empty archives
 	find "$1" -type f '!' -empty 2>/dev/null | egrep '' &>/dev/null || echo 'empty' > "$1/empty.txt"
 
@@ -428,10 +440,15 @@ function ck_archive_pack() {
 		sleep $((1 + (RANDOM % 4)))
 	done
 	date 1>&2 || true
+
+	local time_finish="$(date +%s)"
+	echo "ck_archive_pack: time_delta == $((time_finish - time_start))" 1>&2
 }
 
 function ck_archive_rewrite() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local method="$1"; shift
 	local bdir="$1"; shift
@@ -660,11 +677,16 @@ fi
 		esac
 	done
 
+	local time_finish="$(date +%s)"
+	echo "ck_archive_rewrite: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
 function ck_plugin_master_rewrite() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local method="$1"; shift
 	local bdir="$1"; shift
@@ -725,11 +747,16 @@ fi
 		;;
 	esac
 
+	local time_finish="$(date +%s)"
+	echo "ck_plugin_master_rewrite: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
 function ck_output_dir_rename() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local bdir="$1"; shift
 	local job="$1"; shift
@@ -788,6 +815,9 @@ function ck_output_dir_rename() {
 		fi
 	done
 
+	local time_finish="$(date +%s)"
+	echo "ck_output_dir_rename: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
@@ -814,6 +844,8 @@ function ck_datafiles_dump {
 
 function ck_exec_wrap() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local bdir="$1"; shift
 	local cdir="$1"; shift
@@ -922,6 +954,7 @@ function ck_exec_wrap() {
 
 	ctl_log "$ctl_log" "$job" "$plugin" "$file" "$mode" "$type" "$area" "$area_ck" "LOADING"
 
+	local time_start_ck="$(date +%s)"
 	if ( \
 		cd "$bdir/$job" \
 			&& eval "$CKEXEC ${args[*]} &>$CKEXEC_OUT" \
@@ -948,6 +981,7 @@ function ck_exec_wrap() {
 		cp --remove-destination -fp "$bdir/$job/EditorWarnings.txt" "$bdir/$file.$mode.$type.$area.$wcur.$target.error"
 		return 1
 	fi
+	local time_finish_ck="$(date +%s)"
 
 	# If the plugin was copied to an esm, switch esm masters back to esp masters
 	ck_plugin_master_rewrite "esm-to-esp" "$bdir" "$job" "$plugin" "$file"
@@ -1031,11 +1065,16 @@ function ck_exec_wrap() {
 		;;
 	esac
 
+	local time_finish="$(date +%s)"
+	echo "ck_exec_wrap: time_delta == $((time_finish - time_start)), time_delta_ck == $((time_finish_ck - time_start_ck))" 1>&2
+
 	return 0
 }
 
 function ck_archive_wrap() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local sdir="$1"; shift
 	local bdir="$1"; shift
@@ -1155,11 +1194,16 @@ function ck_archive_wrap() {
 	rm -rf "$archive_data_tmp"
 	rm -f "$cache_lock"
 
+	local time_finish="$(date +%s)"
+	echo "ck_archive_wrap: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
 function ck_wrap() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local sdir="$1"; shift
 	local bdir="$1"; shift
@@ -1317,11 +1361,16 @@ function ck_wrap() {
 
 	echo "SUCCESS" >> "$bdir/$job/EditorWarnings.txt"
 
+	local time_finish="$(date +%s)"
+	echo "ck_wrap: time_delta == $((time_finish - time_start))" 1>&2
+
 	return 0
 }
 
 function ck_proc() {
 	set -x
+
+	local time_start="$(date +%s)"
 
 	local sdir="$1"; shift
 	local bdir="$1"; shift
@@ -1468,6 +1517,9 @@ function ck_proc() {
 	rm -f "$proc_lock"
 
 	ctl_log "$ctl_log" "$job" "$plugin" "$plugin" "$mode" "$type" "$area" "$area_ck" "SUCCESS"
+
+	local time_finish="$(date +%s)"
+	echo "ck_proc: time_delta == $((time_finish - time_start))" 1>&2
 
 	return 0
 }
