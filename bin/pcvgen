@@ -90,7 +90,7 @@ elif [[ -d "$CKGEN_OUT_DIR" ]] && ((!FORCE && !RESUME)); then
 	exit -1
 fi
 
-STATE_DIR="/tmp/$SELF/$PROFILE.$MODE"
+STATE_DIR="/tmp/$SELF/$PROFILE/$MODE"
 ((RESUME)) || rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 
@@ -130,7 +130,7 @@ base)
 		# build base esps
 		cat "$PLUGINS_FILE_BASE" "$PLUGINS_FILE" \
 			| pcvgen_xe -v ${INTERACTIVE:+-i} ${area[@]/#/-a } \
-				--plugins=- \
+				--plugin-files=- \
 				--pcv-mode='master_clean' \
 				--pcv-plugin-base-process \
 				--pcv-plugin-base-master-force \
@@ -199,8 +199,8 @@ base)
 					[[ -d "$CKGEN_OUT_DIR/$d" ]] || continue
 					find "$CKGEN_OUT_DIR/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -print0 | xargs -tr0 cp -lfpt "$CKGEN_DATA_DIR/$a"
 					find "$CKGEN_OUT_DIR/$d" -type f -name "*.${mode}.*.${a}.*.es[pml]" -printf '%f\n'
-				done | pcvgen_xe -v ${INTERACTIVE:+-i} ${ALL:+-a all} \
-					--plugins=- \
+				done | pcvgen_xe -v ${INTERACTIVE:+-i} ${area[@]/#/-a } \
+					--plugin-files=- \
 					--pcv-mode="${mode}_merge" \
 					--pcv-plugin-output-combined-use
 				touch "$STATE_DIR/$STATE"
