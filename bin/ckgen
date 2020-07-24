@@ -400,7 +400,7 @@ function ck_archive_unpack() {
 	date 1>&2 || true
 	ls -lai "$1" 1>&2 2>/dev/null
 	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -e="$(cygpath -aw "$2")" -q
-	find "$2" -ls 1>&2
+#	find "$2" -ls 1>&2
 	date 1>&2 || true
 }
 
@@ -421,7 +421,7 @@ function ck_archive_pack() {
 	echo "ck_archive_pack" 1>&2
 	date 1>&2 || true
 	ls -lai "$2" 1>&2 2>/dev/null || true
-	find "$1" -ls 1>&2
+#	find "$1" -ls 1>&2
 	Tools/Archive2/Archive2.exe "$(cygpath -aw "$1")" -c="$(cygpath -aw "$2.$$")" -compression="$compression" -q
 	while ! mv "$2.$$" "$2"; do
 		perm_debug "$2.$$" "$2"
@@ -803,9 +803,7 @@ function ck_datafiles_dump {
 	local file="$1"; shift
 	local job="$1"; shift
 
-	[[ -f "$bdir/$job/DataFiles.txt" ]] || return
-
-	cat "$bdir/$job/DataFiles.txt" 1>&2 2>/dev/null || true
+	[[ -f "$bdir/$job/DataFiles.txt" ]] && cat "$bdir/$job/DataFiles.txt" 1>&2 || return 0
 
 	local lmax=$(awk '{ l=length($0); if (l > lmax) lmax=l }END{ print lmax }' "$bdir/$job/DataFiles.txt")
 	paste \
@@ -927,6 +925,7 @@ function ck_exec_wrap() {
 	if ( \
 		cd "$bdir/$job" \
 			&& eval "$CKEXEC ${args[*]} &>$CKEXEC_OUT" \
+			&& touch "EditorWarnings.txt" \
 			&& ! egrep -q 'OUT OF HANDLE|Could not get file pointer|Number of registered paths has exceeded maximum' "EditorWarnings.txt" \
 	);
 	then
@@ -1348,7 +1347,7 @@ function ck_proc() {
 
 	# Note: this lockfile is really just a guard against
 	# multiple proc jobs operating on the same plugin.
-	if ! lockfile -l 3600 -r 0 -1 "$proc_lock"; then
+	if ! lockfile -l 3600 -r 3600 -1 "$proc_lock"; then
 		return 0
 #		echo "Failed to acquire lock: $proc_lock ..." 1>&2
 #		return 1
@@ -1607,7 +1606,7 @@ function ck_log_wrap() {
 			case /Could not find material data\\materials\\\*/:
 			case /need 64bit file size|Need to move to 64-bit file sizes/:
 			case /OUT OF HANDLE|Could not get file pointer|Number of registered paths/:
-			case /generat.*for.*cell/:
+			case /generat.*for.*cell|^(SUCCESS|FAILURE)/:
 				next;
 			}
 
@@ -1685,11 +1684,11 @@ function ck_gen() {
 	set -o pipefail
 
 	if ((interactive)); then
-		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
-		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --delay 2 --lb -tr -j $jobs --colsep '\t'"
+		PFLAGS_GEN=( --results="$bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/" --joblog="$bdir/tmp/jobs.gen.log" --progress --delay 2 --lb -r -j $jobs --colsep='\t' )
+		PFLAGS_PROC=( --results="$bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/" --joblog="$bdir/tmp/jobs.proc.log" --progress --delay 2 --lb -r -j $jobs --colsep='\t' )
 	else
-		PFLAGS_GEN="--res $bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.gen.log --progress --lb -tr -j $jobs --colsep '\t'"
-		PFLAGS_PROC="--res $bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/ --joblog=$bdir/tmp/jobs.proc.log --progress --lb -tr -j $jobs --colsep '\t'"
+		PFLAGS_GEN=( --results="$bdir/{5}/jobs/gen/{6}/{7}/{8}/{9}/{10}/{11}/{12}/" --joblog="$bdir/tmp/jobs.gen.log" --eta --lb -r -j $jobs --colsep='\t' )
+		PFLAGS_PROC=( --results="$bdir/{5}/jobs/proc/{6}/{7}/{8}/{9}/{10}/{11}/{12}/" --joblog="$bdir/tmp/jobs.proc.log" --eta --lb -r -j $jobs --colsep='\t' )
 	fi
 
 	if ((proc_only)); then
@@ -1701,7 +1700,7 @@ function ck_gen() {
 	fi
 
 	if ((gen)); then
-		eval parallel "$PFLAGS_GEN" "bash -x ckgen --wrap {} {%} $interactive '$ctl_log'" < "$args" || ret=$?
+		parallel "${PFLAGS_GEN[@]}" "bash -x ckgen --wrap {} {%} $interactive '$ctl_log'" 0<"$args" 1>/dev/null || ret=$?
 		if ((ret == 255)); then
 			printf '\nERROR\n' 1>&2
 			touch "$ctl_err"
@@ -1714,7 +1713,7 @@ function ck_gen() {
 
 	# XXX: Could be done in a better way
 	if ((proc)); then
-		eval parallel "$PFLAGS_PROC" "bash -x ckgen --proc {} {%} $interactive '$ctl_log'" < "$args" || ret=$?
+		parallel "${PFLAGS_PROC[@]}" "bash -x ckgen --proc {} {%} $interactive '$ctl_log'" 0<"$args" 1>/dev/null || ret=$?
 		if ((ret == 255)); then
 			printf '\nERROR\n' 1>&2
 			touch "$ctl_err"
@@ -1989,7 +1988,7 @@ if ((TMUX)); then
 		"ckgen --log-wrap '$CKGEN_BUILD_DIR' cell $JOBS" ';' \
 		split -p 40 \
 		"ckgen --log-wrap '$CKGEN_BUILD_DIR' all $JOBS" ';' \
-		split -p 50 \
+		split -p 40 \
 		"ckgen --gen '$CKGEN_BUILD_DIR' '$CKGEN_BUILD_DIR/tmp/jobs.in' '$CKGEN_BUILD_DIR/tmp/gen.err' '$CKGEN_BUILD_DIR/tmp/ctl.log' $JOBS $INTERACTIVE $PROC_ONLY $WAIT 2>&1 || true; cat '$CKGEN_BUILD_DIR/tmp/ck_log_wrap'.*.pid | xargs -r kill || true" ';' \
 		set-option status-left "#(ckgen --status '$PWD/$CKGEN_BUILD_DIR')" ';' \
 		set-option status-interval 1 ';' \
