@@ -1,0 +1,171 @@
+#!/usr/bin/perl
+
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use Carp qw(confess);
+use Data::Dumper;
+use Pod::Usage;
+use IPC::Run qw(run start finish);
+use List::NSect qw(nsect);
+use File::Temp qw(tempfile);
+use File::Copy;
+
+use warnings FATAL => qw(all);
+use strict;
+
+local $SIG{__DIE__} = \&confess;
+local $Data::Dumper::Sortkeys = 1;
+local $Data::Dumper::Deepcopy = 1;
+
+our $VERSION = '$Id$';
+
+use constant {
+	PLUGIN_FILE => 'C:\Users\clayne\AppData\Local\Fallout4\Plugins.txt',
+	FO4_EXEC => 'F:\SteamLibrary\steamapps\common\Fallout 4\Fallout4.exe',
+};
+
+my $verbose = 0;
+
+sub index_get {
+	my $idx;
+	while (!defined $idx) {
+		print STDOUT "\rRun successful? ";
+		read(STDIN, $idx, 1) or next;
+		$idx = ($idx eq 'n') ? 0 : ($idx eq 'y') ? 1 : undef;
+	}
+	print STDOUT "\n";
+
+	return $idx;
+}
+
+sub plugins_dump {
+	my ($left, $right) = @{$_[0]};
+
+	print STDOUT "Remain:\n";
+	for (my $i = 0; $i < scalar @$left; $i++) {
+		printf STDOUT ("\t[%02X] %s\n", $i, $left->[$i]);
+	}
+
+	if (defined $right) {
+		print STDOUT "\n\tvs\n\n";
+
+		for (my $i = 0; $i < scalar @$right; $i++) {
+			printf STDOUT ("\t[%02X] %s\n", $i, $right->[$i]);
+		}
+	}
+
+	print STDOUT "\nTrying:\n";
+	for (my $i = 0; $i < scalar @$left; $i++) {
+		printf STDOUT ("\t[%02X] %s\n", $i, $left->[$i]);
+	}
+	print STDOUT "\n";
+
+	return $left;
+}
+
+sub plugins_backup {
+	my $backup = join('.', PLUGIN_FILE, time);
+	move(PLUGIN_FILE, $backup);
+
+	return $backup;
+}
+
+sub plugins_restore {
+	my $backup = shift;
+	move($backup, PLUGIN_FILE) if (-f $backup);
+}
+
+sub plugins_write {
+	my (@plugins) = @_;
+
+	my ($fh, $filename) = tempfile(UNLINK => 0);
+	foreach (@plugins) {
+		printf $fh ("*%s\r\n", $_);
+	}
+	close($fh);
+
+	move($filename, PLUGIN_FILE);
+}
+
+sub main {
+	my $ret;
+	my $help = 0;
+	my $start = 1;
+	my $ask_before_start = 0;
+
+	local @ARGV = @_;
+	GetOptions(
+                'h|help' => \$help,
+		'verbose|v+' => \$verbose,
+		'start!' => \$start,
+		'ask-before-start!' => \$ask_before_start,
+        ) && (!$help && ($ret = 1));
+
+        $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	my (@plugins_dlc, @plugins);
+	my @plugins_all = map {
+		s/\R//g;
+		/^\*(.+)$/; # ? /^\*(.+)/ : undef;
+	} grep !/^#/, <>;
+
+	foreach (@plugins_all) {
+		if (/^(?:Fallout|DLC).+\.esm$/) {
+			push @plugins_dlc, $_;
+		} else {
+			push @plugins, $_;
+		}
+	}
+
+	print STDERR Dumper {
+		plugins_all => \@plugins_all,
+		plugins_dlc => \@plugins_dlc,
+		plugins => \@plugins,
+	} if ($verbose);
+
+	my $plugins_backup = plugins_backup;
+
+	my $plugins_restore_handler = sub {
+		plugins_restore($plugins_backup);
+		exit(1);
+	};
+
+	local $SIG{INT} = $plugins_restore_handler;
+	local $SIG{TERM} = $plugins_restore_handler;
+	local $SIG{QUIT} = $plugins_restore_handler;
+	local $SIG{ABRT} = $plugins_restore_handler;
+
+	my $tmp = nsect(2, @plugins);
+	while (scalar @$tmp) {
+		plugins_dump($tmp);
+		plugins_write(@plugins_dlc, @{$tmp->[0]});
+
+		if ($start) {
+			if ($ask_before_start) {
+				my $tmp;
+				print STDOUT "Press enter to start...\n";
+				read(STDIN, $tmp, 1);
+			}
+			run [ FO4_EXEC ];
+		}
+
+		my $idx = index_get;
+		my $bisect = $tmp->[$idx];
+		if (!$bisect) {
+			print STDOUT "Unable to determine problem plugin!\n";
+			last;
+		} elsif (scalar @$tmp == 1) {
+			print STDOUT @$bisect, "\n";
+			last;
+		}
+
+		$tmp = nsect(2, @$bisect);
+	}
+
+	plugins_restore($plugins_backup);
+
+	return 1;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__
