@@ -1551,3 +1551,19 @@ or (cygwin): editrights -u $USER -a SeCreateSymbolicLinkPrivilege
 ---
 
 Create ITM SCOL records in generated plugins so said plugin can be used as a direct argument to create SCOL data?
+
+---
+
+Texture related suffixes:
+
+suffix	type
+d	diffuse
+n	normal (bump)
+s	specular (shine)
+g	glow (also _sk [skin] and _hl [highlight])
+h	height
+e	effect?
+m/em	environment
+r	roughness?
+p	parallax
+c	?
