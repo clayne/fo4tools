@@ -93,6 +93,7 @@ var
 	plugin_output_each_use, plugin_output_each_esm: boolean;
 	plugin_output_combined_use, plugin_output_combined_esm: boolean;
 	plugin_output_use, plugin_output_esm: boolean;
+
 	plugin_output_cell_prefix: string;
 	plugin_output_each_prefix: string;
 	plugin_output_combined_prefix: string;
@@ -103,9 +104,14 @@ var
 	plugin_output_combined_list: THashedStringList;
 	plugin_output_list: THashedStringList;
 
-	plugin_output_log_list: THashedStringList;
+	plugin_output_log_queue: THashedStringList;
 	plugin_output_log, plugin_output_log_prefix: string;
 	plugin_output_log_use: boolean;
+
+
+	plugin_esm_list: THashedStringList;
+	plugin_output_esm_list: THashedStringList;
+
 
 	cell_keep_use: boolean;
 	cell_keep_xy: array[0..1] of TwbGridCell;
@@ -132,7 +138,6 @@ var
 	plugin_master_force_queue: THashedStringList;
 	plugin_master_force_seen: THashedStringList;
 	plugin_master_force_list: THashedStringList;
-	plugin_master_base_list: THashedStringList;
 	plugin_master_exclude_list: THashedStringList;
 
 	cell_queue: TList;
@@ -261,31 +266,18 @@ begin
 	plugin_group_list.sorted := false;
 	plugin_group_list.duplicates := dupIgnore;
 
-	plugin_master_base_list := THashedStringList.create;
-	plugin_master_base_list.sorted := false;
-	plugin_master_base_list.duplicates := dupIgnore;
-	plugin_master_base_list.add('Fallout4.esm');
-	plugin_master_base_list.add('DLCRobot.esm');
-	plugin_master_base_list.add('DLCworkshop01.esm');
-	plugin_master_base_list.add('DLCCoast.esm');
-	plugin_master_base_list.add('DLCworkshop02.esm');
-	plugin_master_base_list.add('DLCworkshop03.esm');
-	plugin_master_base_list.add('DLCNukaWorld.esm');
-	plugin_master_base_list.add('DLCUltraHighResolution.esm');
+	plugin_group_list_add('base', 'Fallout4.esm');
+	plugin_group_list_add('base', 'DLCRobot.esm');
+	plugin_group_list_add('base', 'DLCworkshop01.esm');
+	plugin_group_list_add('base', 'DLCCoast.esm');
+	plugin_group_list_add('base', 'DLCworkshop02.esm');
+	plugin_group_list_add('base', 'DLCworkshop03.esm');
+	plugin_group_list_add('base', 'DLCNukaWorld.esm');
+	plugin_group_list_add('base', 'DLCUltraHighResolution.esm');
 
 	plugin_master_force_list := THashedStringList.create;
 	plugin_master_force_list.sorted := false;
 	plugin_master_force_list.duplicates := dupIgnore;
-{
-	plugin_master_force_list.add('Fallout4.esm');
-	plugin_master_force_list.add('DLCRobot.esm');
-	plugin_master_force_list.add('DLCworkshop01.esm');
-	plugin_master_force_list.add('DLCCoast.esm');
-	plugin_master_force_list.add('DLCworkshop02.esm');
-	plugin_master_force_list.add('DLCworkshop03.esm');
-	plugin_master_force_list.add('DLCNukaWorld.esm');
-//	plugin_master_force_list.add('DLCUltraHighResolution.esm');
-}
 
 	plugin_master_exclude_list := THashedStringList.create;
 	plugin_master_exclude_list.sorted := true;
@@ -325,7 +317,7 @@ begin
 	plugin_output_each_list := THashedStringList.create;
 	plugin_output_combined_list := THashedStringList.create;
 
-	plugin_output_log_list := THashedStringList.create;
+	plugin_output_log_queue := THashedStringList.create;
 
 	plugin_use_list := nil;
 	plugin_exclude_list := nil;
@@ -368,6 +360,8 @@ begin
 		Result := true;
 		Exit;
 	end;
+
+Result := true;
 
 	if process_mode = P_MODE_FINAL then begin
 		plugin_output_cell_use := false;
@@ -442,7 +436,7 @@ var
 	idx: integer;
 begin
 	idx := plugin_group_list.indexOf(group);
-	if not idx >= 0 then begin
+	if not (idx >= 0) then begin
 		sl := THashedStringList.create;
 		sl.sorted := false;
 		sl.duplicates := dupIgnore;
@@ -452,7 +446,7 @@ begin
 	end;
 
 	// Prevent dupes (list is unsorted)
-	if not sl.indexOf(name) >= 0 then
+	if not (sl.indexOf(name) >= 0) then
 		sl.add(name);
 end;
 
@@ -462,7 +456,7 @@ var
 	idx: integer;
 begin
 	idx := plugin_group_list.indexOf(group);
-	if not idx >= 0 then
+	if not (idx >= 0) then
 		Exit;
 
 	sl := THashedStringList(plugin_group_list.Objects[idx]);
@@ -486,22 +480,6 @@ begin
 	for i := 0 to Pred(sl.count) do begin
 		plugin_group_list_delete(group, sl[i]);
 	end;
-end;
-
-function is_in_plugin_group(group, name: string): boolean;
-var
-	sl: THashedStringList;
-	idx: integer;
-begin
-	Result := false;
-
-	idx := plugin_group_list.indexOf(group);
-	if not idx >= 0 then
-		Exit;
-
-	sl := THashedStringList(plugin_group_list.Objects[idx]);
-	if sl.indexOf(name) >= 0 then
-		Result := true;
 end;
 
 function group_expand(sl: THashedStringList; free: boolean): THashedStringList;
@@ -1007,13 +985,6 @@ begin
 			end;
 			sl.free;
 
-		// list of "base" masters
-		end else if p = 'plugin-master-base-list' then begin
-			comma_split(v, plugin_master_base_list, false, false);
-
-		end else if p = 'plugin-master-base-list-add' then begin
-			comma_split(v, plugin_master_base_list, false, true);
-
 		// list of masters to force on every output plugin
 		end else if p = 'plugin-master-force-list' then begin
 			comma_split(v, plugin_master_force_list, false, false);
@@ -1176,13 +1147,6 @@ begin
 		plugin_output_list := group_expand(plugin_output_list, true);
 	end;
 
-	if Assigned(plugin_master_base_list) then begin
-		for i := 0 to Pred(plugin_master_base_list.count) do begin
-			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_base_list', i, plugin_master_base_list[i] ]));
-		end;
-		plugin_master_base_list := group_expand(plugin_master_base_list, true);
-	end;
-
 	if Assigned(plugin_master_force_list) then begin
 		for i := 0 to Pred(plugin_master_force_list.count) do begin
 			AddMessage(Format('%s[%d] == %s', [ 'plugin_master_force_list', i, plugin_master_force_list[i] ]));
@@ -1240,6 +1204,22 @@ begin
 	Result := true;
 end;
 
+function is_in_plugin_group(group: string; plugin: IwbFile): boolean;
+var
+	sl: THashedStringList;
+	idx: integer;
+begin
+	Result := false;
+
+	idx := plugin_group_list.indexOf(group);
+	if not (idx >= 0) then
+		Exit;
+
+	sl := THashedStringList(plugin_group_list.Objects[idx]);
+	if sl.indexOf(GetFileName(plugin)) >= 0 then
+		Result := true;
+end;
+
 function __is_in_list(sl: THashedStringList; key: string): boolean;
 begin
 	Result := false;
@@ -1259,11 +1239,6 @@ begin
 	Result := (idx = 0);
 end;
 
-function is_plugin_base(plugin: IwbFile): boolean;
-begin
-	Result := __is_in_list(plugin_master_base_list, GetFileName(plugin));
-end;
-
 function is_plugin_excluded(plugin: IwbFile): boolean;
 begin
 	Result := __is_in_list(plugin_exclude_list, GetFileName(plugin));
@@ -1275,7 +1250,7 @@ begin
 
 	if not Assigned(plugin_include_list) then begin
 		Exit;
-	end else if not plugin_include_list.indexOf(GetFileName(plugin)) >= 0 then begin
+	end else if not (plugin_include_list.indexOf(GetFileName(plugin)) >= 0) then begin
 		Result := false;
 	end;
 end;
@@ -1737,24 +1712,25 @@ var
 	m: IInterface;
 	i: integer;
 	pfstr: string;
+	base_list: THashedStringList;
 begin
 	pfstr := GetFileName(plugin);
+	base_list := plugin_group_list_get('base');
 
 	// Already forced?
 	if plugin_master_force_seen.indexOf(pfstr) >= 0 then
 		Exit;
 	plugin_master_force_seen.add(pfstr);
 
-	if plugin_master_base_list.indexOf(pfstr) >= 0 then
+	// Do not force masters on these groups
+	if base_list.indexOf(pfstr) >= 0 then
 		Exit;
-//	if plugin_master_force_list.indexOf(pfstr) >= 0 then
-//		Exit;
 	if plugin_master_exclude_list.indexOf(pfstr) >= 0 then
 		Exit;
 
 	if plugin_base_master_force then begin
-		for i := 0 to Pred(plugin_master_base_list.count) do begin
-			m := plugin_file_resolve_existing(plugin_master_base_list[i]);
+		for i := 0 to Pred(base_list.count) do begin
+			m := plugin_file_resolve_existing(base_list[i]);
 			if Assigned(m) then
 				plugin_master_add(plugin, m, true, false, false);
 		end;
@@ -1885,7 +1861,7 @@ begin
 	Result := 0;
 
 	plugin := GetFile(e);
-	base := is_plugin_base(plugin);
+	base := is_in_plugin_group('base', plugin);
 
 	if plugin_output_base_cell_use and base then begin
 		Result := O_TYPE_CELL;
@@ -1926,7 +1902,7 @@ var
 begin
 	plugin := GetFile(e);
 	fname := GetFileName(plugin);
-	base := is_plugin_base(plugin);
+	base := is_in_plugin_group('base', plugin);
 	ofstr := fname;
 	pfx := '';
 
@@ -1980,7 +1956,7 @@ begin
 	Result := false;
 
 	plugin := GetFile(e);
-	base := is_plugin_base(plugin);
+	base := is_in_plugin_group('base', plugin);
 
 	case plugin_output_type(e) of
 
@@ -2053,8 +2029,8 @@ begin
 	// along with all other plugins being operated on.
 	if plugin_output_log_use and Assigned(plugin_output_log) then begin
 		fname := GetFileName(plugin_output);
-		if not plugin_output_log_list.indexOf(fname) >= 0 then
-			plugin_output_log_list.add(fname);
+		if not (plugin_output_log_queue.indexOf(fname) >= 0) then
+			plugin_output_log_queue.add(fname);
 	end;
 
 	Result := plugin_output;
@@ -2074,6 +2050,22 @@ begin
 	end;
 
 	SetIsESM(plugin, enable);
+end;
+
+procedure plugin_esl_set(plugin: IwbFile; enable: boolean);
+var
+	flags: cardinal;
+begin
+	if not (enable xor GetIsESL(plugin)) then
+		Exit;
+
+	if enable then begin
+		AddMessage(Format('%s: setting ESL flag', [GetFileName(plugin)]));
+	end else begin
+		AddMessage(Format('%s: removing ESL flag', [GetFileName(plugin)]));
+	end;
+
+	SetIsESL(plugin, enable);
 end;
 
 procedure plugin_elem_remove(plugin: IwbFile; e: IInterface);
@@ -2297,7 +2289,7 @@ begin
 	Result := false;
 
 	key := ws + ',' + IntToStr(x) + ',' + IntToStr(y);
-//	if not cell_cache.indexOf(key) >= 0 then begin
+//	if not (cell_cache.indexOf(key) >= 0) then begin
 		cell_cache.addObject(key, e);
 		Result := true;
 //	end;
@@ -2310,7 +2302,7 @@ begin
 	Result := false;
 
 	key := cell_cache_key(e);
-//	if not cell_cache.indexOf(key) >= 0 then begin
+//	if (not cell_cache.indexOf(key) >= 0) then begin
 		cell_cache.addObject(key, e);
 		Result := true;
 //	end;
@@ -2382,8 +2374,6 @@ begin
 	if idx < cell_queue.count then begin
 		if Assigned(cell_queue[idx]) then begin
 			tl := TList(cell_queue[idx]);
-if not Assigned(tl) then
-Raise Exception.create('cell_queue_remove: tl is NOT assigned');
 			idx := tl.indexOf(e);
 			if idx >= 0 then
 				tl.delete(idx);
@@ -2483,7 +2473,7 @@ begin
 				continue;
 
 			s := Signature(t);
-			if not pc_keep_map.indexOf(s) >= 0 then
+			if not (pc_keep_map.indexOf(s) >= 0) then
 				continue;
 
 			// deleted references should be considered matching
@@ -2492,7 +2482,7 @@ begin
 
 			b := BaseRecord(t);
 			s := Signature(b);
-			if not pc_base_keep_map.indexOf(s) >= 0 then
+			if not (pc_base_keep_map.indexOf(s) >= 0) then
 				continue;
 
 			// ignore markers entirely
@@ -2532,7 +2522,7 @@ begin
 			continue;
 
 		s := Signature(t);
-		if not filter.indexOf(s) >= 0 then
+		if not (filter.indexOf(s) >= 0) then
 			continue;
 
 		// deleted references should be considered matching
@@ -2541,7 +2531,7 @@ begin
 
 		b := BaseRecord(t);
 		s := Signature(b);
-		if not base_filter.indexOf(s) >= 0 then
+		if not (base_filter.indexOf(s) >= 0) then
 			continue;
 
 		// ignore markers entirely
@@ -2900,7 +2890,7 @@ begin
 	Result := false;
 
 	key := IntToStr(GetLoadOrderFormID(e));
-//	if not cell_rvis_grid_cache.indexOf(key) >= 0 then begin
+//	if not (cell_rvis_grid_cache.indexOf(key) >= 0) then begin
 		cell_rvis_grid_cache.addObject(key, tl);
 		Result := true;
 //	end;
@@ -2962,7 +2952,7 @@ begin
 	Result := false;
 
 	key := IntToStr(GetLoadOrderFormID(e));
-//	if not cell_rvis_cache.indexOf(key) >= 0 then begin
+//	if not (cell_rvis_cache.indexOf(key) >= 0) then begin
 		cell_rvis_cache.addObject(key, r);
 		Result := true;
 //	end;
@@ -4194,7 +4184,7 @@ begin
 	end;
 
 	if Assigned(plugin_use_list) then begin
-		if not plugin_use_list.indexOf(GetFileName(e)) >= 0 then begin
+		if not (plugin_use_list.indexOf(GetFileName(e)) >= 0) then begin
 //			AddMessage('exit: plugin_use_list');
 			Exit;
 		end;
@@ -4434,7 +4424,7 @@ begin
 		e := winning_override(e, false);
 
 		// XXX: reexamine if this is actually correct
-		if is_plugin_base(GetFile(e)) then
+		if is_in_plugin_group('base' GetFile(e)) then
 			Exit;
 		if cell_queue_add(e) then
 			AddMessage(Format('%s: %s', [GetFileName(e), Name(e)]));
@@ -4668,7 +4658,7 @@ begin
 			Exit;
 		end else if not is_plugin_included(plugin) then begin
 			Exit;
-		end else if is_plugin_base(plugin) then begin
+		end else if is_in_plugin_group('base', plugin) then begin
 			if not plugin_base_process then begin
 				Exit;
 			end else if plugin_base_esm then begin
@@ -5019,7 +5009,6 @@ begin
 
 	plugin_group_list.free;
 
-	plugin_master_base_list.free;
 	plugin_master_exclude_list.free;
 
 	plugin_master_force_queue.free;
@@ -5043,8 +5032,8 @@ begin
 		plugin_cell_master_exclude_list.free;
 
 	if plugin_output_log_use and Assigned(plugin_output_log) then
-		plugin_output_log_list.savetofile(plugin_output_log);
-	plugin_output_log_list.free;
+		plugin_output_log_queue.savetofile(plugin_output_log);
+	plugin_output_log_queue.free;
 
 //	frmMain.Close;
 
