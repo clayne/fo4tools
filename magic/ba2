@@ -1,0 +1,9 @@
+# BA2 (Fallout4)
+0			string	BTDX	Bethesda Archive2 (Fallout 4),
+>4			lelong	x	version=0x%x,
+>8			string	GNRL	type=general,
+>>12			lelong	x	file_count=%u,
+>>16			lequad	x	name_offset=%llu
+>8			string	DX10	type=dx10
+>>12			lelong	x	file_count=%u,
+>>16			lequad	x	name_offset=%llu
