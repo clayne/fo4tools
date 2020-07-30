@@ -19,43 +19,53 @@ sub main {
 	my $ret;
 	my $help = 0;
 	my $filename = 0;
+	my $crc_decimal;
 
 	local @ARGV = @_;
 	GetOptions(
                 'h|help' => \$help,
 		'verbose|v+' => \$verbose,
 		'filename|f+' => \$filename,
+		'crc-decimal' => \$crc_decimal,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
+	binmode(STDOUT, ":utf8");
+
 	foreach my $ba2_file (@ARGV) {
 		my $dump = ($verbose ? 1 : 0);
 		my $dump_file = undef;
-		my $bsarch_opt = $verbose ? '-dump' : '-list';
-		open(my $fd, '-|', "bsarch '$ba2_file' $bsarch_opt 2>&1") or die "open: bsarch: $!";
-		while (<$fd>) {
-			chomp; s/\R//g;
+		my ($dir_hash, $name_hash, $size, $size_packed) = ('', '');
+		my $state = 0;
 
-			if (!$dump) {
-				s/\\/\//g || next;
-				printf("%s%s\n", $filename ? sprintf("%s\t", $ba2_file) : "", $_);
-				next;
-			}
+		# bsarch can't handle absolute unix paths (e.g. leading '/')
+		chomp(my $ba2_file_dos = qx/cygpath -aw "$ba2_file"/);
+		open(my $fd, '-|', "bsarch '$ba2_file_dos' -dump 2>&1") or die "open: bsarch: $!";
+		while (<$fd>) {
+			s/\R//g;
 
 			# SCRIPTS\Fragments\Terminals\TERM_BTInt_OPTIONS_Terminal__01070704.pex
 			#  DirHash: B118434B  NameHash: 204458F6  Ext: pex  Unknown: 0x00100100
 			#  Size: 1593  PackedSize: 625
-			if (!$dump_file && s/\\/\//g) {
-				$dump_file = $_;
-			} elsif ($dump_file && /Size: (\d+)\s+PackedSize: (\d+)/) {
-				my ($size, $size_packed) = ($1, $2 ? $2 : $1);
-				printf("%s%12d\t%12d\t%12.2f%%\t%s\n",
-					$filename ? sprintf("%s\t", $ba2_file) : "",
-					$size, $size_packed,
-					100.0 - ($size_packed / $size * 100.0),
-					$dump_file);
-				undef $dump_file;
+			if ($state == 0 && /DirHash:\s+([0-9A-F]+)\s+NameHash:\s+([0-9A-F]+)/) {
+				($dir_hash, $name_hash) = map hex, ($1, $2);
+				$state = 1;
+			} elsif ($state == 1 && /Size:\s+(\d+)\s+PackedSize:\s+(\d+)/) {
+				($size, $size_packed) = ($1, $2 ? $2 : $1);
+				if (!$dump) {
+					printf STDOUT ("%s%s\n", $filename ? sprintf("%s\t", $ba2_file) : "", $dump_file);
+				} else {
+					printf STDOUT ("%s%12d\t%12d\t%12.2f%%\t%12s\t%12s\t%s\n",
+						$filename ? sprintf("%s\t", $ba2_file) : "",
+						$size, $size_packed,
+						100.0 - ($size_packed / $size * 100.0),
+						(map sprintf($crc_decimal ? "%d" : "%08X", $_), ($dir_hash, $name_hash)),
+						$dump_file);
+				}
+				$state = 0;
+			} elsif (!$state) {
+				$dump_file = s%\\%/%gr;
 			}
 		}
 		close($fd);
