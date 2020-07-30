@@ -1,0 +1,529 @@
+#!/usr/bin/perl
+
+use TES::Plugin::File qw(plugin_map_clear);
+use TES::Plugin::Archive::BA2 qw();
+use TES::Plugin::Common qw(file_sub file_clone file_join);
+use File::Basename qw(basename dirname);
+use File::Temp qw(tempfile);
+use File::stat qw(stat);
+use File::Copy qw(cp);
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use Carp qw(confess);
+use Data::Dumper;
+use Pod::Usage;
+
+use strict;
+use warnings FATAL => qw(all);
+
+local $SIG{__DIE__} = \&confess;
+
+local $Data::Dumper::Sortkeys = 1;
+
+our $VERSION = '$Id$';
+
+my %protect_tab = map +($_ => 1), qw(
+	Fallout4.esm
+	DLCRobot.esm
+	DLCworkshop01.esm
+	DLCCoast.esm
+	DLCworkshop02.esm
+	DLCworkshop03.esm
+	DLCNukaWorld.esm
+	DLCUltraHighResolution.esm
+);
+
+my $backup_extension = 'save';
+my $verbose = 0;
+my $quick = 0;
+my $noop = 0;
+my $esp_to_esm = 0;
+my $esm_to_esp = 0;
+my $sanitize = 0;
+my $sanitize_self = 0;
+my $sanitize_parents = 0;
+my $restore = 0;
+my $unlink = 1;
+my $protect = 1;
+my $archives = 0;
+my $esp_only = 0;
+my $esm_only = 0;
+my $recurse = 0;
+my $hex = 0;
+my $include_self = 0;
+my $timestamp_inc;
+my $overwrite = 0;
+my @sub;
+my $abs_path;
+my $all;
+
+sub global_reset {
+	$verbose = 0;
+	$quick = 0;
+	$noop = 0;
+	$esp_to_esm = 0;
+	$esm_to_esp = 0;
+	$sanitize = 0;
+	$sanitize_self = 0;
+	$sanitize_parents = 0;
+	$restore = 0;
+	$unlink = 1;
+	$protect = 1;
+	$archives = 0;
+	$esp_only = 0;
+	$esm_only = 0;
+	$recurse = 0;
+	$hex = 0;
+	$include_self = 0;
+	$overwrite = 0;
+	@sub = ();
+	$timestamp_inc = undef;
+	$abs_path = undef;
+	$all = undef;
+}
+
+# XXX: This can be done better
+my $flags_tab = [ 'esm', undef, undef, undef, undef, undef, undef, 'localized', undef, 'esl' ];
+sub flags_str {
+	my ($flags) = @_;
+	my @out;
+
+	for (my $i = 0; $i < 32; $i++) {
+		next unless ($flags_tab->[$i] && ($flags & (0x1 << $i)));
+		push @out, $flags_tab->[$i];
+	}
+
+	return join(', ', @out);
+}
+
+sub is_protected {
+	my ($path) = @_;
+	my $basename = basename($path);
+	return ($protect && $protect_tab{$basename});
+}
+
+sub file_clone_wrap {
+	my $ret = file_clone(@_);
+	plugin_map_clear;
+	return $ret;
+}
+
+sub rewrite {
+	my ($class, $path, $path_new, %opts) = @_;
+	my $inplace = delete $opts{'inplace'} // 1;
+
+	# XXX: should probably be handled by each class
+	if ($inplace) {
+		$opts{'data_skip'} = 1;
+	}
+	if ($path_new) {
+		$opts{'basename'} = basename($path_new);
+	}
+
+	my $obj = $class->read($path, %opts);
+	my $rewrite = $obj->rewrite(%opts);
+	return unless ($rewrite || $path ne $path_new);
+
+	# Get current atime/mtime.
+	my $stat = stat($path) or die "stat: $path: $!";
+
+	# Clone and write (in case plugin was previously hardlinked)
+	file_clone_wrap($path, $path_new,
+		backup => 1,
+		backup_extension => $backup_extension,
+		overwrite => 1,
+	) or return;
+
+	my $dirname = dirname($path_new);
+	my (undef, $tmp) = tempfile(UNLINK => 0, DIR => $dirname) unless ($inplace);
+
+	$obj->write($inplace ? $path_new : $tmp,
+		verbose => $verbose,
+		data_skip => $inplace,
+	);
+
+	rename($tmp, $path_new) or die "rename: $tmp: $!" unless ($inplace);
+
+	if ($timestamp_inc) {
+		utime($timestamp_inc, $timestamp_inc, $path_new) or die "utime: $path_new: $!";
+		$timestamp_inc++;
+	} else {
+		utime($stat->atime, $stat->mtime, $path_new) or die "utime: $path_new: $!";
+	}
+
+	return 1;
+}
+
+# If there is no matching esp file for the esm master being
+# rewritten back to esp, then it was never an esp in the first
+# place and should be completely ignored.
+sub plugin_existing {
+	my ($dirname, $plugin, %opts) = @_;
+	my $existing = file_sub($plugin, %opts);
+	return $existing if (-f file_join($dirname, $existing));
+}
+
+sub plugin_rewrite {
+	my ($path, %opts) = @_;
+	my ($dirname, $basename) = (dirname($path), basename($path));
+
+	my $is_self = $opts{'is_self'};
+	my $unlink = $opts{'unlink'} // {};
+
+	my $sub_ext = $opts{'sub_ext'} // $esp_to_esm ? [ 'esp', 'esm' ] : [ 'esm', 'esp' ];
+	my $sub_self = $opts{'sanitize_self'} // $opts{'sub'} // [ qr/[^A-Za-z0-9_.-\/\\]/, '_' ] if ($sanitize_self);
+	my $sub_parents = $opts{'sanitize_parents'} // $opts{'sub'} // [ qr/[^A-Za-z0-9_.-\/\\]/, '_' ] if ($sanitize_parents);
+
+	die("esp_to_esm == $esp_to_esm, esm_to_esp == $esm_to_esp")
+		unless ($esp_to_esm ^ $esm_to_esp);
+
+	my $rewrite_cb = $esm_to_esp ? sub {
+		my ($master, $master_new, $unlink) = @_;
+		return if (is_protected($master));
+
+		# If the renamed master is the same as the existing
+		# master *or* the renamed master does not exist, then
+		# no modification should be done. This is important.
+		my $master_existing = plugin_existing($dirname, $master, sub_ext => [ qw(esm esp) ]);
+		return unless ($master_existing && $master_existing ne $master);
+
+		# The only esms which will be removed are those which
+		# have matching esp files and those which were resolved
+		# from masters present in the arg list.
+		my $path = file_join($dirname, $master);
+		$unlink->{$path}++;
+
+		return 1;
+	} : sub {
+		my ($master, $master_new, $unlink) = @_;
+		return if (is_protected($master));
+
+		# Clone master that MAST entry will point to
+		my $src = file_join($dirname, $master);
+		my $dst = file_join($dirname, $master_new);
+		file_clone_wrap($src, $dst, overwrite => 0); # XXX: Sort out overwrite race
+
+		return 1;
+	};
+
+	# Compute new plugin name.
+	my $path_new = $path;
+
+	if ($esp_to_esm && $is_self) {
+		my $basename_new = file_sub($basename, sub_ext => $sub_ext, sub => $sub_self);
+		if ($basename_new ne $basename) {
+			# plugin
+			my $src = file_join($dirname, $basename);
+			my $dst = file_join($dirname, $basename_new);
+
+			file_clone_wrap($src, $dst, overwrite => 1);
+
+			$path_new = $dst;
+		}
+	} elsif ($esm_to_esp) {
+		my $plugin_existing = plugin_existing($dirname, $basename, sub_ext => [ qw(esp esm) ], sub => $sub_self);
+		if ($is_self && $plugin_existing && $plugin_existing ne $basename) {
+			$unlink->{$plugin_existing}++;
+		}
+
+		if (-f (my $backup = join('.', $path, $backup_extension))) {
+#			file_clone_wrap($backup, $path_new, rename => 1, overwrite => 1);
+			$unlink->{$backup}++;
+		}
+	}
+
+	rewrite('TES::Plugin::File', $path, $path_new, %opts,
+		verbose => $verbose,
+		sub_ext => $sub_ext,
+		sub => $sub_parents,
+		cb_args => [ $unlink ],
+		cb => $rewrite_cb,
+	);
+
+	return $path_new;
+}
+
+sub archive_existing {
+	my ($dirname, $archive, %opts) = @_;
+	my ($archive_base, $archive_type) = ($archive =~ /^(.+) - (.+)\.ba2$/) or return;
+
+	my $base_new = file_sub($archive_base, %opts);
+	my $existing = join('.', join(' - ', $base_new, $archive_type), 'ba2');
+
+#print STDERR Dumper { archive_existing => $existing, archive => $archive, opts => \%opts };
+	return $existing if (-f file_join($dirname, $existing));
+}
+
+sub archive_rewrite_single {
+	my ($path, %opts) = @_;
+	my ($dirname, $basename) = (dirname($path), basename($path));
+	my ($archive_base, $archive_type) = ($basename =~ /^(.+) - (.+)\.ba2$/) or return;
+
+	my $is_self = $opts{'is_self'};
+	my $unlink = $opts{'unlink'} // {};
+
+	# XXX: adjust for esm-to-esp (if it happens)
+	my $match_string = $opts{'match_string'} // qr/(\Q$archive_base\E)[_\b].+/i;
+	my $match_file = $opts{'match_file'} // qr/(\Q$archive_base\E)[_\b].+/i;
+	my $match_dir = $opts{'match_dir'} // qr/([^\/\\]+\.es[pml])/i;
+	my $sub_ext = $opts{'sub_ext'} // [ 'esp', 'esm' ];
+	my $sub_self = $opts{'sub_self'} // $opts{'sub'} // [ qr/[^A-Za-z0-9_.\/\\-]/, '_' ] if ($sanitize_self);
+	my $sub_parents = $opts{'sub_parents'} // $opts{'sub'} // [ qr/[^A-Za-z0-9_.\/\\-]/, '_' ] if ($sanitize_parents);
+
+#print STDERR Dumper { path => $path, sub_ext => $sub_ext, sub_self => $sub_self, sub_parents => $sub_parents, };
+
+	# Compute new archive name.
+	my $path_new = $path;
+
+	if ($esp_to_esm && $is_self) {
+		my $base_new = file_sub($archive_base, sub => $sub_self);
+		$path_new = file_join(
+			$dirname,
+			join('.', join(' - ', $base_new, $archive_type), 'ba2'),
+		);
+	} elsif ($esm_to_esp) {
+		my $archive_existing = archive_existing($dirname, $basename, sub_ext => [ qw(esp esm) ], sub => $sub_self);
+		if ($is_self && $archive_existing && $archive_existing ne $basename) {
+			$unlink->{$archive_existing}++;
+		}
+
+		if (-f (my $backup = join('.', $path_new, $backup_extension))) {
+			file_clone_wrap($backup, $path_new, rename => 1, overwrite => 1);
+		}
+
+		return $path_new;
+	}
+
+	rewrite('TES::Plugin::Archive::BA2', $path, $path_new, %opts,
+		verbose => $verbose,
+		match_string => $match_string,
+		match_file => $match_file,
+		match_dir => $match_dir,
+		sub_ext => $sub_ext,
+		sub => $sub_parents,
+	);
+
+	return $path_new;
+}
+
+sub archive_rewrite {
+	my ($path, %opts) = @_;
+
+	my $plugin = TES::Plugin::File->read($path,
+		data_skip => 1,
+		data_parse => 0,
+		record_parse => 0, #[ 'SCOL' ],
+		field_parse => 0,
+		verbose => 0,
+	) or die;
+
+	my @archives = $plugin->archives;
+	foreach my $archive (@archives) {
+		archive_rewrite_single($archive, %opts);
+	}
+}
+
+sub plugin_proc {
+	my ($target, %opts) = @_;
+
+#print STDERR Dumper { target => $target };
+
+	my @mout;
+	my %unlink;
+	my %seen;
+	my @q = $target;
+	while ((my $path = pop @q)) {
+		my ($dirname, $basename) = (dirname($path), basename($path));
+		my $is_self = ($path eq $target);
+		next unless (!$seen{$path}++);
+
+		# Defend against vanilla esm files mistakenly being used.
+		if (!is_protected($path) && ($esp_to_esm || $esm_to_esp)) {
+			my %opts = (
+				%opts,
+				unlink => \%unlink,
+				is_self => $is_self,
+			);
+#print STDERR Dumper { path_q => $path };
+
+			# Note: this is order dependent, if the plugin is copied to a different
+			# name, archives() won't return anything because the archives haven't
+			# been renamed yet.
+			if ($archives) {
+				archive_rewrite($path, %opts);
+			}
+
+			# Rewrite plugin and if it has a new name, update path.
+			if ((my $path_new = plugin_rewrite($path, %opts))) {
+				$path = $path_new;
+				($dirname, $basename) = (dirname($path), basename($path));
+			}
+		}
+
+		# Note: plugin may have been rewritten by rewrite.
+		my $plugin = TES::Plugin::File->read($path,
+			data_skip => 1,
+			data_parse => 0,
+			record_parse => 0, #[ 'SCOL' ],
+			field_parse => 0,
+			verbose => 0,
+		) or die;
+
+		print STDERR Dumper $path, {
+			parents => [ $plugin->parents ],
+			masters => [ $plugin->masters ],
+			archives => [ $plugin->archives ],
+		} if ($verbose > 1);
+
+		my $archive_map = { $basename => [ grep !exists $unlink{$_}, $plugin->archives ] };
+		my @parents = $plugin->parents;
+		foreach my $basename (@parents) {
+			my $path = file_join($dirname, $basename);
+			my $plugin = TES::Plugin::File->read($path,
+				data_skip => 1,
+				data_parse => 0,
+				record_parse => 0, #[ 'SCOL' ],
+				field_parse => 0,
+				verbose => 0,
+			) or die;
+
+			$archive_map->{$basename} = [ grep !exists $unlink{$_}, $plugin->archives ];
+		}
+
+		unshift @mout, {
+			path => $path,
+			dirname => $dirname,
+			basename => $basename,
+			flags => $plugin->flags,
+			size => $plugin->file_size,
+			masters => [ $plugin->masters ],
+			archives => $archive_map,
+		};
+
+		unshift @q, $plugin->parents if ($recurse);
+	}
+
+	foreach my $path (sort keys %unlink) {
+		if (is_protected($path)) {
+			die "Assertion failed: attempt to unlink protected file: $path";
+		}
+
+		-f $path || next;
+		print STDERR "unlink $path\n" if ($verbose);
+		if (!$noop) {
+			unlink($path) or die "unlink: $path: $!";
+			plugin_map_clear;
+		}
+
+		# Remove masters which have been unlinked
+		@mout = grep +($_->{'path'} ne $path), @mout;
+	}
+
+	%seen = ();
+	my $head;
+	foreach my $ent (@mout) {
+		my ($path, $size, $flags, $dirname, $basename, $masters, $archives)
+			= map $ent->{$_}, qw(path size flags dirname basename masters archives);
+
+		if ($verbose) {
+			my @add;
+			push @add, [ 'size', $size, 0 ] if (defined $size);
+			push @add, [ 'flags', flags_str($flags), 1 ] if ($flags);
+			printf STDERR ("\n") if ($head++);
+			printf STDERR ("%s (%s):\n", $path, join(', ', map {
+				my ($label, $value, $bracket) = @$_;
+				sprintf("%s: %s", $label, $bracket ? "[$value]" : $value);
+			} @add));
+
+			my $archives = $archives->{$basename} || [];
+			foreach (@$archives) {
+				printf STDERR ("%s\n", $_);
+			}
+		}
+
+		if ($all || $include_self) {
+			push @$masters, $basename;
+		}
+
+		for (my $i = 0; $i < @$masters; $i++) {
+			my $master = $masters->[$i];
+
+			next if ($esp_only && $master !~ /\.esp$/);
+			next if ($esm_only && $master !~ /\.esm$/);
+			next if (!$include_self && basename($master) eq basename($path));
+
+			if ($verbose) {
+				printf STDERR ("[%s] %s\n",
+					sprintf($hex ? "%02X" : "%02d", $i),
+					$master,
+				);
+				my $master_archives = $archives->{$master} || [];
+				foreach (@$master_archives) {
+					printf STDERR ("   - %s\n", $_);
+				}
+			} elsif (!$esp_to_esm && !$esm_to_esp) {
+				if (!$quick) {
+					next unless (!$seen{join('.', $path, $master)}++);
+					printf STDOUT ("%s\t%s\n", $path, $master);
+				} elsif ($abs_path) {
+					my $master_path = file_join($dirname, $master);
+					next unless (!$seen{$master_path}++);
+					printf STDOUT ("%s\n", $master_path);
+				} else {
+					next unless (!$seen{$master}++);
+					printf STDOUT ("%s\n", $master);
+				}
+			}
+		}
+	}
+
+	return 1;
+}
+
+sub main {
+	my $help = 0;
+
+	global_reset;
+
+	local @ARGV = @_;
+	GetOptions(
+		'h|help' => \$help,
+		'q|quick+' => \$quick,
+		'v|verbose+' => \$verbose,
+		'n|dry-run+' => \$noop,
+		'unlink!' => \$unlink,
+		'protect!' => \$protect,
+		'copy-plugin-to-esm+' => sub {}, # noop
+		'copy-plugin-to-esp+' => sub {}, # noop
+		'sanitize+' => sub { $sanitize = $sanitize_self = $sanitize_parents = $_[1] },
+		'sanitize-self+' => \$sanitize_self,
+		'sanitize-parents+' => \$sanitize_parents,
+		'restore+' => \$restore,
+		'esm|esp-to-esm+' => \$esp_to_esm,
+		'esp|esm-to-esp+' => \$esm_to_esp,
+		'esp-only+' => \$esp_only,
+		'esm-only+' => \$esm_only,
+		'f|overwrite+' => \$overwrite,
+		'r|recurse+' => \$recurse,
+		's|include-self' => \$include_self,
+		'A|abs-path+' => \$abs_path,
+		'a|all+' => \$all,
+		'archives+' => \$archives,
+		'sub=s' => \@sub,
+		'timestamp-inc:i' => sub { $timestamp_inc = $_[1] // time },
+		'H|hex+' => \$hex,
+	) && !$help || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	if ($esp_to_esm && $esm_to_esp) {
+		die "Both --esp-to-esm and --esm-to-esp specified\n";
+	}
+
+	foreach (@ARGV ?  @ARGV : '-') {
+		plugin_proc($_);
+	}
+
+	return 1;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__

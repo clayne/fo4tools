@@ -1,0 +1,158 @@
+#!/usr/bin/perl
+
+our $VERSION = '$Id$';
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+use TES::Plugin::Common qw(file_sub file_clone file_join);
+use TES::Plugin::Archive::BA2 qw();
+use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
+use File::Basename qw(basename dirname);
+use File::Temp qw(tempfile);
+use File::stat qw(stat);
+use File::Spec qw();
+use Carp qw(confess);
+use Data::Dumper;
+use Pod::Usage;
+
+use strict;
+use autodie qw(:all stat);
+use warnings FATAL => qw(all);
+
+local $SIG{__DIE__} = \&confess;
+sub fatal { local $SIG{__DIE__}; die @_, "\n" }
+
+local $Data::Dumper::Sortkeys = 1;
+
+my $protect = 1;
+my $verbose = 0;
+my %protect_tab = map +($_ => 1), qw(
+	Fallout4.esm
+	DLCRobot.esm
+	DLCworkshop01.esm
+	DLCCoast.esm
+	DLCworkshop02.esm
+	DLCworkshop03.esm
+	DLCNukaWorld.esm
+	DLCUltraHighResolution.esm
+);
+my %protect_base_tab = map +(($_ =~ s/\.es[pml]//r) => 1), keys %protect_tab;
+
+sub is_protected {
+	my ($path) = @_;
+	my $basename = basename($path);
+	my ($archive_base, $archive_type) = ($basename =~ /^(.+) - (.+)\.ba2$/) or return;
+
+	return ($protect && $protect_base_tab{$archive_base});
+}
+
+sub global_reset {
+	$protect = 0;
+	$verbose = 0;
+}
+
+sub main {
+	my $help = 0;
+	my $noop = 0;
+	my $esm_to_esp = 0;
+	my $esp_to_esm = 0;
+	my $esp_only = 0;
+	my $esm_only = 0;
+	my $recurse = 0;
+	my $overwrite = 0;
+	my $include_self = 0;
+	my $inplace = 1;
+	my $unlink = 1;
+	my @sub;
+
+	global_reset;
+
+	local @ARGV = @_;
+	GetOptions(
+		'h|help' => \$help,
+		'v|verbose+' => \$verbose,
+		'n|dry-run+' => \$noop,
+		'protect!' => \$protect,
+		'unlink!' => \$unlink,
+		'esp|esm-to-esp+' => \$esm_to_esp,
+		'esm|esp-to-esm+' => \$esp_to_esm,
+		'esp-only+' => \$esp_only,
+		'esm-only+' => \$esm_only,
+		'f|overwrite+' => \$overwrite,
+		'r|recurse+' => \$recurse,
+		's|include-self' => \$include_self,
+		'I|inplace' => \$inplace,
+		'sub=s' => \@sub,
+	) && !$help || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	my %seen;
+	my $abs_path = 1;
+
+	# Defend against esm files mistakenly being used.
+	my @q = (@ARGV ?  @ARGV : '-');
+	while (local $_ = shift @q) {
+		my ($dirname, $basename, $path) = (dirname($_), basename($_), $_);
+		my ($archive_base, $archive_type) = ($basename =~ /^(.+) - (.+)\.ba2$/) or next;
+		next unless (!$seen{$abs_path ? $path : $basename}++);
+
+		my $ba2 = TES::Plugin::Archive::BA2->new(verbose => $verbose);
+		$ba2->read($path, data_skip => $inplace) or next;
+
+		my %seen;
+		for (my $i = 0; $i < $ba2->{'file_count'}; $i++) {
+			my $ent = $ba2->{'ents'}[$i] || fatal "file_ent[$i] not found!";
+			my ($dirname, $basename, $extension) = $ent->name_split;
+
+			my $filename = join('.', $basename, $extension ? $extension : ());
+			next unless (
+				  ($filename =~ /^$archive_base[._\b]/i
+				|| $dirname =~ /^$archive_base[._\b]/i
+				|| $dirname =~ /\.es[pml]$/i)
+				&& !$seen{$dirname}++
+			);
+
+			printf STDERR ("%s\t%s\n", $path, file_join($dirname, $filename))
+				if ($verbose);
+		}
+
+		if (!is_protected($path) && $esp_to_esm) {
+			my $archive_base_new = file_sub($archive_base, sub => [ qr/[^A-Za-z0-9_.-]/, '_' ]);
+			my $archive = file_join(
+				$dirname,
+				join('.', join(' - ', $archive_base_new, $archive_type), 'ba2'),
+			);
+
+			my $stat = stat($path) or die "stat: $!";
+			file_clone($path, $archive,
+				backup => 1,
+				backup_always => 1,
+				backup_extension => 'save',
+				overwrite => 1,
+			);
+
+			my (undef, $tmp) = !$inplace
+				? tempfile(UNLINK => 0, DIR => $dirname)
+				: (undef, $archive);
+
+			$ba2->rewrite(
+				match_string => qr/(\Q$archive_base\E)[_\b].+/i,
+				match_file => qr/(\Q$archive_base\E)[_\b].+/i,
+				match_dir => qr/([^\/]+\.es[pml])/i,
+				sub => [ qr/[^A-Za-z0-9_.\/\\-]/, '_' ],
+				sub_ext => [ 'esp', 'esm' ],
+				verbose => $verbose,
+			);
+			$ba2->write($tmp, data_skip => $inplace);
+
+			rename($tmp, $archive) or die "rename: $!" unless ($inplace);
+			utime($stat->atime, $stat->mtime, $archive) or die "utime: $!";
+		}
+	}
+
+	return 1;
+}
+
+exit !main(@ARGV) unless (caller);
+
+__END__

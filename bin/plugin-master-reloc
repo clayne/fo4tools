@@ -1,22 +1,22 @@
 #!/usr/bin/perl
 
+use TES::Plugin::Common qw(file_sub file_clone file_join);
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
 use Carp qw(confess);
 use File::Basename qw(basename dirname);
 use File::Copy qw(cp);
-use File::Spec;
 use Data::Dumper;
 use Pod::Usage;
 
-use warnings FATAL => qw(all);
 use strict;
+use warnings FATAL => qw(all);
 
 local $SIG{__DIE__} = \&confess;
+
 local $Data::Dumper::Sortkeys = 1;
 
 our $VERSION = '$Id$';
 
-my $verbose = 0;
 my %protect_tab = map +($_ => 1), qw(
 	Fallout4.esm
 	DLCRobot.esm
@@ -28,48 +28,48 @@ my %protect_tab = map +($_ => 1), qw(
 	DLCUltraHighResolution.esm
 );
 
-sub plugin_clone {
-	my ($src, $dst, $overwrite) = @_;
+my $verbose = 0;
+my $quick = 0;
+my $noop = 0;
+my $esm_to_esp = 0;
+my $esp_to_esm = 0;
+my $copy_plugin_to_esm = 0;
+my $copy_plugin_to_esp = 0;
+my $unlink = 1;
+my $protect = 1;
+my $esp_only = 0;
+my $esm_only = 0;
+my $recurse = 0;
+my $hex = 0;
+my $include_self = 0;
+my $timestamp_inc;
+my $overwrite = 0;
+my $sub_smart = 1;
+my @sub;
+my $abs_path;
+my $all;
 
-	if (! -f $dst || $overwrite) {
-#		if (-f $dst) { unlink($dst) or die "unlink: $!" }
-#print STDERR "plugin_clone: $src -> $dst (overwrite == $overwrite)\n";
-
-		# Copy src to dst and clone atime/mtime.
-		my @stat = stat($src) or die "stat: $!: $src";
-		cp($src, "$dst.tmp") or die "copy: $src -> $dst.tmp";
-		rename("$dst.tmp", $dst) or die "rename: $!: $dst.tmp -> $dst";
-		utime($stat[8], $stat[9], $dst) or die "utime: $dst: $!";
-	}
-}
-
-sub plugin_sub {
-	my ($plugin, $sub_ext, @sub) = @_;
-	my $plugin_sub = $plugin;
-
-	# Specifically for extensions
-	if ($sub_ext) {
-		my ($from, $to) = @$sub_ext;
-		die "Problem with substitution data (ext)" unless ($from && $to);
-
-		# Remove any leading dots in passed in extensions if specified
-		$from =~ s/^\.//g;
-		$to =~ s/^\.//g;
-
-		$plugin_sub =~ s/\.\Q$from\E$/\.$to/;
-	}
-
-	# Any generic substitution outside of extension
-	foreach (@sub) {
-		my ($from, $to) = split(':', $_, 2);
-		die "Problem with substitution data" unless ($from && $to);
-
-		$plugin_sub =~ s/\Q$from\E/$to/;
-	}
-
-	die "Unequal substitution lengths: '$plugin_sub' vs '$plugin'" unless (length($plugin_sub) == length($plugin));
-
-	return $plugin_sub;
+sub global_reset {
+	$verbose = 0;
+	$quick = 0;
+	$noop = 0;
+	$esm_to_esp = 0;
+	$esp_to_esm = 0;
+	$copy_plugin_to_esm = 0;
+	$copy_plugin_to_esp = 0;
+	$unlink = 1;
+	$protect = 1;
+	$esp_only = 0;
+	$esm_only = 0;
+	$recurse = 0;
+	$hex = 0;
+	$include_self = 0;
+	$overwrite = 0;
+	$sub_smart = 1;
+	@sub = ();
+	$timestamp_inc = undef;
+	$abs_path = undef;
+	$all = undef;
 }
 
 # XXX: This can be done better
@@ -86,88 +86,73 @@ sub flags_str {
 	return join(', ', @out);
 }
 
-sub main {
-	my $ret;
-	my $help = 0;
-	my $quick = 0;
-	my $noop = 0;
-	my $esm_to_esp = 0;
-	my $esp_to_esm = 0;
-	my $copy_plugin_to_esm = 0;
-	my $copy_plugin_to_esp = 0;
-	my $unlink = 1;
-	my $protect = 1;
-	my $esp_only = 0;
-	my $esm_only = 0;
-	my $complete = 0;
-	my $recurse = 0;
-	my $hex = 0;
-	my $include_self = 0;
-	my $timestamp_inc;
-	my $overwrite = 0;
-	my $sub_smart = 1;
-	my @sub;
-	my $abs_path;
+sub master_write {
+	my ($path, $offset, $master) = @_;
 
-	local @ARGV = @_;
-	GetOptions(
-                'h|help' => \$help,
-		'q|quick+' => \$quick,
-		'v|verbose+' => \$verbose,
-		'n|dry-run+' => \$noop,
-		'unlink!' => \$unlink,
-		'protect!' => \$protect,
-		'copy-plugin-to-esm' => \$copy_plugin_to_esm,
-		'copy-plugin-to-esp' => \$copy_plugin_to_esp,
-		'esp|esm-to-esp+' => \$esm_to_esp,
-		'esm|esp-to-esm+' => \$esp_to_esm,
-		'esp-only+' => \$esp_only,
-		'esm-only+' => \$esm_only,
-		'f|overwrite+' => \$overwrite,
-		'c|complete+' => \$complete,
-		'r|recurse+' => \$recurse,
-		's|include-self' => \$include_self,
-		'a|abs-path+' => \$abs_path,
-		'smart-sub+' => \$sub_smart,
-		'sub=s' => \@sub,
-		'timestamp-inc:i' => \$timestamp_inc,
-		'H|hex+' => \$hex,
-        ) && (!$help && ($ret = 1));
+	my @stat = stat($path) or die "stat: $!: $path";
+	open(my $fd, '+<', $path) or die "open: $!: $path";
+	seek($fd, $offset, 0) or die "seek: $!";
 
-        $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+	my $len = !$noop
+		? (syswrite($fd, $master, length($master)) or die "syswrite: $!")
+		: length($master);
 
-	$timestamp_inc ||= time if (defined $timestamp_inc);
+	close($fd);
+
+	if ($timestamp_inc) {
+		utime($timestamp_inc, $timestamp_inc, $path) or die "utime: $path: $!";
+		$timestamp_inc++;
+	} else {
+		utime($stat[8], $stat[9], $path) or die "utime: $path: $!";
+	}
+}
+
+sub parent_queue {
+	my ($q, $parents, $parent) = @_;
+	if (!$parents->{$parent}) { unshift @$q, $parent }
+	else { push @$q, $parent }
+}
+
+sub plugin_proc {
+	my ($target, %opts) = @_;
 
 	my %seen;
 	my @unlink;
 	my $mout = [];
+	my $parents = {};
 
-	# Defend against esm files mistakenly being used.
-	my @q = (@ARGV ?  @ARGV : '-');
+	my @q = $target;
 	while (local $_ = shift @q) {
-		my $mproc = [];
 		my ($dirname, $basename, $path) = (dirname($_), basename($_), $_);
-		next unless (!$seen{$abs_path ? $path : $basename}++);
+		my $path_key = $abs_path ? $path : $basename;
+		next unless (!$seen{$path_key}++);
 
+		# Defend against vanilla esm files mistakenly being used.
 		my $is_protected = ($protect && $protect_tab{$basename});
 		if (!$is_protected && $copy_plugin_to_esm) {
-			my $esm = plugin_sub($basename, [ 'esp', 'esm' ], @sub);
-			if ($esm ne $basename) {
-				plugin_clone("$dirname/$basename", "$dirname/$esm", $overwrite);
+			my $plugin = file_sub($basename, sub_ext => [ 'esp', 'esm' ], sub => \@sub);
+			if ($plugin ne $basename) {
+				my $src = file_join($dirname, $basename);
+				my $dst = file_join($dirname, $plugin);
+
+				file_clone($src, $dst, overwrite => $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
-				unshift @q, "$dirname/$esm";
+				unshift @q, $dst;
 				next;
 			}
 		} elsif (!$is_protected && $copy_plugin_to_esp) {
-			my $esp = plugin_sub($basename, [ 'esm', 'esp' ], @sub);
-			if ($esp ne $basename) {
-				plugin_clone("$dirname/$basename", "$dirname/$esp", $overwrite);
+			my $plugin = file_sub($basename, sub_ext => [ 'esm', 'esp' ], sub => \@sub);
+			if ($plugin ne $basename) {
+				my $src = file_join($dirname, $basename);
+				my $dst = file_join($dirname, $plugin);
+
+				file_clone($src, $dst, overwrite => $overwrite);
 
 				# Place the cloned plugin into the queue as a target for
 				# updating rather than the original plugin.
-				unshift @q, "$dirname/$esp";
+				unshift @q, $dst;
 				next;
 			}
 		}
@@ -203,28 +188,34 @@ sub main {
 
 		# Read any MAST records within TES4 and add the offset and
 		# filename to a list of masters
+		my $mproc = [];
 		while ($off < $sz) {
 			$bsz = 6; my ($sig, $sz) = unpack("a4 S", substr($buf, $off, $bsz)); $off += $bsz;
 			print STDERR Dumper[$sig,$sz] if ($verbose > 1);
 
-			if ($sig eq 'MAST') {
-				my $off_save = $off;
-				my $ssz = $sz - 1; # Ignore NUL
-				$bsz = $sz; my ($file) = unpack("a$ssz", substr($buf, $off, $bsz)); $off += $bsz;
-
-				print STDERR Dumper [$off_save,$file] if ($verbose > 1);
-				push @$mproc, { offset => $off_save, master => $file, plugin => $basename };
-			} else {
+			if ($sig ne 'MAST') {
 				$off += $sz;
+				next;
+			}
+
+			my $off_save = $off;
+			my $ssz = $sz - 1; # Ignore NUL
+			$bsz = $sz; my ($file) = unpack("a$ssz", substr($buf, $off, $bsz)); $off += $bsz;
+
+			print STDERR Dumper [$off_save,$file] if ($verbose > 1);
+			push @$mproc, { offset => $off_save, master => $file, plugin => $basename };
+			if ($basename eq basename($target)) {
+				$parents->{$file}++;
 			}
 		}
 		close($fd) or die "close: $!";
 
-		my @qt;
+		unshift @$mout, { path => $_, size => $sz, flags => $flags, dirname => $dirname, basename => $basename, mproc => $mproc };
+
 		for (my $i = @$mproc; $i--; ) {
 			my ($offset, $master) = map $mproc->[$i]{$_}, qw(offset master);
+			my $master_new = $master;
 
-			my $is_protected = ($protect && $protect_tab{$basename});
 			if (!$is_protected && $esp_to_esm) {
 				# For any file with esp masters, copy the esp to an esm
 				# extension and update the MAST entry to point to it.
@@ -232,42 +223,34 @@ sub main {
 				# files to process so any of their parent esp masters will
 				# be substituted accordingly.
 
-				my $esp = $master;
-				if ($esp =~ /\.esm$/i) {
-					# Possible to have an esm with an esp master. Pass
+				if ($master =~ /\.esm$/i) {
+					# Possible to have an esp with an esm master. Pass
 					# it on to check just in case. Vanilla files will
 					# be ignored by the protect list.
-					push @qt, "$dirname/$esp";
+					if ($recurse) {
+						my $parent = file_join($dirname, $master);
+						parent_queue(\@q, $parents, $parent);
+					}
 					next;
 				}
 
-				# Clone master that MAST entry will point to
-				my $esm = plugin_sub($esp, [ 'esp', 'esm' ], @sub);
-				plugin_clone("$dirname/$esp", "$dirname/$esm", 0 && $overwrite); # XXX: Sort out overwrite race
+				$master_new = file_sub($master, sub_ext => [ 'esp', 'esm' ], sub => \@sub);
+				if ($master_new ne $master) {
+					# Clone master that MAST entry will point to
+					my $src = file_join($dirname, $master);
+					my $dst = file_join($dirname, $master_new);
+					file_clone($src, $dst, overwrite => (0 && $overwrite)); # XXX: Sort out overwrite race
 
-				# Update MAST to point to esm file by cloning and reopening for write
-				plugin_clone($path, $path, $overwrite);
+					# Update MAST to point to esm file by cloning and reopening for write
+					file_clone($path, $path, overwrite => $overwrite);
 
-				my @stat = stat($path) or die "stat: $!: $path";
-				open($fd, '+<', $path) or die "open: $!: $path";
-				seek($fd, $offset, 0) or die "seek: $!";
+					printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
+						$basename, $i, $master_new, $noop ? ' (noop)' : '') if ($verbose);
 
-				my $len = !$noop
-					? (syswrite($fd, $esm, length($esm)) or die "syswrite: $!")
-					: length($esm);
-				printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
-					$basename, $i, $esm, $noop ? ' (noop)' : '') if ($verbose);
-				$mproc->[$i]{'master'} = $esm;
+					master_write($path, $offset, $master_new);
 
-				close($fd);
-				if ($timestamp_inc) {
-					utime($timestamp_inc, $timestamp_inc, $path) or die "utime: $path: $!";
-					$timestamp_inc++;
-				} else {
-					utime($stat[8], $stat[9], $path) or die "utime: $path: $!";
+					$mproc->[$i]{'master'} = $master_new;
 				}
-
-				push @qt, "$dirname/$esm";
 			} elsif (!$is_protected && $esm_to_esp) {
 				# For any file with esm masters which have a matching esp
 				# file, update the MAST entry to point to the esp and remove
@@ -275,70 +258,62 @@ sub main {
 				# to remove esms which were unlikely to be generated by this
 				# script.
 
-				my $esm = $master;
-				if ($esm =~ /\.esp$/i) {
-					# Possible to have an esp with an esm master. Pass
+				if ($master =~ /\.esp$/i) {
+					# Possible to have an esm with an esp master. Pass
 					# it on to check just in case. Vanilla files will
 					# be ignored by the protect list.
-					push @qt, "$dirname/$esm";
+					if ($recurse) {
+						my $parent = file_join($dirname, $master);
+						parent_queue(\@q, $parents, $parent);
+					}
 					next;
 				}
 
 				# If there is no matching esp file for the esm master being
 				# rewritten back to esp, then it was never an esp in the first
 				# place and should be completely ignored.
-				my $esp;
+				$master_new = undef;
 				foreach my $ext (qw(esp esm)) {
-					my $__esp = plugin_sub($esm, [ 'esm', $ext ], @sub);
+					my $__master_new = file_sub($master, sub_ext => [ 'esm', $ext ], sub => \@sub);
 
 					# If the renamed master is the same as the existing
 					# master *or* the renamed master does not exist, then
 					# no modification should be done. This is important.
-					if (-f "$dirname/$__esp") {
-						$esp = $__esp;
+					if (-f file_join($dirname, $__master_new)) {
+						$master_new = $__master_new;
 						last;
 					}
 				}
+				next unless ($master_new);
 
 				# If no esp could be resolved or the file is the same, skip modifying
 				# this plugin to point to it but still pass it on to be checked for
 				# MAST entries within said master.
-				if (!$esp) {
-					next;
-				} elsif ($esp ne $esm) {
+				if ($master_new ne $master) {
 					# Update MAST to point to esp file by cloning and reopening for write
-					plugin_clone($path, $path, $overwrite);
+					file_clone($path, $path, overwrite => $overwrite);
 
-					my @stat = stat($path) or die "stat: $!: $path";
-					open($fd, '+<', $path) or die "open: $!: $path";
-					seek($fd, $offset, 0) or die "seek: $!";
-
-					my $len = !$noop
-						? (syswrite($fd, $esp, length($esp)) or die "syswrite: $!")
-						: length($esp);
 					printf STDERR ($hex ? "Writing \"%s\": [%02X] %s%s\n" : "Writing \"%s\": [%02d] %s%s\n",
-						$basename, $i, $esp, $noop ? ' (noop)' : '') if ($verbose);
-					$mproc->[$i]{'master'} = $esp;
+						$basename, $i, $master_new, $noop ? ' (noop)' : '') if ($verbose);
 
-					close($fd);
-					utime($stat[8], $stat[9], $path) or die "utime: $path: $!";
+					master_write($path, $offset, $master_new);
+
+					$mproc->[$i]{'master'} = $master_new;
 
 					# The only esms which will be removed are those which
 					# have matching esp files and those which were resolved
 					# from masters present in the arg list.
-					if (-f "$dirname/$esp") {
-						push @unlink, "$dirname/$esm";
+					if (-f file_join($dirname, $master_new)) {
+						push @unlink, file_join($dirname, $master);
 					}
 				}
-				push @qt, "$dirname/$esp";
-			} else {
-				push @qt, ($dirname ne '.') ? "$dirname/$master" : $master;
+			}
+
+			if ($recurse) {
+				my $parent = file_join($dirname, $master_new);
+				parent_queue(\@q, $parents, $parent);
 			}
 		}
-
-		push @q, @qt if ($recurse);
-
-		unshift @$mout, { path => $_, size => $sz, flags => $flags, dirname => $dirname, basename => $basename, mproc => $mproc };
 	}
 
 	my %unlink = ();
@@ -354,22 +329,6 @@ sub main {
 		} else {
 			unlink($_) or die "unlink: $!";
 		}
-	}
-
-	# Temp disabled
-	if (0 && $complete) {
-		print STDERR Dumper $mout;
-		my %seen;
-		my $mout_tmp;
-		foreach my $ent (@$mout) {
-			my ($path, $dirname, $basename, $mproc) = map $ent->{$_}, qw(path dirname basename mproc);
-			if (!$mout_tmp) {
-				$mout_tmp = { path => $path, dirname => $dirname, basename => $basename, mproc => [] };
-			}
-			push @{$mout_tmp->{'mproc'}}, grep !$seen{$_->{master}}++, map +{ %$_, plugin => $basename }, @$mproc;
-		}
-		print STDERR Dumper $mout_tmp;
-		$mout = [ $mout_tmp ];
 	}
 
 	%seen = ();
@@ -390,7 +349,7 @@ sub main {
 			} @add));
 		}
 
-		if ($include_self) {
+		if ($all || $include_self) {
 			push @$mproc, { offset => 0, master => $basename, plugin => $basename };
 		}
 
@@ -399,6 +358,7 @@ sub main {
 
 			next if ($esp_only && $master !~ /\.esp$/);
 			next if ($esm_only && $master !~ /\.esm$/);
+			next if (!$include_self && basename($master) eq basename($target));
 
 			if ($verbose) {
 				printf STDERR ($hex ? "[%02X] %s%s\n" : "[%02d] %s%s\n",
@@ -408,7 +368,7 @@ sub main {
 					next unless (!$seen{join('.', $path, $master)}++);
 					printf STDOUT ("%s\t%s\n", $path, $master);
 				} elsif ($abs_path) {
-					my $master_path = File::Spec->join($dirname, $master);
+					my $master_path = file_join($dirname, $master);
 					next unless (!$seen{$master_path}++);
 					printf STDOUT ("%s\n", $master_path);
 				} else {
@@ -417,6 +377,49 @@ sub main {
 				}
 			}
 		}
+	}
+
+	return 1;
+}
+
+sub main {
+	my $help = 0;
+
+	global_reset;
+
+	local @ARGV = @_;
+	GetOptions(
+		'h|help' => \$help,
+		'q|quick+' => \$quick,
+		'v|verbose+' => \$verbose,
+		'n|dry-run+' => \$noop,
+		'unlink!' => \$unlink,
+		'protect!' => \$protect,
+		'copy-plugin-to-esm' => \$copy_plugin_to_esm,
+		'copy-plugin-to-esp' => \$copy_plugin_to_esp,
+		'esp|esm-to-esp+' => \$esm_to_esp,
+		'esm|esp-to-esm+' => \$esp_to_esm,
+		'esp-only+' => \$esp_only,
+		'esm-only+' => \$esm_only,
+		'f|overwrite+' => \$overwrite,
+		'r|recurse+' => \$recurse,
+		's|include-self' => \$include_self,
+		'A|abs-path+' => \$abs_path,
+		'a|all+' => \$all,
+		'smart-sub+' => \$sub_smart,
+		'sub=s' => \@sub,
+		'timestamp-inc:i' => \$timestamp_inc,
+		'H|hex+' => \$hex,
+	) && !$help || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
+
+	$timestamp_inc ||= time if (defined $timestamp_inc);
+
+	if ($copy_plugin_to_esp && $copy_plugin_to_esm) {
+		die "Both copy_plugin_to_esp and copy_plugin_to_esm specified\n";
+	}
+
+	foreach (@ARGV ?  @ARGV : '-') {
+		plugin_proc($_);
 	}
 
 	return 1;

@@ -1,96 +1,198 @@
 #!/usr/bin/perl
 
+our $VERSION = '$Id$';
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+use TES::Plugin::Common qw(fmt_print);
+use TES::Plugin::Archive::BA2 qw();
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
 use Carp qw(confess);
 use Data::Dumper;
 use Pod::Usage;
 
-use warnings FATAL => qw(all);
 use strict;
+use warnings FATAL => qw(all);
 
 local $SIG{__DIE__} = \&confess;
+sub fatal { local $SIG{__DIE__}; die @_, "\n" }
+
 local $Data::Dumper::Sortkeys = 1;
 
-our $VERSION = '$Id$';
+my $crc_decimal;
+my $flags_decimal;
 
-my $verbose = 0;
+my $ent_dump_tab = {
+	GNRL => \&ent_gnrl_dump,
+	DX10 => \&ent_dx10_dump,
+};
+
+sub ent_gnrl_dump {
+	my ($ent, %opts) = @_;
+	my $verbose = $opts{'verbose'};
+	my $filename = $opts{'filename'};
+	my $path = $opts{'path'};
+	my $out = $opts{'out'};
+
+	if (!$verbose) {
+		push @$out, {
+			filename => $path,
+			name => $ent->name,
+		};
+		return 1;
+	}
+
+	push @$out, {
+		filename => $path,
+		size => $ent->size,
+		packed => $ent->size_packed,
+		ratio => sprintf("%6.2f%%", 100.0 - ($ent->size_packed / $ent->size * 100.0)),
+		dir_hash => sprintf($crc_decimal ? "%d" : "0x%08x", $ent->dir_hash),
+		name_hash => sprintf($crc_decimal ? "%d" : "0x%08x", $ent->name_hash),
+		flags => sprintf($flags_decimal ? "%d" : "0x%08x", $ent->flags),
+		ext => $ent->extension,
+		name => $ent->name,
+	};
+
+	return 1;
+}
+
+sub ent_dx10_dump {
+	my ($ent, %opts) = @_;
+	my $verbose = $opts{'verbose'};
+	my $filename = $opts{'filename'};
+	my $path = $opts{'path'};
+	my $out = $opts{'out'};
+
+	if (!$verbose) {
+		push @$out, {
+			filename => $path,
+			name => $ent->name,
+		};
+		return 1;
+	}
+
+	push @$out, {
+		filename => $path,
+		size => $ent->size,
+		packed => $ent->size_packed,
+		ratio => sprintf("%6.2f%%", 100.0 - ($ent->size_packed / $ent->size * 100.0)),
+		dir_hash => sprintf($crc_decimal ? "%d" : "0x%08x", $ent->dir_hash),
+		name_hash => sprintf($crc_decimal ? "%d" : "0x%08x", $ent->name_hash),
+		flags => sprintf($flags_decimal ? "%d" : "0x%08x", $ent->flags),
+		height => $ent->height,
+		width => $ent->width,
+		cmap => $ent->cubemaps,
+		dxgi => $ent->dxgi_format,
+		mips => $ent->mip_count,
+		ext => $ent->extension,
+		name => $ent->name,
+	};
+
+	if ($verbose > 1) {
+		$ent->chunk_proc(sub {
+			my $chunk = shift;
+
+			push @$out, {
+				size => $chunk->size,
+				packed => $chunk->size_packed,
+				ratio => sprintf("%6.2f%%", 100.0 - ($chunk->size_packed / $chunk->size * 100.0)),
+				mips => ($chunk->mip_start != $chunk->mip_end)
+					? sprintf("%d-%d", $chunk->mip_start, $chunk->mip_end)
+					: sprintf("%d", $chunk->mip_start),
+			};
+		});
+	}
+
+	return 1;
+}
 
 sub main {
 	my $ret;
 	my $help = 0;
+	my $header = 2;
+	my $verbose = 0;
 	my $filename = 0;
-	my $crc_decimal;
-	my $flags_decimal;
+	my $sort;
 
 	local @ARGV = @_;
 	GetOptions(
                 'h|help' => \$help,
 		'verbose|v+' => \$verbose,
-		'filename|f+' => \$filename,
+		'header!' => \$header,
+		'filename|l+' => \$filename,
+		'sort|s:s' => \$sort,
 		'crc-decimal' => \$crc_decimal,
 		'flags-decimal' => \$flags_decimal,,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
+	return 1 unless (@ARGV);
+
+	my $has_dx10 = grep /Textures/, @ARGV;
+
+	my $fmt_sep = ' | ';
+	my $fmt_tab;
+	my $fmt_tab_extra;
+	if (!$verbose) {
+		$header = 0;
+		$fmt_sep = "\t";
+		$fmt_tab = [
+			$filename ? [ filename => 0 ] : (),
+			[ name => 0 ],
+		];
+	} else {
+		$fmt_tab = [
+			$filename ? [ filename => 0 ] : (),
+			[ size => 10 ],
+			[ packed => 10 ],
+			[ ratio => 8 ],
+			[ dir_hash => 10 ],
+			[ name_hash => 10 ],
+			[ flags => 10 ],
+		];
+
+		if ($has_dx10 && $verbose == 1) {
+			$fmt_tab_extra = [
+				[ height => 6 ],
+				[ width => 6 ],
+				[ mips => 4 ],
+			];
+		} elsif ($has_dx10) {
+			$fmt_tab_extra = [
+				[ height => 6 ],
+				[ width => 6 ],
+				[ cmap => 8 ],
+				[ dxgi => 4 ],
+				[ mips => 4 ],
+			];
+		}
+
+		push @$fmt_tab, $fmt_tab_extra ? @$fmt_tab_extra : (),
+			[ ext => 4 ],
+			[ name => 0 ];
+	}
+
+	my $out = [];
+	foreach (@ARGV) {
+		my $ba2 = TES::Plugin::Archive::BA2->read($_) or die;
+		my $type = $ba2->type;
+		my $proc_cb = $ent_dump_tab->{$type} || die;
+
+		$ba2->ent_proc($proc_cb,
+			path => $_,
+			verbose => $verbose,
+			filename => $filename,
+			sort => $sort,
+			out => $out,
+		);
+	}
+
 	binmode(STDOUT, ":utf8");
 
-	my $filename_lmax = 0;
-	foreach (@ARGV) {
-		my $len = length;
-		$filename_lmax = $len if ($len > $filename_lmax);
-	}
-
-	my $head = 0;
-	foreach my $ba2_file (@ARGV) {
-		my $dump = ($verbose ? 1 : 0);
-		my $dump_file = undef;
-		my ($dir_hash, $name_hash, $size, $size_packed) = ('', '');
-		my ($ext, $flags);
-		my $state = 0;
-
-		# bsarch can't handle absolute unix paths (e.g. leading '/')
-		chomp(my $ba2_file_dos = qx/cygpath -aw "$ba2_file"/);
-		open(my $fd, '-|', "bsarch '$ba2_file_dos' -dump 2>&1") or die "open: bsarch: $!";
-		while (<$fd>) {
-			s/\R//g;
-
-			# SCRIPTS\Fragments\Terminals\TERM_BTInt_OPTIONS_Terminal__01070704.pex
-			#  DirHash: B118434B  NameHash: 204458F6  Ext: pex  Unknown: 0x00100100
-			#  Size: 1593  PackedSize: 625
-			if ($state == 0 && /DirHash:\s+([0-9A-F]+)\s+NameHash:\s+([0-9A-F]+)\s+Ext:\s+([^\s]+)\s+Unknown:\s+([xXA-Fa-f0-9]+)/) {
-				($dir_hash, $name_hash, $flags) = map hex, ($1, $2, $4);
-				($ext) = ($3);
-				$state = 1;
-			} elsif ($state == 1 && /Size:\s+(\d+)\s+PackedSize:\s+(\d+)/) {
-				($size, $size_packed) = ($1, $2 ? $2 : $1);
-				if (!$dump) {
-					printf STDOUT ("%s%s\n", $filename ? sprintf("%s\t", $ba2_file) : "", $dump_file);
-				} else {
-					printf STDERR ("%*s%12s\t%12s\t%10s\t%10s\t%10s\t%10s\t%4s\t%s\n",
-						$filename ? $filename_lmax + 1 : 0,
-						$filename ? sprintf("%s\t", 'path') : '',
-						'size', 'size_packed', 'ratio', 'dir_hash', 'name_hash', 'flags', 'ext', 'name'
-					) unless ($head++);
-
-					printf STDOUT ("%*s%12d\t%12d\t%9.2f%%\t%10s\t%10s\t%10s\t%4s\t%s\n",
-						$filename ? $filename_lmax + 1 : 0,
-						$filename ? sprintf("%s\t", $ba2_file) : '',
-						$size, $size_packed,
-						100.0 - ($size_packed / $size * 100.0),
-						(map sprintf($crc_decimal ? "%d" : "0x%08x", $_), ($dir_hash, $name_hash)),
-						(map sprintf($flags_decimal ? "%d" : "0x%08x", $_), ($flags)),
-						$ext,
-						$dump_file,
-					);
-				}
-				$state = 0;
-			} elsif (!$state) {
-				$dump_file = s%\\%/%gr;
-			}
-		}
-		close($fd);
-	}
+	fmt_print($out, $fmt_tab, $fmt_sep, $header && !($header = 0));
 
 	return 1;
 }

@@ -1567,3 +1567,38 @@ m/em	environment
 r	roughness?
 p	parallax
 c	?
+
+
+---
+
+Notable records/fields with embedded plugin names:
+
+Everything:
+TES4/MAST [0]
+SCOL/MODL [1004a5d]
+STAT/MNAM [105039c] (FaceGenData)
+
+Data/AA 50 Ways To Die.esp:
+ACTI/MODL [1002e49] (looks SCOL related)
+MISC/MODL [1002078] (looks SCOL related)
+
+BTInteriors_Project.esp:
+STAT/MODL [305f9e6] (looks SCOL related)
+
+Fallout4.esm:
+NOCM/NAM1 [26]
+
+JetfuelRadio.esp:
+SNDR/ANAM [1001ed8]
+
+PIRAD.esp:
+MGEF/VMAD [5034556] (some kind of embedded data)
+QUST/VMAD [5012189] (some kind of embedded data)
+
+SimSettlements.esm:
+ACTI/VMAD [10040d7] (some kind of embedded data)
+MISC/VMAD [100350d] (some kind of embedded data)
+FURN/VMAD [100e69a] (some kind of embedded data)
+
+USSQuincy.esp:
+CONT/MODL [1012e74] (looks SCOL related)

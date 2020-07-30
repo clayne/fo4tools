@@ -1435,7 +1435,7 @@ var
 	plugin, cfile, mfile: IwbFile;
 	pfstr, cfstr, mfstr: string;
 	i, j, idx: integer;
-	sl, pmlist, cmlist, pmap, cmap: THashedStringList;
+	sl, pmlist, cmlist, pmap, cmap, parents: THashedStringList;
 	tl: TList;
 begin
 	plugin_map_clear;
@@ -1505,7 +1505,9 @@ begin
 
 		tl := TList.create;
 
-		// DFS (with minor modifications)
+		// Parents: DFS (with minor modifications)
+		parents := hlist_hlist_get(pmap, pfstr, false);
+
 		tl.insert(0, plugin);
 		while tl.count <> 0 do begin
 			mfile := ObjectToElement(tl[0]); tl.delete(0);
@@ -1525,11 +1527,19 @@ begin
 
 			for j := Pred(sl.count) downto 0 do begin
 				mfile := ObjectToElement(sl.Objects[j]);
-				tl.add(mfile);
+				mfstr := GetFileName(mfile);
+
+				// account for parents of parents that are not
+				// a parent of the plugin itself
+				if not (parents.indexOf(mfstr) >= 0) then begin
+					tl.insert(0, mfile);
+				end else begin
+					tl.add(mfile);
+				end
 			end;
 		end;
 
-		// BFS
+		// Children: BFS
 		tl.add(plugin);
 		while tl.count <> 0 do begin
 			cfile := ObjectToElement(tl[0]); tl.delete(0);
