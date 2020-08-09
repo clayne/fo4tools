@@ -20,6 +20,7 @@ sub main {
 	my $help = 0;
 	my $filename = 0;
 	my $crc_decimal;
+	my $flags_decimal;
 
 	local @ARGV = @_;
 	GetOptions(
@@ -27,16 +28,25 @@ sub main {
 		'verbose|v+' => \$verbose,
 		'filename|f+' => \$filename,
 		'crc-decimal' => \$crc_decimal,
+		'flags-decimal' => \$flags_decimal,,
         ) && (!$help && ($ret = 1));
 
         $ret || pod2usage(-verbose => 2, -noperldoc => 1, -exitval => -1);
 
 	binmode(STDOUT, ":utf8");
 
+	my $filename_lmax = 0;
+	foreach (@ARGV) {
+		my $len = length;
+		$filename_lmax = $len if ($len > $filename_lmax);
+	}
+
+	my $head = 0;
 	foreach my $ba2_file (@ARGV) {
 		my $dump = ($verbose ? 1 : 0);
 		my $dump_file = undef;
 		my ($dir_hash, $name_hash, $size, $size_packed) = ('', '');
+		my ($ext, $flags);
 		my $state = 0;
 
 		# bsarch can't handle absolute unix paths (e.g. leading '/')
@@ -48,20 +58,31 @@ sub main {
 			# SCRIPTS\Fragments\Terminals\TERM_BTInt_OPTIONS_Terminal__01070704.pex
 			#  DirHash: B118434B  NameHash: 204458F6  Ext: pex  Unknown: 0x00100100
 			#  Size: 1593  PackedSize: 625
-			if ($state == 0 && /DirHash:\s+([0-9A-F]+)\s+NameHash:\s+([0-9A-F]+)/) {
-				($dir_hash, $name_hash) = map hex, ($1, $2);
+			if ($state == 0 && /DirHash:\s+([0-9A-F]+)\s+NameHash:\s+([0-9A-F]+)\s+Ext:\s+([^\s]+)\s+Unknown:\s+([xXA-Fa-f0-9]+)/) {
+				($dir_hash, $name_hash, $flags) = map hex, ($1, $2, $4);
+				($ext) = ($3);
 				$state = 1;
 			} elsif ($state == 1 && /Size:\s+(\d+)\s+PackedSize:\s+(\d+)/) {
 				($size, $size_packed) = ($1, $2 ? $2 : $1);
 				if (!$dump) {
 					printf STDOUT ("%s%s\n", $filename ? sprintf("%s\t", $ba2_file) : "", $dump_file);
 				} else {
-					printf STDOUT ("%s%12d\t%12d\t%12.2f%%\t%12s\t%12s\t%s\n",
-						$filename ? sprintf("%s\t", $ba2_file) : "",
+					printf STDERR ("%*s%12s\t%12s\t%10s\t%10s\t%10s\t%10s\t%4s\t%s\n",
+						$filename ? $filename_lmax + 1 : 0,
+						$filename ? sprintf("%s\t", 'path') : '',
+						'size', 'size_packed', 'ratio', 'dir_hash', 'name_hash', 'flags', 'ext', 'name'
+					) unless ($head++);
+
+					printf STDOUT ("%*s%12d\t%12d\t%9.2f%%\t%10s\t%10s\t%10s\t%4s\t%s\n",
+						$filename ? $filename_lmax + 1 : 0,
+						$filename ? sprintf("%s\t", $ba2_file) : '',
 						$size, $size_packed,
 						100.0 - ($size_packed / $size * 100.0),
-						(map sprintf($crc_decimal ? "%d" : "%08X", $_), ($dir_hash, $name_hash)),
-						$dump_file);
+						(map sprintf($crc_decimal ? "%d" : "0x%08x", $_), ($dir_hash, $name_hash)),
+						(map sprintf($flags_decimal ? "%d" : "0x%08x", $_), ($flags)),
+						$ext,
+						$dump_file,
+					);
 				}
 				$state = 0;
 			} elsif (!$state) {
