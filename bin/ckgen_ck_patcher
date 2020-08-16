@@ -3,7 +3,7 @@
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
 use Carp qw(confess);
 use File::Basename qw(basename dirname);
-use File::Copy qw(copy);
+use File::Copy qw(cp);
 use Digest::MD5 qw(md5_hex);
 use Data::Dumper;
 use Pod::Usage;
@@ -175,7 +175,7 @@ sub file_patch {
 
 	my $file_temp = "$file.$$";
 
-	copy($file, $file_temp) or die "copy: $file -> $file_temp";
+	cp($file, $file_temp) or die "copy: $file -> $file_temp";
 
 	open(my $fd, '+<', $file_temp) or die "open: $file_temp: $!";
 	binmode($fd);

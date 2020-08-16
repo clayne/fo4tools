@@ -3,7 +3,7 @@
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
 use Carp qw(confess);
 use File::Basename qw(basename dirname);
-use File::Copy qw(copy);
+use File::Copy qw(cp);
 use File::Spec;
 use Data::Dumper;
 use Pod::Usage;
@@ -37,7 +37,7 @@ sub plugin_clone {
 
 		# Copy src to dst and clone atime/mtime.
 		my @stat = stat($src) or die "stat: $!: $src";
-		copy($src, "$dst.tmp") or die "copy: $src -> $dst.tmp";
+		cp($src, "$dst.tmp") or die "copy: $src -> $dst.tmp";
 		rename("$dst.tmp", $dst) or die "rename: $!: $dst.tmp -> $dst";
 		utime($stat[8], $stat[9], $dst) or die "utime: $dst: $!";
 	}
