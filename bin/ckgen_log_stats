@@ -2,9 +2,6 @@
 
 use Getopt::Long qw(:config no_ignore_case no_auto_abbrev bundling);
 use Carp qw(confess);
-use File::Basename qw(basename dirname);
-use File::Copy qw(copy);
-use Digest::MD5 qw(md5_hex);
 use Data::Dumper;
 use Pod::Usage;
 
