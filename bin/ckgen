@@ -1812,7 +1812,7 @@ case "$1" in
 esac
 
 # XXX: Use -c for cache option?
-while getopts "j:s:S:t:f:p:mMng" opt; do
+while getopts "j:s:S:t:f:p:ming" opt; do
         case $opt in
 	j) JOBS="$OPTARG" ;;
 	s) SHARDS="$OPTARG" ;;
